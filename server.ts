@@ -1017,6 +1017,267 @@ async function startServer() {
     }
   });
 
+  // Endpoint to handle public demo creations
+  app.post("/api/public/create-demo", async (req, res) => {
+    try {
+      let { url, ownerPhone } = req.body;
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ success: false, error: "אנא הזן את כתובת אתר העסק" });
+      }
+
+      url = url.trim();
+      if (!/^https?:\/\//i.test(url)) {
+        url = "https://" + url;
+      }
+
+      // Phone formatting & validation
+      let normalizedPhone = "972547866119";
+      if (ownerPhone && typeof ownerPhone === "string" && ownerPhone.trim()) {
+        const cleaned = ownerPhone.trim().replace(/\D/g, "");
+        if (cleaned.startsWith("05") && cleaned.length === 10) {
+          normalizedPhone = "972" + cleaned.substring(1);
+        } else if (cleaned.length >= 7) {
+          normalizedPhone = cleaned;
+        }
+      }
+
+      console.log(`[DEMO PUBLIC] Starting bot creation for URL: ${url}, Phone: ${normalizedPhone}`);
+
+      // Parse business name from URL domain as fallback. E.g., https://my-bakery.co.il -> My Bakery
+      let domainName = "העסק שלך";
+      try {
+        const parsedUrl = new URL(url);
+        domainName = parsedUrl.hostname.replace("www.", "");
+        // Clean domain extensions
+        const parts = domainName.split(".");
+        if (parts.length > 0) {
+          domainName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+        }
+      } catch (e) {
+        console.warn("[DEMO PUBLIC] Domain parsing failed", e);
+      }
+
+      // Try fetching and scraping content
+      let scrapedText = "";
+      let isScrapeSuccess = false;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 sec scrape timeout for demo
+        const fetchResponse = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          }
+        });
+        clearTimeout(timeoutId);
+        
+        if (fetchResponse.ok) {
+          const html = await fetchResponse.text();
+          scrapedText = extractCleanText(html);
+          isScrapeSuccess = scrapedText.length > 50;
+        }
+      } catch (scrapeErr: any) {
+        console.warn("[DEMO PUBLIC] Scrape process warning:", scrapeErr?.message || scrapeErr);
+      }
+
+      // Generate prompts using Gemini or Fallback
+      let promptParts: any = null;
+      try {
+        if (ai) {
+          console.log("[DEMO PUBLIC] Generating custom sales prompts with Gemini");
+          const knowledgeMaterials = scrapedText.trim() || `עסק אינטרנט בכתובת: ${url}.`;
+          
+          const promptToModel = 
+            "אתה עוזר פיתוח AI ומומחה אפיון סוכני מכירות ושירות לצ'אט ו-WhatsApp. " +
+            "עליך לבנות פרומפט הנחיות מקצועי ומקיף עבור סוכן מכירות דיגיטלי הבנוי מ-9 חלקים מובנים של מידע.\n\n" +
+            "להלן פרטי העסק והמאפיינים שסופקו:\n" +
+            `- שם העסק הזמני: ${domainName}\n` +
+            `- שם הבעלים הפומבי במערכת: חיים בר\n` +
+            `- תבנית הבוט: בוט מכירות והרשמה קלאסי\n` +
+            `- מטרת העל והתוצאה המבוקשת מהשיחה (היעד של הבוט): תיאום שיחה/פגישה או מכירה והשארת טלפון\n` +
+            `- קהל יעד מיועד: לקוחות המגיעים דרך האתר ${domainName}\n` +
+            `- טון וסגנון המועדפים: שירותי, אדיב, חם, מעורר ביטחון, קצר וממוקד, עם שימוש נבון באימוג'ים 🚀\n` +
+            `- איסורים וחוקי ברזל: אל תמציא פרטים, אל תפר פשרה או זמנים ללא אישור, אל תגיד מילה מחוץ לטווח\n` +
+            `- מתי להעביר לנציג אנושי: כאשר הלקוח כועס, דורש מענה מיידי של מנהל או שואל שאלה פיננסית לא פתורה\n\n` +
+            `חומרי ידע גולמיים שנשאבו מהאתר של העסק:\n${knowledgeMaterials}\n\n` +
+            "משימה: עליך לייצר טקסט פרומפט מלא ועשיר בעברית עבור כל אחד מתשעת החלקים הבאים, מותאם לעסק. " +
+            "החזר אובייקט JSON תקין ומדויק בעל 9 המפתחות הבאים:\n" +
+            "1. botIdentity: הגדרת שם הבוט, התפקיד, השיוך ל-{BusinessName} (השתמש בתווית {BusinessName} שיוחלף בהמשך) ונימת הדיבור.\n" +
+            "2. coursesInfo: תיאור מפורט של המוצרים/שירותים שהעסק מציע (מבוסס על תוכן האתר או מנוסח באופן חכם ומושלם ומנופח באופן יחסי לתחום העסק מועשר באימוג'ים).\n" +
+            "3. kidsCourses: קורסים/מוצרים/סגמנטים מיוחדים (אם לא רלוונטי לחלוטין, ברא מסלול שירותים לילדים או משפחות שקשור לתחום או רכישה מותאמת).\n" +
+            "4. conversationFlow: שלבי התקדמות השיחה ב-WhatsApp, מהברכה ועד השגת הטלפון לקריאה לפעולה.\n" +
+            "5. writingStyle: הוראות עימוד וניסוח (קיצור הודעות, רווחים בין שורות, שבירת שורות, סגנון שמושך תשומת לב).\n" +
+            "6. faqAnswers: 3-4 שאלות ותשובות נפוצות פוטנציאליות שמעניינות לקוחות, בפורמט ש: ות:.\n" +
+            "7. whatNotToDo: לפחות 3 דברים שהבוט לעולם לא יגיד, לא יבטיח, ולא יעשה.\n" +
+            "8. syllabusLinks: פורמט קישורים של סילבוסים/מוצרים אליהם יוכל לקשר. (לדוגמה: - סילבוס: https://yourdomain.com/syllabus...).\n" +
+            "9. humanEscalation: מתי וכיצד לבצע הפניה לנציג אנושי לטלפון {OwnerPhone}.\n\n" +
+            "חשוב מאוד: החזר אובייקט JSON נקי ומדויק ללא עיטוף או סימוני קוד.";
+
+          const gResponse = await generateWithFallback(ai, {
+            model: "gemini-3.5-flash",
+            contents: promptToModel,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  botIdentity: { type: Type.STRING },
+                  coursesInfo: { type: Type.STRING },
+                  kidsCourses: { type: Type.STRING },
+                  conversationFlow: { type: Type.STRING },
+                  writingStyle: { type: Type.STRING },
+                  faqAnswers: { type: Type.STRING },
+                  whatNotToDo: { type: Type.STRING },
+                  syllabusLinks: { type: Type.STRING },
+                  humanEscalation: { type: Type.STRING }
+                },
+                required: [
+                  "botIdentity", "coursesInfo", "kidsCourses", "conversationFlow",
+                  "writingStyle", "faqAnswers", "whatNotToDo", "syllabusLinks", "humanEscalation"
+                ]
+              }
+            }
+          });
+
+          if (gResponse.text) {
+            promptParts = JSON.parse(gResponse.text.trim());
+          }
+        }
+      } catch (geminiErr: any) {
+        console.error("[DEMO PUBLIC] Gemini generation failed, using fallback:", geminiErr);
+      }
+
+      // Fallback is 100% stable
+      if (!promptParts) {
+        promptParts = generateFallbackPrompts("sales", domainName, "חיים בר", {
+          goal: "השארת פרטים ותיאום רכישה",
+          audience: "לקוחות האתר",
+          tone: "עדכני, חכם ואדיב מאוד"
+        });
+      }
+
+      // Compile unified businessPrompt
+      const compiledBusinessPrompt = `### זהות הבוט
+${promptParts.botIdentity || ""}
+
+### מה אני מוכר — קורסים
+${promptParts.coursesInfo || ""}
+
+### קורסי ילדים
+${promptParts.kidsCourses || ""}
+
+### זרימת שיחה
+${promptParts.conversationFlow || ""}
+
+### טון ואופן כתיבה
+${promptParts.writingStyle || ""}
+
+### תשובות לשאלות נפוצות
+${promptParts.faqAnswers || ""}
+
+### מה לא לעשות
+${promptParts.whatNotToDo || ""}
+
+### לינקים לסילבוסים
+${promptParts.syllabusLinks || ""}
+
+### אסקלציה לאנוש
+${promptParts.humanEscalation || ""}`;
+
+      // Assemble webhook payload exactly matching the requested format
+      const webhookPayload = {
+        // Direct core fields requested
+        ownerName: "חיים בר",
+        businessName: "סוכן גנרי",
+        ownerPhone: normalizedPhone,
+        botId: "Bot_generic",
+        whatsappInstance: "Bareket",
+        businessPrompt: compiledBusinessPrompt,
+        key: "45FFC356D9FD-4734-9773-7D846DC13E03",
+        leadFollowUpDays: "3",
+        agentEmail: "haim.bar@gmail.com",
+        
+        // Separate 9 prompt parts:
+        botIdentity: promptParts.botIdentity,
+        coursesInfo: promptParts.coursesInfo,
+        kidsCourses: promptParts.kidsCourses,
+        conversationFlow: promptParts.conversationFlow,
+        writingStyle: promptParts.writingStyle,
+        faqAnswers: promptParts.faqAnswers,
+        whatNotToDo: promptParts.whatNotToDo,
+        syllabusLinks: promptParts.syllabusLinks,
+        humanEscalation: promptParts.humanEscalation,
+        
+        // Hebrew mappings:
+        "שם בעל העסק": "חיים בר",
+        "שם העסק": "סוכן גנרי",
+        "טלפון בעל העסק": normalizedPhone,
+        "Bot ID": "Bot_generic",
+        "Bםא ID": "Bot_generic",
+        "שם ואטסאפ instance": "Bareket",
+        "פרומפט עיסקי": compiledBusinessPrompt,
+        "Key": "45FFC356D9FD-4734-9773-7D846DC13E03",
+        "KEY": "45FFC356D9FD-4734-9773-7D846DC13E03",
+        "זמן למעקב אחרי ליד בימים": "3",
+        "אימייל משויך לסוכן": "haim.bar@gmail.com",
+
+        // Hebrew mapping for separate 9 prompt parts
+        "זהות הבוט": promptParts.botIdentity,
+        "מה אני מוכר — קורסים": promptParts.coursesInfo,
+        "קורסי ילדים": promptParts.kidsCourses,
+        "קהל יעד וסיגמנטים מיוחדים": promptParts.kidsCourses,
+        "זרימת שיחה": promptParts.conversationFlow,
+        "טון ואופן כתיבה": promptParts.writingStyle,
+        "תשובות לשאלות נפוצות": promptParts.faqAnswers,
+        "מה לא לעשות": promptParts.whatNotToDo,
+        "לינקים לסילבוסים": promptParts.syllabusLinks,
+        "אסקלציה לאנוש": promptParts.humanEscalation,
+
+        // Metadata properties
+        timestamp: new Date().toISOString(),
+        source: "עסק חכם - סוכנים דיגיטליים (הדגמה ציבורית)",
+        systemId: "ais-agent-configurator-demo"
+      };
+
+      // Ship to Webhook
+      const defaultUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+      let postUrl = `${defaultUrl}?botId=Bot_generic`;
+
+      console.log("[DEMO PUBLIC] Shipping demo payload to Webhook:", postUrl);
+
+      const response = await fetch(postUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        },
+        body: JSON.stringify(webhookPayload)
+      });
+
+      const responseText = await response.text();
+      console.log("[DEMO PUBLIC] Webhook response:", response.status, responseText);
+
+      return res.json({
+        success: true,
+        businessName: "סוכן גנרי",
+        ownerName: "חיים בר",
+        normalizedPhone,
+        scrapedDomain: domainName,
+        isScrapeSuccess,
+        promptParts
+      });
+
+    } catch (err: any) {
+      console.error("[DEMO PUBLIC] Demo execution failure:", err);
+      return res.status(500).json({
+        success: false,
+        error: "שגיאה ביצירת סוכן הדגמה",
+        details: err?.message || String(err)
+      });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

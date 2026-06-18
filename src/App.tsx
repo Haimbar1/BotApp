@@ -30,7 +30,9 @@ import {
   Terminal,
   Clock,
   Mail,
-  ArrowRight
+  ArrowRight,
+  Globe,
+  MessageCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ReactMarkdown from "react-markdown";
@@ -212,6 +214,82 @@ export default function App() {
   const [wizardActivePart, setWizardActivePart] = useState<string>("botIdentity");
   const [isImprovingWizardPart, setIsImprovingWizardPart] = useState<boolean>(false);
   const [wizardAiInstruction, setWizardAiInstruction] = useState<string>("הוסף עוד אימוג'ים מתאימים");
+
+  // Public Demo Landing Mode States
+  const [showLoginGateway, setShowLoginGateway] = useState<boolean>(false);
+  const [demoUrl, setDemoUrl] = useState<string>("");
+  const [demoPhone, setDemoPhone] = useState<string>("");
+  const [isDemoSubmitting, setIsDemoSubmitting] = useState<boolean>(false);
+  const [demoSuccessData, setDemoSuccessData] = useState<any>(null);
+  const [demoProgressStep, setDemoProgressStep] = useState<string>("");
+  const [demoError, setDemoError] = useState<string>("");
+
+  const handleCreateDemoBot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!demoUrl.trim()) {
+      setDemoError("אנא הזן את כתובת אתר העסק");
+      return;
+    }
+    
+    // Validate phone if entered
+    if (demoPhone.trim()) {
+      const cleanedPhone = demoPhone.replace(/[\s-()]/g, "");
+      const isIsraeli = /^(05\d|9725\d|\+9725\d)\d{7}$/.test(cleanedPhone);
+      const isGeneric = /^\+?[1-9]\d{8,14}$/.test(cleanedPhone);
+      if (!isIsraeli && !isGeneric) {
+        setDemoError("מספר הטלפון שהוזן אינו תקין. נא להזין מספר נייד (לדוגמה: 0547866119)");
+        return;
+      }
+    }
+
+    setIsDemoSubmitting(true);
+    setDemoError("");
+    setDemoSuccessData(null);
+    setDemoProgressStep("connecting"); 
+    
+    try {
+      // Create interval steps to make the transition look professional and immersive
+      const interval1 = setTimeout(() => {
+        setDemoProgressStep("scraping");
+      }, 1500);
+      const interval2 = setTimeout(() => {
+        setDemoProgressStep("analyzing");
+      }, 3500);
+      const interval3 = setTimeout(() => {
+        setDemoProgressStep("syncing");
+      }, 5500);
+
+      const res = await fetch("/api/public/create-demo", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          url: demoUrl,
+          ownerPhone: demoPhone
+        })
+      });
+
+      const data = await res.json();
+      
+      clearTimeout(interval1);
+      clearTimeout(interval2);
+      clearTimeout(interval3);
+
+      if (res.ok && data.success) {
+        setDemoProgressStep("finished");
+        setDemoSuccessData(data);
+        setIsDemoSubmitting(false);
+      } else {
+        setIsDemoSubmitting(false);
+        setDemoError(data.error || "נכשלנו ביצירת סוכן ההדגמה. ודא כי כתובת האתר תקינה ונסה שנית.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setIsDemoSubmitting(false);
+      setDemoError("שגיאת תקשורת מול שרת ההדגמה. אנא נסה שוב.");
+    }
+  };
 
   const improveWizardPartWithAI = async (partKey: string, partTitle: string, currentValue: string) => {
     if (!wizardAiInstruction.trim()) {
@@ -1995,109 +2073,620 @@ ${escalation || "(לא הוגדר)"}`;
     );
   }
 
-  // Render Google Login Gateway screen when not authenticated
+  // Render Google Login Gateway or Immersive Public Landing Demo page when not authenticated
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-[#070709] text-slate-300 flex items-center justify-center p-4 md:p-8 font-sans select-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406]" dir="rtl">
-        <motion.div 
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md flex flex-col items-center"
-        >
-          {/* Logo Card representing "עסק חכם" */}
-          <SmartBusinessLogo size="lg" showContact={true} />
+    if (showLoginGateway) {
+      // Classic Secure Login Gateway
+      return (
+        <div className="min-h-screen bg-[#070709] text-slate-300 flex flex-col items-center justify-center p-4 md:p-8 font-sans select-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406]" dir="rtl">
+          {/* Back button */}
+          <button
+            onClick={() => {
+              setAuthError("");
+              setShowLoginGateway(false);
+            }}
+            className="mb-6 px-4 py-2 text-xs font-bold text-sky-400 bg-[#141722] hover:bg-sky-500/10 border border-slate-800 rounded-xl transition flex items-center gap-1.5 cursor-pointer hover:shadow-[0_0_12px_rgba(56,189,248,0.15)] hover:border-sky-500/30"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            חזור לעמוד ההדגמה הציבורי
+          </button>
 
-          {/* Login Control Form panel */}
-          <div className="w-full mt-6 bg-[#0E0F14]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col gap-5 backdrop-blur">
-            <div className="text-center">
-              <h3 className="text-base font-bold text-slate-150">כניסה למערכת מאובטחת</h3>
-              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                מערכת זו חסומה לעריכה פומבית. רק משתמשים המוגדרים ברשימת המורשים רשאים להתחבר.
-              </p>
-            </div>
+          <motion.div 
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md flex flex-col items-center"
+          >
+            {/* Logo Card representing "עסק חכם" */}
+            <SmartBusinessLogo size="lg" showContact={true} />
 
-            {authError && (
-              <div id="auth-error-banner" className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
-                {authError}
+            {/* Login Control Form panel */}
+            <div className="w-full mt-6 bg-[#0E0F14]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col gap-5 backdrop-blur">
+              <div className="text-center">
+                <h3 className="text-base font-bold text-slate-150">כניסת מנהלים ומורשי גישה</h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  הזן מפתח גישה מאושר או התחבר עם חשבון Google מורשה כדי לגשת ללוח הבקרה המלא.
+                </p>
               </div>
-            )}
 
-            {/* Google GSI Sign In Button Mounting Point */}
-            <div className="flex flex-col items-center justify-center gap-3 py-2 border-b border-slate-800/50 pb-5">
-              <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">התחבר באמצעות</span>
-              <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px]"></div>
-              
-              {!googleClientId && (
-                <p className="text-[10px] text-slate-550 font-medium">טוען מפתח Google API מהשרת...</p>
+              {authError && (
+                <div id="auth-error-banner" className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
+                  {authError}
+                </div>
               )}
-              
-              <div className="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] text-right leading-relaxed mt-1">
-                ⚠️ <strong>שגיאת Google: Client Not Found?</strong> בסביבת העבודה Sandbox של Google AI Studio מומלץ להשתמש במפתח המעקף המהיר למטה כדי לעקוף את בעיית ההרשאות הזמנית של גוגל.
+
+              {/* Google GSI Sign In Button Mounting Point */}
+              <div className="flex flex-col items-center justify-center gap-3 py-2 border-b border-slate-800/50 pb-5">
+                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">התחבר באמצעות</span>
+                <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px]"></div>
+                
+                {!googleClientId && (
+                  <p className="text-[10px] text-slate-550 font-medium">טוען מפתח Google API מהשרת...</p>
+                )}
+                
+                <div className="px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] text-right leading-relaxed mt-1">
+                  ⚠️ <strong>שגיאת Google: Client Not Found?</strong> בסביבת העבודה של AI Studio מומלץ להשתמש במפתח המעקף המהיר למטה כדי לעקוף את בעיית ההרשאות הזמנית של גוגל.
+                </div>
               </div>
-            </div>
 
-            {/* Secondary bypass passcode login (useful for strict iframes or offline checks) */}
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => setShowPasscodeField(!showPasscodeField)}
-                className="text-xs text-[#38BDF8] hover:text-sky-350 font-bold flex items-center justify-center gap-1 hover:underline cursor-pointer"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                מעקף מורשה מהיר (ללא Google Login)
-              </button>
+              {/* Secondary bypass passcode login */}
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPasscodeField(!showPasscodeField)}
+                  className="text-xs text-[#38BDF8] hover:text-sky-350 font-bold flex items-center justify-center gap-1 hover:underline cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  מעקף מורשה מהיר (ללא Google Login)
+                </button>
 
-              <AnimatePresence>
-                {showPasscodeField && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="flex flex-col gap-2 pt-2"
-                  >
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <input
-                          type={showBypassPasscode ? "text" : "password"}
-                          placeholder="הזן מפתח מעקף מורשה או מספר טלפון מאושר..."
-                          value={bypassPasscode}
-                          onChange={(e) => setBypassPasscode(e.target.value)}
-                          className="w-full pl-9 pr-3 py-2.5 bg-[#161821] border border-sky-500/30 rounded-lg text-xs font-mono text-center text-white focus:outline-none focus:ring-1 focus:ring-sky-500 transition"
-                        />
+                <AnimatePresence>
+                  {showPasscodeField && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="flex flex-col gap-2 pt-2"
+                    >
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type={showBypassPasscode ? "text" : "password"}
+                            placeholder="הזן מפתח מעקף מורשה או מספר טלפון מאושר..."
+                            value={bypassPasscode}
+                            onChange={(e) => setBypassPasscode(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2.5 bg-[#161821] border border-sky-500/30 rounded-lg text-xs font-mono text-center text-white focus:outline-none focus:ring-1 focus:ring-sky-500 transition"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowBypassPasscode(!showBypassPasscode)}
+                            className="absolute left-2.5 top-2.5 p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-sky-400 transition"
+                            title={showBypassPasscode ? "הסתר סיסמה" : "הצג סיסמה"}
+                          >
+                            {showBypassPasscode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => setShowBypassPasscode(!showBypassPasscode)}
-                          className="absolute left-2.5 top-2.5 p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-sky-400 transition"
-                          title={showBypassPasscode ? "הסתר סיסמה" : "הצג סיסמה"}
+                          onClick={handlePasscodeLoginBypass}
+                          className="px-4 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs cursor-pointer shadow-md transition shrink-0"
                         >
-                          {showBypassPasscode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          כניסה
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handlePasscodeLoginBypass}
-                        className="px-4 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs cursor-pointer shadow-md transition shrink-0"
-                      >
-                        כניסה
-                      </button>
-                    </div>
-                    <span className="text-[10px] text-sky-450 font-medium text-center bg-sky-500/5 py-2 px-3 rounded-lg border border-sky-500/10 leading-relaxed">
-                      הזן את אימייל המנהל שלך <strong className="text-white font-mono">haim.bar@gmail.com</strong> או את מפתח המעקף שלך לצורך התחברות מהירה.
-                    </span>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                      <span className="text-[10px] text-sky-450 font-medium text-center bg-sky-500/5 py-2 px-3 rounded-lg border border-sky-500/10 leading-relaxed">
+                        הזן את אימייל המנהל שלך <strong className="text-white font-mono">haim.bar@gmail.com</strong> או את מפתח המעקף שלך לצורך התחברות מהירה.
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
             </div>
 
-          </div>
+            {/* Secure disclaimer brand message */}
+            <p className="text-[10px] text-slate-500 text-center mt-6 tracking-wide">
+              הרשאות וניהול מפתחות מנוהלים על ידי <strong>עסק חכם</strong>
+            </p>
+          </motion.div>
+        </div>
+      );
+    } else {
+      // 🌟 IMPRESSIVE, MODERN INTERACTIVE LANDING PAGE / DEMO VIEW 🌟
+      const isPhoneEntered = demoPhone.trim().length > 0;
+      const isPhoneValid = !isPhoneEntered || (() => {
+        const cleaned = demoPhone.replace(/[\s-()]/g, "");
+        const isIsr = /^(05\d|9725\d|\+9725\d)\d{7}$/.test(cleaned);
+        const isGen = /^\+?[1-9]\d{8,14}$/.test(cleaned);
+        return isIsr || isGen;
+      })();
 
-          {/* Secure disclaimer brand message */}
-          <p className="text-[10px] text-slate-500 text-center mt-6 tracking-wide">
-            הרשאות וניהול מפתחות מנוהלים על ידי <strong>עסק חכם</strong>
-          </p>
-        </motion.div>
-      </div>
-    );
+      return (
+        <div className="min-h-screen bg-[#070709] text-slate-100 flex flex-col font-sans selection:bg-sky-500/30 overflow-x-hidden relative" dir="rtl">
+          
+          {/* Glowing Ambient Background Lights for cosmic aesthetic */}
+          <div className="absolute top-0 left-1/4 w-[400px] h-[400px] bg-sky-500/5 rounded-full blur-[120px] pointer-events-none"></div>
+          <div className="absolute bottom-10 right-1/4 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[140px] pointer-events-none"></div>
+
+          {/* Top Navbar */}
+          <header className="border-b border-slate-800/65 bg-[#0A0D14]/80 backdrop-blur-md sticky top-0 z-40">
+            <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <SmartBusinessLogo size="sm" showContact={false} />
+                <span className="hidden sm:inline-block w-px h-5 bg-slate-800"></span>
+                <span className="text-xs font-semibold text-sky-400 bg-sky-500/10 px-2.5 py-0.5 rounded-full border border-sky-500/20">
+                  הדגמה ציבורית
+                </span>
+              </div>
+              
+              <button
+                onClick={() => setShowLoginGateway(true)}
+                className="px-4 py-2 text-xs font-bold text-slate-300 hover:text-white bg-[#11131C] hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Lock className="w-3.5 h-3.5 text-slate-500 mr-0.5" />
+                כניסת משתמשים רשומים
+              </button>
+            </div>
+          </header>
+
+          {/* Main Hero and Form Container */}
+          <main className="flex-1 max-w-5xl mx-auto px-4 py-8 md:py-14 w-full flex flex-col items-center justify-center relative z-10">
+            
+            <AnimatePresence mode="wait">
+              {!demoSuccessData ? (
+                // --- LANDING STEP: Build Bot Form ---
+                <motion.div
+                  key="landing-form"
+                  initial={{ opacity: 0, scale: 0.98, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.98, y: -10 }}
+                  transition={{ duration: 0.4 }}
+                  className="w-full max-w-2xl flex flex-col items-center"
+                >
+                  {/* Badge */}
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-gradient-to-r from-sky-500/15 to-indigo-500/15 border border-sky-500/20 text-sky-400 text-xs font-bold rounded-full mb-5 shadow-inner animate-pulse">
+                    <Sparkles className="w-3.5 h-3.5 animate-spin [animation-duration:6s]" />
+                    טכנולוגיית סריקה אוטומטית מבוססת AI
+                  </div>
+
+                  {/* Headlines */}
+                  <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-center text-white tracking-tight leading-tight max-w-xl">
+                    צור בוט מכירות לווטסאפ של העסק שלך <span className="bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">בתוך דקה!</span>
+                  </h1>
+
+                  <p className="text-slate-400 text-sm md:text-base text-center mt-4 max-w-lg leading-relaxed font-medium">
+                    רק תן לנו את כתובת האתר שלך. ה-AI יסרוק את התוכן של העסק, ינתח את תחומי הפעילות וירכיב סוכן מכירות בעל הבנה עסקית מעמיקה.
+                  </p>
+
+                  {/* Steps Icons Row */}
+                  <div className="grid grid-cols-3 gap-3 md:gap-6 w-full max-w-lg mt-8 mb-8 text-center bg-[#0C0E14]/40 border border-slate-900 rounded-xl p-4">
+                    <div className="flex flex-col items-center">
+                      <div className="w-9 h-9 rounded-full bg-sky-500/10 text-sky-400 flex items-center justify-center font-bold text-sm border border-sky-500/20 mb-1.5 shadow-sm">
+                        1
+                      </div>
+                      <span className="text-[11px] text-white font-bold">מזינים כתובת אתר</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="w-9 h-9 rounded-full bg-sky-500/10 text-sky-400 flex items-center justify-center font-bold text-sm border border-sky-500/20 mb-1.5 shadow-sm">
+                        2
+                      </div>
+                      <span className="text-[11px] text-white font-bold">ה-AI סורק ומפענח</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 text-white flex items-center justify-center font-bold text-sm mb-1.5 shadow-lg shadow-sky-500/20 animate-pulse">
+                        3
+                      </div>
+                      <span className="text-[11px] text-sky-300 font-bold font-sans">הסוכן מוצב באוויר</span>
+                    </div>
+                  </div>
+
+                  {/* Main Form Box */}
+                  <div className="w-full bg-[#0E1017]/95 border border-slate-800/85 rounded-2xl p-6 md:p-8 shadow-2xl relative backdrop-blur-md">
+                    
+                    <form onSubmit={handleCreateDemoBot} className="flex flex-col gap-5">
+                      
+                      {/* URL input */}
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Globe className="w-4 h-4 text-sky-400" />
+                          כתובת אתר העסק (חובה)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            required
+                            disabled={isDemoSubmitting}
+                            placeholder="לדוגמה: Bareket4you.co.il"
+                            value={demoUrl}
+                            onChange={(e) => {
+                              setDemoUrl(e.target.value);
+                              setDemoError("");
+                            }}
+                            className="w-full pl-3 pr-10 py-3 bg-[#151821] border border-slate-800 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition font-mono tracking-wide"
+                          />
+                          <Globe className="absolute right-3.5 top-3.5 w-4 font-normal text-slate-500" />
+                        </div>
+                        <p className="text-[10px] text-slate-450 leading-relaxed font-medium">
+                          הפלטפורמה תפנה לאתר, תסקור את השירותים, הקורסים, שעות הפעילות ותבנה לפיהם פרומפט רהוט.
+                        </p>
+                      </div>
+
+                      {/* Optional Owner Phone input */}
+                      <div className="flex flex-col gap-2 mt-1">
+                        <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Smartphone className="w-4 h-4 text-sky-400" />
+                            מספר ווטסאפ לקבלת סיכומי שיחות
+                          </span>
+                          <span className="text-[10px] text-slate-550 font-bold px-1.5 py-0.5 bg-slate-800 rounded-lg">אופציונלי</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="tel"
+                            disabled={isDemoSubmitting}
+                            placeholder="הזן את הנייד שלך (לדוגמה: 054-7866119)"
+                            value={demoPhone}
+                            onChange={(e) => {
+                              setDemoPhone(e.target.value);
+                              setDemoError("");
+                            }}
+                            className={`w-full pl-3 pr-10 py-3 bg-[#151821] border rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none transition ${
+                              isPhoneValid 
+                                ? "border-slate-800 focus:border-sky-500 focus:ring-1 focus:ring-sky-500" 
+                                : "border-red-500/50 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                            }`}
+                          />
+                          <Smartphone className="absolute right-3.5 top-3.5 w-4 font-normal text-slate-500" />
+                        </div>
+                        
+                        {!isPhoneValid && (
+                          <p className="text-[11px] text-red-400 font-semibold mt-0.5">
+                            ❌ טלפון לא תקין. נא להזין מספר נייד בתבנית מורשית (לדוגמה: 0547866119).
+                          </p>
+                        )}
+
+                        <p className="text-[10px] text-slate-450 leading-relaxed font-medium">
+                          אם תכניס את מספר הווטסאפ שלך, ננרמל אותו ונזין אותו כטלפון הסלמה וסיכומי שיחות של בעל העסק, כך שתוכל לקדם ולקבל מידע מהסוכן בזמן אמת!
+                        </p>
+                      </div>
+
+                      {demoError && (
+                        <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-300 text-xs rounded-xl text-center font-medium leading-relaxed">
+                          {demoError}
+                        </div>
+                      )}
+
+                      {/* Submit CTA button */}
+                      <div className="mt-2">
+                        <button
+                          type="submit"
+                          disabled={isDemoSubmitting || !isPhoneValid}
+                          className={`w-full py-3.5 rounded-xl text-white font-extrabold text-sm md:text-base flex items-center justify-center gap-2 cursor-pointer shadow-lg transition ${
+                            isDemoSubmitting || !isPhoneValid
+                              ? "bg-slate-850 text-slate-500 border border-slate-800 cursor-not-allowed"
+                              : "bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-450 hover:to-indigo-550 shadow-sky-500/10 hover:shadow-sky-500/20 hover:scale-[1.01]"
+                          }`}
+                        >
+                          {isDemoSubmitting ? (
+                            <span className="flex items-center gap-2">
+                              <RefreshCw className="w-5 h-5 animate-spin text-sky-300" />
+                              מפעיל בוט חכם... אנא המתן
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5">
+                              <Sparkles className="w-5 h-5" />
+                              הקם סוכן מכירות עכשיו ב-60 שניות! 🚀
+                            </span>
+                          )}
+                        </button>
+                      </div>
+
+                    </form>
+
+                    {/* Progressive Animation Dialog inside Form */}
+                    <AnimatePresence>
+                      {isDemoSubmitting && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="absolute inset-0 bg-[#0E1017]/98 rounded-2xl p-6 md:p-8 flex flex-col items-center justify-center text-center"
+                        >
+                          <div className="relative flex items-center justify-center mb-6">
+                            <div className="absolute w-20 h-20 border-4 border-sky-500/5 border-t-sky-400 rounded-full animate-spin"></div>
+                            <div className="absolute w-14 h-14 border-4 border-indigo-500/10 border-b-indigo-400 rounded-full animate-spin [animation-direction:reverse]"></div>
+                            <Bot className="w-8 h-8 text-sky-400 animate-pulse" />
+                          </div>
+
+                          <h3 className="text-lg font-black text-white">ה-AI שלנו סורק ובונה את הסוכן...</h3>
+                          <p className="text-xs text-sky-400 mt-1 font-bold">תהליך זה אורך פחות מדקה</p>
+
+                          {/* Progress Stages Logger */}
+                          <div className="w-full max-w-sm flex flex-col gap-3.5 mt-8 text-right bg-[#141824]/50 border border-slate-850 p-4.5 rounded-xl">
+                            
+                            <div className="flex items-center justify-between gap-2.5">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <CheckCircle className={`w-3.5 h-3.5 ${demoProgressStep !== "connecting" ? "text-emerald-400" : "text-sky-400 animate-pulse"}`} />
+                                1. מתחבר לכתובת האתר שסופקה
+                              </span>
+                              {demoProgressStep === "connecting" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                              ) : (
+                                <span className="text-[10px] text-emerald-400 font-bold font-mono">הושלם</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2.5 border-t border-slate-850 pt-3">
+                              <span className={`text-xs font-bold flex items-center gap-1.5 ${
+                                demoProgressStep === "connecting" ? "text-slate-600" : "text-white"
+                              }`}>
+                                <CheckCircle className={`w-3.5 h-3.5 ${
+                                  demoProgressStep === "connecting" ? "text-slate-700" :
+                                  demoProgressStep === "scraping" ? "text-sky-450 animate-pulse" : "text-emerald-400"
+                                }`} />
+                                2. סורק קוד מקור ותכנים דיגיטליים
+                              </span>
+                              {demoProgressStep === "scraping" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                              ) : demoProgressStep !== "connecting" && demoProgressStep !== "scraping" ? (
+                                <span className="text-[10px] text-emerald-400 font-bold font-mono">הושלם</span>
+                              ) : (
+                                <span className="text-[10px] text-slate-650 font-bold">בהמתנה</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2.5 border-t border-slate-850 pt-3">
+                              <span className={`text-xs font-bold flex items-center gap-1.5 ${
+                                demoProgressStep === "connecting" || demoProgressStep === "scraping" ? "text-slate-600" : "text-white"
+                              }`}>
+                                <CheckCircle className={`w-3.5 h-3.5 ${
+                                  demoProgressStep === "connecting" || demoProgressStep === "scraping" ? "text-slate-700" :
+                                  demoProgressStep === "analyzing" ? "text-sky-450 animate-pulse" : "text-emerald-400"
+                                }`} />
+                                3. מנתח סל מוצרים ומשחיז פרומפט בעזרת Gemini
+                              </span>
+                              {demoProgressStep === "analyzing" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                              ) : demoProgressStep === "syncing" || demoProgressStep === "finished" ? (
+                                <span className="text-[10px] text-emerald-400 font-bold font-mono">הושלם</span>
+                              ) : (
+                                <span className="text-[10px] text-slate-650 font-bold">בהמתנה</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2.5 border-t border-slate-850 pt-3">
+                              <span className={`text-xs font-bold flex items-center gap-1.5 ${
+                                demoProgressStep !== "syncing" && demoProgressStep !== "finished" ? "text-slate-600" : "text-white"
+                              }`}>
+                                <CheckCircle className={`w-3.5 h-3.5 ${
+                                  demoProgressStep !== "syncing" && demoProgressStep !== "finished" ? "text-slate-700" :
+                                  demoProgressStep === "syncing" ? "text-sky-450 animate-pulse" : "text-emerald-400"
+                                }`} />
+                                4. מסתנכרן ומפרסם ל-Webhook חיצוני
+                              </span>
+                              {demoProgressStep === "syncing" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                              ) : demoProgressStep === "finished" ? (
+                                <span className="text-[10px] text-emerald-400 font-bold font-mono">הושלם</span>
+                              ) : (
+                                <span className="text-[10px] text-slate-650 font-bold">בהמתנה</span>
+                              )}
+                            </div>
+
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                  </div>
+                </motion.div>
+              ) : (
+                // --- SUCCESS DEMO STEP: Showcase Generated Bot Content ---
+                <motion.div
+                  key="demo-success"
+                  initial={{ opacity: 0, scale: 0.98, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  transition={{ duration: 0.4 }}
+                  className="w-full max-w-4xl flex flex-col items-center"
+                >
+                  {/* Celebration header */}
+                  <div className="w-14 h-14 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-2xl border border-emerald-500/25 mb-4 shadow-md shadow-emerald-500/5">
+                    <CheckCircle className="w-8 h-8" />
+                  </div>
+                  
+                  <h2 className="text-3xl font-black text-center text-white">סנכרון הסוכן הושלם בהצלחה! 🎉</h2>
+                  <p className="text-slate-350 text-xs sm:text-sm text-center mt-2 max-w-xl font-medium">
+                    ה-AI ניתח בהצלחה את האתר <strong className="text-sky-400 font-mono text-sm">{demoUrl}</strong> והסוכן סונכרן ישירות במצב מכירות ל-Webhook מתוך השרת.
+                  </p>
+
+                  {/* WhatsApp Quick Chat CTA Banner */}
+                  <div className="w-full mt-6 bg-gradient-to-r from-emerald-950/40 via-[#0B1A13]/90 to-emerald-950/40 border-2 border-emerald-500/30 rounded-2xl p-6 shadow-[0_0_20px_rgba(16,185,129,0.15)] flex flex-col sm:flex-row items-center justify-between gap-5 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl"></div>
+                    
+                    <div className="flex items-start gap-4 text-right">
+                      <div className="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
+                        <MessageCircle className="w-6 h-6 animate-bounce [animation-duration:2.5s]" />
+                      </div>
+                      <div>
+                        <h3 className="text-slate-100 font-black text-sm sm:text-base">הסוכן שלך מוכן ומחכה לך ב-WhatsApp! 📱</h3>
+                        <p className="text-slate-350 text-xs mt-1 max-w-lg leading-relaxed font-semibold">
+                          הגדרות הסוכן החדש הוזנו בהצלחה במערכת. אתה מוזמן להתחיל לדבר איתו בשידור חי, לשאול שאלות על העסק שלך ולראות כיצד הוא מנווט את השיחה למכירה!
+                        </p>
+                      </div>
+                    </div>
+
+                    <a
+                      href="https://wa.me/972502177213?text=%D7%94%D7%99%D7%99%2C%20%D7%90%D7%A9%D7%9E%D7%97%20%D7%9C%D7%91%D7%93%D7%95%D7%A7%20%D7%90%D7%AA%20%D7%A1%D7%95%D7%9B%D7%9F%20%D7%94%D7%90%D7%99%D7%99%20%D7%94%D7%97%D7%93%D7%A9%20%D7%A9%D7%9C%D7%99"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm rounded-xl shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 transition transform hover:scale-[1.03] flex items-center gap-2 shrink-0 border border-emerald-400/20 cursor-pointer text-center"
+                    >
+                      <MessageCircle className="w-4 h-4 fill-white text-emerald-600" />
+                      התחל שיחה ב-WhatsApp עכשיו!
+                    </a>
+                  </div>
+
+                  {/* Summary of Sent Hook Values Alert Banner */}
+                  <div className="w-full mt-6 bg-[#0E1B15] border border-emerald-500/20 rounded-xl p-4 text-emerald-350 text-xs text-right leading-relaxed font-medium">
+                    🔍 <strong>פרטי הסוכן שסוגרו ונמסרו במערכת:</strong><br/>
+                    • <strong>מזהה סוכן (Bot ID):</strong> <code className="text-yellow-300">Bot_generic</code> (נשמר קבוע לצורכי הזנת דמו) <br/>
+                    • <strong>שם בעל העסק (מנהל):</strong> חיים בר • <strong>שם העסק במערכת:</strong> סוכן גנרי • <strong>חבילת שיחות (instance):</strong> Bareket <br/>
+                    • <strong>מספר טלפון לסיכומים והסלמות (WhatsApp):</strong> <code className="text-white bg-slate-900 border border-slate-850 px-1.5 py-0.5 rounded font-mono text-xs">{demoSuccessData.normalizedPhone}</code> {demoSuccessData.normalizedPhone === "972547866119" && " (מספר ברירת המחדל)"}
+                  </div>
+
+                  {/* Split Dashboard Content */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full mt-7">
+                    
+                    {/* Left Column: Visual Mockup for Chat Interaction in WhatsApp */}
+                    <div className="bg-[#0B0D14] border border-slate-800/80 rounded-2xl p-4.5 shadow-xl flex flex-col h-[520px]">
+                      <div className="flex items-center justify-between border-b border-slate-850 pb-3 mb-4 select-none">
+                        <div className="flex items-center gap-2.5">
+                          <img 
+                            src="https://lh3.googleusercontent.com/a/default-user=s96-c" 
+                            alt="" 
+                            className="w-8 h-8 rounded-full border border-sky-500/20" 
+                          />
+                          <div>
+                            <h4 className="text-xs font-black text-white">{demoSuccessData.scrapedDomain || "סוכן AI חכם"}</h4>
+                            <span className="text-[10px] text-emerald-400 font-extrabold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span>
+                              נציג מכירות וירטואלי (מחובר)
+                            </span>
+                          </div>
+                        </div>
+                        <Smartphone className="w-4 h-4 text-slate-500" />
+                      </div>
+
+                      {/* Simulated Chat Feed */}
+                      <div className="flex-1 overflow-y-auto space-y-3.5 pr-1.5 font-sans" dir="rtl">
+                        <div className="flex justify-start">
+                          <div className="bg-[#1C1F2E] text-slate-200 p-3 rounded-2xl rounded-tr-none text-xs max-w-[85%] leading-relaxed">
+                            <p className="font-bold text-[10px] text-sky-400 mb-0.5">סוכן מכירות AI</p>
+                            שלום! ברוך הבא ל-{demoSuccessData.scrapedDomain || "העסק שלנו"} 👋 אני נציג הייעוץ והשירות הדיגיטלי כאן. במה אוכל לעזור לך היום בכל הקשור לקורסים או למוצרים שלנו?
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <div className="bg-sky-600 text-white p-3 rounded-2xl rounded-tl-none text-xs max-w-[85%] leading-relaxed">
+                            <p className="font-bold text-[10px] text-sky-200 mb-0.5">לקוח פוטנציאלי</p>
+                            היי, אילו קורסים ומסלולים קיימים אצלכם? ומה המחיר?
+                          </div>
+                        </div>
+
+                        <div className="flex justify-start">
+                          <div className="bg-[#1C1F2E] text-[#E2E8F0] p-3 rounded-2xl rounded-tr-none text-xs max-w-[85%] leading-relaxed space-y-2">
+                            <p className="font-bold text-[10px] text-sky-400 mb-0.5">סוכן מכירות AI</p>
+                            <ReactMarkdown>
+                              {demoSuccessData.promptParts?.coursesInfo ? 
+                                demoSuccessData.promptParts.coursesInfo.split("\n").slice(0, 5).join("\n") + "\n..." : 
+                                "אנו מציעים מגוון רחב של מסלולי פרימיום לימודיים מותאמים אישית!"
+                              }
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <div className="bg-sky-600 text-white p-3 rounded-2xl rounded-tl-none text-xs max-w-[85%] leading-relaxed">
+                            <p className="font-bold text-[10px] text-sky-200 mb-0.5">לקוח פוטנציאלי</p>
+                            נשמע מעניין! תרשום אותי
+                          </div>
+                        </div>
+
+                        <div className="flex justify-start">
+                          <div className="bg-[#1C1F2E] text-slate-200 p-3 rounded-2xl rounded-tr-none text-xs max-w-[85%] leading-relaxed">
+                            <p className="font-bold text-[10px] text-sky-450 mb-0.5">סוכן מכירות AI</p>
+                            מצוין! אשמח לרשום אותך או לתאם לך שיחת ייעוץ מול מנהל החברה חיים בר. אנא תן לי מספר טלפון תקין כדי שנרשום אותך לקורס פרויקט הקרוב!
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-850 pt-2.5 mt-2 shadow-inner">
+                        <div className="bg-[#151722] p-2.5 rounded-xl text-[11px] text-slate-400 text-center font-bold">
+                          📱 הסוכן מגיב בשיחות ומוכן לספק סיכומים לווטסאפ האישי שלך!
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Column: Display Generated Prompts (Dynamic Preview of the Prompt parts) */}
+                    <div className="bg-[#0B0D14] border border-slate-800/80 rounded-2xl p-4.5 shadow-xl flex flex-col h-[520px] overflow-y-auto">
+                      <h3 className="text-sm font-black text-white flex items-center gap-1.5 border-b border-slate-850 pb-3 mb-4">
+                        <Sparkles className="w-4 h-4 text-sky-400 animate-pulse" />
+                        מבנה הפרומפטים שנוצרו עבורך
+                      </h3>
+
+                      <div className="space-y-4 font-sans">
+                        
+                        {/* Prompt 1 */}
+                        <div className="p-3.5 bg-[#12141F] border border-slate-850 rounded-xl">
+                          <h4 className="text-xs font-extrabold text-[#38BDF8] mb-1.5">זהות הסוכן ונחישות המותג</h4>
+                          <p className="text-[11px] text-[#CBD5E1] leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
+                            {demoSuccessData.promptParts?.botIdentity || "(הפרומפט נוצר בהצלחה)"}
+                          </p>
+                        </div>
+
+                        {/* Prompt 2 */}
+                        <div className="p-3.5 bg-[#12141F] border border-slate-850 rounded-xl">
+                          <h4 className="text-xs font-extrabold text-[#38BDF8] mb-1.5">מה אני מוכר — קורסים ושירותים</h4>
+                          <p className="text-[11px] text-[#CBD5E1] leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
+                            {demoSuccessData.promptParts?.coursesInfo || "(הפרומפט נוצר בהצלחה)"}
+                          </p>
+                        </div>
+
+                        {/* Prompt 3 */}
+                        <div className="p-3.5 bg-[#12141F] border border-slate-850 rounded-xl">
+                          <h4 className="text-xs font-extrabold text-[#38BDF8] mb-1.5">זרימת שיחה ואספקת לידים בווטסאפ</h4>
+                          <p className="text-[11px] text-[#CBD5E1] leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
+                            {demoSuccessData.promptParts?.conversationFlow || "(הפרומפט נוצר בהצלחה)"}
+                          </p>
+                        </div>
+
+                        {/* Prompt 4 */}
+                        <div className="p-3.5 bg-[#12141F] border border-slate-850 rounded-xl">
+                          <h4 className="text-xs font-extrabold text-[#38BDF8] mb-1.5">אסקלציה לנציג אנושי</h4>
+                          <p className="text-[11px] text-[#CBD5E1] leading-relaxed max-h-36 overflow-y-auto whitespace-pre-wrap">
+                            {demoSuccessData.promptParts?.humanEscalation || "(הפרומפט נוצר בהצלחה)"}
+                          </p>
+                        </div>
+
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Reset/Footer actions */}
+                  <div className="mt-8 flex flex-wrap gap-4 items-center justify-center">
+                    <button
+                      onClick={() => {
+                        setDemoUrl("");
+                        setDemoPhone("");
+                        setDemoSuccessData(null);
+                        setDemoError("");
+                      }}
+                      className="px-6 py-3 text-xs font-extrabold text-white bg-gradient-to-r from-sky-600 to-indigo-600 rounded-xl border border-sky-500/10 hover:shadow-lg cursor-pointer transition select-none"
+                    >
+                      🔄 צור בוט חדש לעסק נוסף!
+                    </button>
+                    
+                    <button
+                      onClick={() => setShowLoginGateway(true)}
+                      className="px-6 py-3 text-xs font-extrabold text-slate-300 hover:text-white bg-[#0E1017] border border-slate-850 rounded-xl hover:bg-slate-800 transition select-none flex items-center gap-1.5"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-slate-500" />
+                      מעבר להתחברות מורשים ומנהלים
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+          </main>
+
+          {/* Micro footer */}
+          <footer className="border-t border-slate-900 bg-[#05060A]/80 py-5 text-center text-[10px] text-slate-550 relative z-30 select-none">
+            מערכת זו והדגמותיה מוגנים ומנוהלים על ידי <strong>עסק חכם - סוכנים דיגיטליים</strong> © {new Date().getFullYear()}
+          </footer>
+        </div>
+      );
+    }
   }
 
   // MAIN SYSTEM PANEL (Rendered when authenticated)
