@@ -1,0 +1,13 @@
+{
+  "googleClientId": "57299413701-yg5kl6qlbygmuujyeftsgb.apps.googleusercontent.com",
+  "allowedEmails": [
+    "haim.bar@gmail.com"
+  ],
+  "bypassUsers": [
+    {
+      "name": "חיים בר (מנהל)",
+      "email": "haim.bar@gmail.com",
+      "passcode": "HaimBarAdmin2026!"
+    }
+  ]
+}

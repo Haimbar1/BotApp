@@ -1,0 +1,6 @@
+{
+  "name": "מערכת הגדרת סוכנים",
+  "description": "ממשק מעוצב ומתקדם להגדרה וסנכרון של סוכני שירות ומכירה עסקיים עם עורך Markdown ושליחה ל-Webhook",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
