@@ -13,6 +13,7 @@ import {
   Smartphone, 
   Key, 
   Eye, 
+  Save, 
   EyeOff, 
   BookOpen, 
   FileText, 
@@ -203,6 +204,8 @@ export default function App() {
   const [showPromptBuilder, setShowPromptBuilder] = useState(false);
   const [activeModalTab, setActiveModalTab] = useState("botIdentity");
   const [dirtyAgents, setDirtyAgents] = useState<Record<string, boolean>>({});
+  const [showSaveToast, setShowSaveToast] = useState(false);
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"blocks" | "editor" | "preview">("blocks");
 
   // AI Bot Creator / Wizard State variables
   const [showWizardModal, setShowWizardModal] = useState<boolean>(false);
@@ -3702,9 +3705,24 @@ ${escalation || "(לא הוגדר)"}`;
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 15 }}
-              className="flex-1 flex flex-col h-full overflow-hidden"
+              className="flex-1 flex flex-col h-full overflow-hidden relative"
             >
               
+              {/* Floating Save Success Toast */}
+              <AnimatePresence>
+                {showSaveToast && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -25, x: "-50%" }}
+                    animate={{ opacity: 1, y: 0, x: "-50%" }}
+                    exit={{ opacity: 0, y: -25, x: "-50%" }}
+                    className="absolute top-24 left-1/2 -translate-x-1/2 z-50 bg-[#0c2e1d] text-emerald-350 font-black text-xs px-6 py-3.5 rounded-2xl flex items-center gap-2.5 shadow-2xl border border-emerald-500/40 select-none cursor-default"
+                  >
+                    <CheckCircle className="w-4.5 h-4.5 text-emerald-400 shrink-0" />
+                    <span>כל השינויים נשמרו בהצלחה ועודכנו בענן! 💾✨</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* TOP ACTIONS NAV BAR */}
               <div className="bg-[#090b11] border-b border-slate-800 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 select-none">
                 
@@ -3755,26 +3773,82 @@ ${escalation || "(לא הוגדר)"}`;
                     <span>מחולל סוכנים (AI Magic) 🪄</span>
                   </button>
 
+                  <div className="hidden lg:block h-5 w-px bg-slate-800" />
+
+                  {/* Auto-save notification pill */}
+                  <div className="hidden lg:flex items-center gap-1.5 px-3.5 py-2 bg-[#0d151d] border border-emerald-500/20 rounded-xl text-[11px] text-emerald-400 font-extrabold select-none whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    <span>השינויים נשמרים אוטומטית 💾 קליק/הקלדה</span>
+                  </div>
+
                   <div className="hidden md:block h-5 w-px bg-slate-800" />
+
+                  {/* Manual Save Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Trigger a beautiful visual success message
+                      setShowSaveToast(true);
+                      setTimeout(() => {
+                        setShowSaveToast(false);
+                      }, 2500);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 hover:shadow-emerald-500/10 border border-emerald-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                  >
+                    <Save className="w-4 h-4 text-emerald-100" />
+                    <span>שמור שינויים 💾</span>
+                  </button>
 
                   <button
                     type="button"
-                    onClick={() => setShowPromptBuilder(false)}
-                    className="px-5 py-2 bg-[#1b1f32] hover:bg-[#252a46] border border-slate-700 hover:border-slate-600 text-slate-200 font-extrabold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+                    onClick={() => {
+                      // Save, show quick confirmation, and close
+                      setShowSaveToast(true);
+                      setTimeout(() => {
+                        setShowSaveToast(false);
+                        setShowPromptBuilder(false);
+                      }, 400);
+                    }}
+                    className="px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-505 hover:to-blue-600 border border-sky-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
                   >
-                    <ArrowRight className="w-4 h-4 text-sky-400" />
-                    <span>חזרה לדף המערכת 🔙</span>
+                    <ArrowRight className="w-4 h-4 text-sky-200" />
+                    <span>שמור וחזור למערכת 🔙</span>
                   </button>
                   
                 </div>
 
               </div>
 
+              {/* Mobile/Tablet Workspace Tab Bar */}
+              <div className="lg:hidden flex border-b border-slate-800/80 bg-[#090b11]/95 p-2 px-4 gap-2 select-none justify-center items-center">
+                {[
+                  { id: "blocks", label: "📋 9 קטעי הפרומפט" },
+                  { id: "editor", label: "✍️ אזור העריכה" },
+                  { id: "preview", label: "👀 תצוגה מקדימה" }
+                ].map((t) => {
+                  const isSelected = mobileWorkspaceTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setMobileWorkspaceTab(t.id as any)}
+                      className={`flex-1 py-2.5 px-2 rounded-xl transition duration-150 border text-center cursor-pointer font-black text-xs ${
+                        isSelected 
+                          ? "bg-[#161c2d] text-sky-400 border-sky-505/30 shadow-md" 
+                          : "bg-[#0c0d12] text-slate-400 border-slate-800/50 hover:text-slate-250 hover:bg-[#12141c]"
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* TWO COLUMN / THREE COLUMN IDE WORKSPACE */}
               <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 h-0">
                 
                 {/* 1. Left Vertical Nav Side Rail (lg:col-span-3) */}
-                <div className="lg:col-span-3 h-full lg:border-l border-slate-850 bg-[#08090d]/90 flex flex-col select-none overflow-hidden text-right">
+                <div className={`${mobileWorkspaceTab === 'blocks' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full lg:border-l border-slate-850 bg-[#08090d]/90 flex-col select-none overflow-hidden text-right`}>
                   
                   <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017]">
                     <div className="flex items-center gap-1.5">
@@ -3794,7 +3868,7 @@ ${escalation || "(לא הוגדר)"}`;
                       { key: "faqAnswers", title: "שאלות פופולריות (FAQ)", emoji: "❓", desc: "תשובות מפורטות לשאלות", value: faqAnswers },
                       { key: "whatNotToDo", title: "חוקי ברזל (מה לא לעשות)", emoji: "⚠️", desc: "מגבלות קריטיות ואיסורים", value: whatNotToDo },
                       { key: "syllabusLinks", title: "ברושורים, חומרי מידע וקישורים", emoji: "🔗", desc: "לינקים ישירים לקטלוגים וברושורים", value: syllabusLinks },
-                      { key: "humanEscalation", title: "הפניה לנציג (אסקלציה)", emoji: "📞", desc: "מתי ואיך להפנות למנהל", value: humanEscalation }
+                      { key: "humanEscalation", title: "אסקלציה לאנוש (הפניה לנציג)", emoji: "📞", desc: "מתי ואיך להפנות למנהל", value: humanEscalation }
                     ].map((sec) => {
                       const isActive = activeModalTab === sec.key;
                       const charCount = (sec.value || "").trim().length;
@@ -3803,7 +3877,10 @@ ${escalation || "(לא הוגדר)"}`;
                         <button
                           key={sec.key}
                           type="button"
-                          onClick={() => setActiveModalTab(sec.key)}
+                          onClick={() => {
+                            setActiveModalTab(sec.key);
+                            setMobileWorkspaceTab("editor");
+                          }}
                           className={`w-full text-right p-3 rounded-xl transition duration-150 flex items-center justify-between cursor-pointer group border ${
                             isActive 
                               ? "bg-[#181d2d] text-sky-400 border-sky-500/30 font-bold shadow-md ring-1 ring-sky-500/10" 
@@ -3852,7 +3929,7 @@ ${escalation || "(לא הוגדר)"}`;
                 </div>
 
                 {/* 2. Main Middle Spacious Canvas Column (lg:col-span-6) */}
-                <div className="lg:col-span-6 h-full flex flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850" dir="rtl">
+                <div className={`${mobileWorkspaceTab === 'editor' ? 'flex' : 'hidden'} lg:flex lg:col-span-6 h-full flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850`} dir="rtl">
                   {(() => {
                     const sectionsStatic = [
                       {
@@ -3929,7 +4006,7 @@ ${escalation || "(לא הוגדר)"}`;
                       },
                       {
                         key: "humanEscalation",
-                        title: "הפניה לנציג אנושי (אסקלציה)",
+                        title: "אסקלציה לאנוש (הפניה לנציג)",
                         emoji: "📞",
                         desc: "באילו מקרים ומצבים הבוט מחויב להפנות או לשלוח את המשתמש ישירות למנהל המערכת, לחיוג טלפוני או השארת פרטים.",
                         placeholder: "לדוגמה: אם המשתמש שואל שאלות פיננסיות מורכבות או כועס, הפנה אותו לטלפון {OwnerPhone}...",
@@ -3947,6 +4024,16 @@ ${escalation || "(לא הוגדר)"}`;
                         {/* Selected info block */}
                         <div className="bg-[#10121d] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                           <div className="flex items-start gap-4">
+                            {/* Mobile Back Button */}
+                            <button
+                              type="button"
+                              onClick={() => setMobileWorkspaceTab("blocks")}
+                              className="lg:hidden p-2 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 rounded-xl transition cursor-pointer self-center flex items-center justify-center border border-slate-700 shadow shadow-sky-500/5 focus:outline-none shrink-0"
+                              title="חזרה לרשימת החלקים"
+                            >
+                              <ArrowRight className="w-4.5 h-4.5" />
+                            </button>
+
                             <span className="text-4xl bg-[#171b2e] p-3 rounded-2xl border border-slate-800/80 shadow-md">{sec.emoji}</span>
                             <div>
                               <h3 className="text-sm font-black text-white">{sec.title}</h3>
@@ -4146,7 +4233,7 @@ ${escalation || "(לא הוגדר)"}`;
                             placeholder={sec.placeholder}
                             value={activeVal}
                             onChange={(e) => handlePromptPartChange(sec.key as any, e.target.value)}
-                            className="w-full flex-1 p-5 bg-[#050608] border border-slate-800 rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 font-mono text-slate-100 leading-relaxed resize-none placeholder-slate-700 h-full"
+                            className="w-full flex-1 p-5 bg-[#050608] border border-slate-800 rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 font-mono text-slate-100 leading-relaxed resize-none placeholder-slate-700 h-full scrollbar-thin"
                              dir="rtl"
                            />
                          </div>
@@ -4177,7 +4264,7 @@ ${escalation || "(לא הוגדר)"}`;
                  </div>
 
                  {/* 3. Live Preview of Compiled Markdown Prompt (lg:col-span-3) */}
-                 <div className="hidden lg:flex lg:col-span-3 h-full bg-[#08090d] border-r border-[#161a24] flex-col" dir="rtl">
+                 <div className={`${mobileWorkspaceTab === 'preview' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full bg-[#08090d] border-r border-[#161a24] flex-col`} dir="rtl">
                    
                    <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017] select-none">
                      <div className="flex items-center gap-2">
@@ -4187,7 +4274,7 @@ ${escalation || "(לא הוגדר)"}`;
                    </div>
 
                    {/* Rendering full combined prompt */}
-                   <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-slate-300 space-y-4">
+                   <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-slate-300 space-y-4 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-slate-950/30 text-right" dir="rtl">
                      {[
                        { key: "botIdentity", title: "🤖 זהות הבוט ומאפייניו", text: botIdentity },
                        { key: "coursesInfo", title: "📖 מה אני מוכר — מוצרים/שירותים/קורסים", text: coursesInfo },
@@ -4197,9 +4284,9 @@ ${escalation || "(לא הוגדר)"}`;
                        { key: "faqAnswers", title: "❓ תשובות לשאלות נפוצות", text: faqAnswers },
                        { key: "whatNotToDo", title: "⚠️ מה לא לעשות (חוקי הברזל)", text: whatNotToDo },
                        { key: "syllabusLinks", title: "🔗 ברושורים, קטלוגים וקישורים", text: syllabusLinks },
-                       { key: "humanEscalation", title: "📞 מעבר לנציג אנושי", text: humanEscalation }
+                       { key: "humanEscalation", title: "📞 אסקלציה לאנוש (הפניה לנציג)", text: humanEscalation }
                      ].map(part => (
-                       <div key={part.key} className="space-y-1">
+                       <div key={part.key} className="space-y-1 text-right" dir="rtl">
                          <span className="text-sky-455 font-extrabold block text-[9.5px] tracking-wide">{part.title}:</span>
                          <div className="bg-slate-900/50 p-2.5 rounded-lg border border-slate-850 text-slate-200 whitespace-pre-wrap leading-relaxed select-all">
                             {part.text.trim() ? part.text : <span className="text-slate-600 font-semibold italic">ריק - טרם הוגדר תוכן</span>}
@@ -4465,14 +4552,14 @@ ${escalation || "(לא הוגדר)"}`;
                 <div className="flex-1 flex flex-col lg:flex-row overflow-hidden max-h-[70vh]" dir="rtl">
                   
                   {/* Left panel: Preview of prompt parts compiled */}
-                  <div className="flex-1 flex flex-col max-h-[420px] lg:max-h-[65vh] overflow-y-auto border-l border-slate-850 p-5 scrollbar-thin scrollbar-thumb-slate-800 text-right">
-                    <h4 className="text-xs font-black text-sky-400 pb-2 border-b border-slate-800 mb-3 flex items-center justify-between">
+                  <div className="flex-1 flex flex-col max-h-[420px] lg:max-h-[65vh] overflow-y-auto border-l border-slate-850 p-5 scrollbar-thin scrollbar-thumb-slate-800 text-right font-sans" dir="rtl">
+                    <h4 className="text-xs font-black text-sky-400 pb-2 border-b border-slate-800 mb-3 flex items-center justify-between" dir="rtl">
                       <span>👀 ערוך ובחן את 9 קטעי הפרומפט שנוצרו</span>
                       <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-2 py-0.5 rounded-full font-bold">נוצר בהצלחה!</span>
                     </h4>
 
                     {generatedPrompts && (
-                      <div className="space-y-4">
+                      <div className="space-y-4" dir="rtl">
                         {[
                           { key: "botIdentity", title: "🤖 זהות הבוט ומאפייניו" },
                           { key: "coursesInfo", title: "📖 מה אני מוכר — מוצרים/שירותים/קורסים" },
