@@ -10,10 +10,23 @@ async function startServer() {
   const PORT = 3000;
 
   // Cross-Origin Resource Sharing (CORS) support for production multi-origin deployment
-  app.use(cors({
-    origin: true,
-    credentials: true
-  }));
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+    
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
 
   // Initialize server-side Gemini Client
   let ai: GoogleGenAI | null = null;
