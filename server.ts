@@ -649,6 +649,54 @@ async function startServer() {
     return text.substring(0, 12000); // 12,000 characters limit
   }
 
+  function extractInternalPageLinks(html: string, baseUrl: string): string[] {
+    const pageUrls: string[] = [];
+    try {
+      const hrefRegex = /href=["']([^"'\s>]+)["']/gi;
+      let match;
+      const cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+      let baseHostname = "";
+      try {
+        baseHostname = new URL(baseUrl).hostname.replace("www.", "");
+      } catch {
+        return [];
+      }
+      
+      while ((match = hrefRegex.exec(html)) !== null) {
+        const link = match[1].trim();
+        if (!link || link.startsWith("javascript:") || link.startsWith("#") || link.startsWith("mailto:") || link.startsWith("tel:")) {
+          continue;
+        }
+        
+        // Skip obvious document or static assets
+        if (/\.(pdf|docx?|xlsx?|pptx?|epub|zip|png|jpe?g|gif|css|js|svg)$/i.test(link)) {
+          continue;
+        }
+
+        let absoluteUrl = link;
+        if (!/^https?:\/\//i.test(link)) {
+          try {
+            absoluteUrl = new URL(link, cleanBaseUrl).href;
+          } catch {
+            continue;
+          }
+        }
+
+        try {
+          const linkHostname = new URL(absoluteUrl).hostname.replace("www.", "");
+          if (linkHostname === baseHostname && absoluteUrl !== baseUrl && absoluteUrl !== cleanBaseUrl) {
+            if (!pageUrls.includes(absoluteUrl)) {
+              pageUrls.push(absoluteUrl);
+            }
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.error("[SERVER] Error extracting internal page links:", e);
+    }
+    return pageUrls;
+  }
+
   // --- MODEL FALLBACK HELPER FOR GEMINI ---
   async function generateWithFallback(aiClient: any, params: any) {
     // If the primary model fails (e.g. Quota Exceeded/429/503), fall back to multiple highly available flash models
@@ -720,30 +768,113 @@ async function startServer() {
 
       console.log(`[PUBLIC DEMO] Creating demo bot for URL: ${url}, Phone: ${ownerPhone}, Type: ${activeAgentType}, Agent Name: ${finalAgentName}, Additional text length: ${hasAdditionalContext ? additionalContext.trim().length : 0}`);
 
-      // 2. Scrape website content
+      // 2. Scrape website content with deep research crawl over subpages
       let scrapedText = "";
       let brochureLinks: string[] = [];
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 seconds connection timeout
+        console.log(`[SCRAPER] Scrape main URL started for: ${url}`);
         
-        const fetchResponse = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"
+        // Helper to crawl a single page securely
+        const crawlPage = async (targetUrl: string): Promise<{ text: string; links: string[] }> => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 seconds timeout per subpage
+            const fetchResponse = await fetch(targetUrl, {
+              signal: controller.signal,
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"
+              }
+            });
+            clearTimeout(timeoutId);
+            if (fetchResponse.ok) {
+              const html = await fetchResponse.text();
+              const links = extractDocumentLinks(html, targetUrl);
+              const text = extractCleanText(html);
+              return { text, links };
+            }
+          } catch (e: any) {
+            console.warn(`[SCRAPER] Failed crawling page ${targetUrl}:`, e?.message || e);
           }
-        });
-        clearTimeout(timeoutId);
-        
-        if (fetchResponse.ok) {
-          const html = await fetchResponse.text();
-          brochureLinks = extractDocumentLinks(html, url);
-          scrapedText = extractCleanText(html);
+          return { text: "", links: [] };
+        };
+
+        // First step: fetch home page/main URL
+        const mainController = new AbortController();
+        const mainTimeoutId = setTimeout(() => mainController.abort(), 9000);
+        let mainHtml = "";
+        try {
+          const fetchResponse = await fetch(url, {
+            signal: mainController.signal,
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"
+            }
+          });
+          if (fetchResponse.ok) {
+            mainHtml = await fetchResponse.text();
+          }
+        } catch (e: any) {
+          console.warn(`[SCRAPER] Main page scrape fetch failed:`, e?.message || e);
+        } finally {
+          clearTimeout(mainTimeoutId);
+        }
+
+        if (mainHtml) {
+          brochureLinks = extractDocumentLinks(mainHtml, url);
+          scrapedText = extractCleanText(mainHtml);
+
+          // Get internal pages to crawl
+          const internalLinks = extractInternalPageLinks(mainHtml, url);
+          if (internalLinks.length > 0) {
+            const priorityKeywords = [
+              "datalogger", "system", "product", "catalog", "brochure", "download", "spec", "manual",
+              "doc", "file", "device", "support", "service", "item", "guide", "pdf", "about"
+            ];
+            
+            const scoredPages = internalLinks.map(link => {
+              let score = 0;
+              const lowerUrl = link.toLowerCase();
+              for (const kw of priorityKeywords) {
+                if (lowerUrl.includes(kw)) {
+                  score += 10;
+                  if (lowerUrl.includes("/" + kw) || lowerUrl.includes(kw + "/")) {
+                    score += 15;
+                  }
+                }
+              }
+              return { link, score };
+            });
+
+            scoredPages.sort((a, b) => b.score - a.score);
+            const topSubPagesPath = scoredPages.slice(0, 4).map(p => p.link);
+            
+            console.log(`[SCRAPER] Deep crawling sub-pages for document research:`, topSubPagesPath);
+
+            // Scrape sub-pages concurrently with rapid timeouts
+            const results = await Promise.all(
+              topSubPagesPath.map(p => crawlPage(p))
+            );
+
+            // Merge results
+            for (let i = 0; i < results.length; i++) {
+              const res = results[i];
+              const pUrl = topSubPagesPath[i];
+              if (res.text && res.text.length > 30) {
+                scrapedText += `\n\n--- תוכן עמוד פנימי קשור (${pUrl}) ---\n` + res.text;
+              }
+              for (const lnk of res.links) {
+                if (!brochureLinks.includes(lnk)) {
+                  brochureLinks.push(lnk);
+                }
+              }
+            }
+          }
         }
       } catch (fErr: any) {
-        console.warn(`[PUBLIC DEMO] Scrape fetch failed for ${url}:`, fErr?.message || fErr);
+        console.warn(`[PUBLIC DEMO] Deep scrape fetch failed for ${url}:`, fErr?.message || fErr);
       }
 
       // Extract details with Gemini (or fallback defaults if Gemini is not running/available)
@@ -792,9 +923,9 @@ async function startServer() {
             `  "conversationFlow": "זרימת השיחה המושלמת בווטסאפ: פתיחה מלבבת, ${isSupport ? 'הבנת התקלה/השאלה לעומק ויצירת פתרונות שלב אחר שלב' : 'שאלות הכוון על צורכי הלקוח למטרות מכירה, מתן ערך'} וקריאה לפעולה ליצירת קשר במידת הצורך. חוק בל יעבור: אין לשאול שאלות חוזרות ומיותרות אם אין לך מידע, פנה מיידית לקבלת עזרה אנושית!",\n` +
             `  "writingStyle": "הנחיות לכתיבה בווטסאפ: שבירת שורות, סגנון קצר, חלוקה לנקודות או שלבים ברורים, שימוש יצירתי וקטן באימוג'ים מתאימים",\n` +
             `  "faqAnswers": "3-4 שאלות ותשובות נפוצות מבוססות על המידע האמיתי מהעסק, בפורמט ש: ות: בעברית",\n` +
-            `  "whatNotToDo": "חוקי ברזל שהבוט לעולם לא יפר: 1) אסור בתכלית האיסור לשאול שאלות חוזרות או להמשיך לשאול שאלות בענייני ברושורים / מסמכים שאין לך! 2) לא להמציא פתרונות או מחירים שלא יודע, 3) לא לפתוח בדיון סרק אם אין לך מה להציע.",\n` +
-            `  "syllabusLinks": "חוק ברזל בנושא ברושורים ומסמכים: אם הלקוח שואל או מבקש ברושור, מסמך או הדרכה כלשהי - הבוט חייב לתת מיידית ובצורה מפורשת וקצרה את הקישורים הישירים למסמכים/PDF/ברושורים שסופקו לעיל. אם אין לו קישור מדויק מתאים, עליו לעצור מיד ולא לשאול שאלות, אלא לבצע אסקלציה מיידית לנציג אנושי בתממצות קיצוני!",\n` +
-            `  "humanEscalation": "הנחיות הפניה מהירה ואבסולוטית לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באופן ישיר, חד, ברור ובלי שאלות נוספות: 'אינני מחזיק במסמך המבוקש. אנא פנה ישירות אל ${finalAgentName} במספר ${ownerPhone}'. חל איסור מוחלט להמשיך לשאול שאלות המשך או לנסות להחזיק את הלקוח בצ'אט שלא לצורך!"\n` +
+            `  "whatNotToDo": "חוקי ברזל שהבוט לעולם לא יפר: 1) בשום אופן אין לסיים, לחתוך או לעצור את השיחה אם המשתמש מבקש ברושור או מסמך שאין לך! 2) לא להמציא פתרונות או מחירים שלא יודע, 3) לא לפתוח בדיון סרק אם אין לך מה להציע, אלא לנתב באדיבות ולהמשיך לענות לשאר שאלות המשתמש.",\n` +
+            `  "syllabusLinks": "חוק ברזל בנושא ברושורים ומסמכים: אם הלקוח שואל או מבקש ברושור, מסמך, עלון או הדרכה כלשהי - הבוט חייב לתת מיידית ובצורה מפורשת וקצרה את הקישורים הישירים למסמכים/PDF/ברושורים שסופקו לעיל. אולם, אם אין לבוט קישור מדויק מתאים, אסור לו בשום אופן לעצור, לסיים או לחתוך את השיחה! עליו להשיב בנימוס רב כי אין לו את הקישור המדויק כרגע וממליץ לברר מול הנציג, אך להמשיך מיד הלאה בצורה שירותית ולשאול: 'בינתיים, אילו שאלות נוספות או נושאים שתרצה שאשמח לעזור בהם?'.",\n` +
+            `  "humanEscalation": "הנחיות הפניה לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה בנימוס רב שהם יכולים לפנות ישירות אל ${finalAgentName} במספר ${ownerPhone} לקבלת הקובץ. עם זאת, חל איסור מוחלט לעצור, לסיים, או לחתוך את השיחה מיוזמת הבוט! הבוט ימשיך תמיד בשיחה וישאיר אותה פתוחה, וישאל מיד בסיום ההפניה: 'בינתיים, האם יש משהו נוסף שתרצה שאעזור לך בו או נושאים נוספים שנוכל לדבר עליהם?' כדי להמשיך לתת שירות באהבה ובאדיבות."\n` +
             `}`;
 
           const response = await generateWithFallback(ai, {
@@ -846,11 +977,11 @@ async function startServer() {
             conversationFlow: `זרימת שיחה מומלצת לתמיכה טכנית:\n1. ברכה אדיבה והצגת בוט התמיכה של ${businessName}.\n2. שאלה והבנה של קושי הלקוח או התקלה.\n3. הצגת פתרון מיידי שלב אחר שלב.\n4. קבלת פרטים או העברה של פנייה אל ${finalAgentName} בטלפון במקרה הצורך. חוק בל יעבור: אין לשאול שאלות חוזרות ומיותרות אם אין לך מידע, פנה מיידית לקבלת עזרה אנושית!`,
             writingStyle: `הנחיות עימוד וניסוח:\n- הודעות מבוססות שלבים (1, 2, 3) ברורים.\n- מעבר שורה כפול בין שלב לשלב לנוחיות קריאה.\n- שימוש באימוג'ים מתאימים כגון 🛠️ או 💻.`,
             faqAnswers: `שאלות ותשובות נפוצות:\nש: האם יש מדריך למשתמש?\nת: כן, המדריך זמין להורדה מלאה והוא מפורט בסעיף הקישורים.\n\nש: מה לעשות במקרה של שגיאת התחברות?\nת: יש לבצע איפוס סיסמה קצר או ליצור קשר ישיר עם התמיכה של ${finalAgentName}.`,
-            whatNotToDo: `מגבלות לסוכן:\n1. אסור בתכלית האיסור לשאול שאלות חוזרות או להמשיך לשאול שאלות בענייני ברושורים / מסמכים שאין לך!\n2. לא להמציא פתרונות או מחירים שלא יודע.\n3. לא לפתוח בדיון סרק אם אין לך מה להציע.`,
+            whatNotToDo: `מגבלות לסוכן:\n1. בשום אופן אין לסיים, לחתוך או לעצור את השיחה אם המשתמש מבקש ברושור או מסמך שאין לך!\n2. לא להמציא פתרונות או מחירים שלא יודע.\n3. לא לפתוח בדיון סרק אם אין לך מה להציע, אלא לנתב באדיבות ולהמשיך לענות לשאר שאלות המשתמש.`,
             syllabusLinks: brochureLinks.length > 0 
               ? brochureLinks.map(l => `- מסמך/ברושור: ${l}`).join("\n") 
               : `- מדריך למשתמש הרשמי של ${businessName}: ${url}\n- שאלות נפוצות ותמיכה: ${url}/support`,
-            humanEscalation: `הנחיות הפניה מהירה ואבסולוטית לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}:\n1. הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו.\n2. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באופן ישיר, חד, ברור ובלי שאלות נוספות: "אינני מחזיק במסמך המבוקש. אנא פנה ישירות אל ${finalAgentName} במספר ${ownerPhone}". חל איסור מוחלט להמשיך לשאול שאלות המשך או לנסות להחזיק את הלקוח בצ'אט שלא לצורך!`
+            humanEscalation: `הנחיות הפניה מהירה לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}:\n1. הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו (רק הלקוח מסיים).\n2. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באדיבות ובנימוס שהם מוזמנים לפנות ישירות אל ${finalAgentName} במספר ${ownerPhone}. מיד לאחר מכן, שאל באדיבות: "בינתיים, האם יש משהו נוסף שתרצה שאעזור לך בו או שאלה מעניינת נוספת?" כדי להמשיך את השיחה תמיד פתוחה ושירותית!`
           };
         } else {
           googleAiPromptResponse = {
@@ -861,11 +992,11 @@ async function startServer() {
             conversationFlow: `זרימת שיחה מומלצת:\n1. ברכה אדיבה והצגת הבוט של ${businessName}.\n2. שאלה לגבי פתרון העניין של הלקוח.\n3. הצגת פתרונות מהירים מהאתר.\n4. לבקש ווטסאפ או שם מלא וטלפון ליצירת קשר על ידי ${finalAgentName}. חוק בל יעבור: אין לשאול שאלות חוזרות ומיותרות אם אין לך מידע, פנה מיידית לקבלת עזרה אנושית!`,
             writingStyle: `הנחיות עימוד וניסוח:\n- הודעות קצרות של 2-3 משפטים לכל היותר.\n- להפריד נושאים עם מעבר שורה כפול.\n- להשתמש באימוג'ים בצורה חכמה ומדודה 🚀.`,
             faqAnswers: `שאלות ותשובות נפוצות:\nש: איך מתחילים אצלכם?\nת: פשוט מאוד! משאירים פה טלפון ונציג מוסמך יחזור אליכם בהקדם.\n\nש: באילו אזורים אתם נותנים שירות?\nת: אנו מספקים מענה מהיר בפריסה ארצית מלאה דרך האתר הדיגיטלי.`,
-            whatNotToDo: `מגבלות לסוכן:\n1. אסור בתכלית האיסור לשאול שאלות חוזרות או להמשיך לשאול שאלות בענייני ברושורים / מסמכים שאין לך!\n2. לא להמציא פתרונות או מחירים שלא יודע.\n3. לא לפתוח בדיון סרק אם אין לך מה להציע.`,
+            whatNotToDo: `מגבלות לסוכן:\n1. בשום אופן אין לסיים, לחתוך או לעצור את השיחה אם המשתמש מבקש ברושור או מסמך שאין לך!\n2. לא להמציא פתרונות או מחירים שלא יודע.\n3. לא לפתוח בדיון סרק אם אין לך מה להציע, אלא לנתב באדיבות ולהמשיך לענות לשאר שאלות המשתמש.`,
             syllabusLinks: brochureLinks.length > 0
               ? brochureLinks.map(l => `- מסמך/ברושור: ${l}`).join("\n")
               : `- מוצרי אתר ${businessName}: ${url}\n- מידע נוסף ויצירת קשר: ${url}/contact`,
-            humanEscalation: `הנחיות הפניה מהירה ואבסולוטית לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}:\n1. הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו.\n2. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באופן ישיר, חד, ברור ובלי שאלות נוספות: "אינני מחזיק במסמך המבוקש. אנא פנה ישירות אל ${finalAgentName} במספר ${ownerPhone}". חל איסור מוחלט להמשיך לשאול שאלות המשך או לנסות להחזיק את הלקוח בצ'אט שלא לצורך!`
+            humanEscalation: `הנחיות הפניה מהירה לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}:\n1. הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו (רק הלקוח מסיים).\n2. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באדיבות ובנימוס שהם מוזמנים לפנות ישירות אל ${finalAgentName} במספר ${ownerPhone}. מיד לאחר מכן, שאל באדיבות: "בינתיים, האם יש משהו נוסף שתרצה שאעזור לך בו או נושא נוסף שנוכל לפתור?" כדי להמשיך את השיחה תמיד פתוחה ושירותית!`
           };
         }
       }
