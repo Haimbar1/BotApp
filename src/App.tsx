@@ -1656,6 +1656,16 @@ ${escalation || "(לא הוגדר)"}`;
     setSyncMessage("");
     
     // Resolve states or overrides
+    const targetId = agentOverride ? agentOverride.id : activeId;
+    const activeAgent = agents.find(a => a.id === targetId);
+    
+    // Explicitly check if we are dealing with a new bot.
+    // If isNewBot is defined, use it. Otherwise, look at whether the agent has a lastSyncedAt timestamp yet.
+    // If there is no lastSyncedAt timestamp, it's a first-time sync for a new bot.
+    const resolvedIsNewBot = isNewBot !== undefined 
+      ? isNewBot 
+      : (activeAgent ? !activeAgent.lastSyncedAt : true);
+
     const currentOwnerName = agentOverride ? agentOverride.ownerName : ownerName;
     const currentBusinessName = agentOverride ? agentOverride.businessName : businessName;
     const currentOwnerPhone = agentOverride ? agentOverride.ownerPhone : ownerPhone;
@@ -1749,8 +1759,8 @@ ${escalation || "(לא הוגדר)"}`;
       timestamp: new Date().toISOString(),
       source: "עסק חכם - סוכנים דיגיטליים",
       systemId: "ais-agent-configurator",
-      isNewBot: isNewBot || false,
-      "בוט חדש": isNewBot || false,
+      isNewBot: resolvedIsNewBot,
+      "בוט חדש": resolvedIsNewBot,
       
       // Webhook URL option to bypass hardcoding
       webhookUrl: webhookUrl || undefined

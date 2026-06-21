@@ -1094,7 +1094,9 @@ async function startServer() {
         // Metadata properties
         timestamp: new Date().toISOString(),
         source: "עמוד נחיתה והדגמה ציבורי",
-        systemId: "ais-public-demo-builder"
+        systemId: "ais-public-demo-builder",
+        isNewBot: true,
+        "בוט חדש": true
       };
 
       // 5. Fire event to n8n Webhook
