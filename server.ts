@@ -1,12 +1,19 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Cross-Origin Resource Sharing (CORS) support for production multi-origin deployment
+  app.use(cors({
+    origin: true,
+    credentials: true
+  }));
 
   // Initialize server-side Gemini Client
   let ai: GoogleGenAI | null = null;
