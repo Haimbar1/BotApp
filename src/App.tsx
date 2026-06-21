@@ -103,6 +103,7 @@ interface AgentConfig {
   syllabusLinks?: string;
   humanEscalation?: string;
   agentEmail?: string; // Associated email address for security and permissions
+  status?: string;
 }
 
 const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
@@ -140,6 +141,8 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
     { label: "📞 מעבר לנציג", emojis: ["📞", "📱", "🧑‍💻", "👑", "🛎️", "🤝", "💬", "🚨", "⏳", "🆘", "✉️", "📤"] }
   ]
 };
+
+let globalSaveTimeoutId: any = null;
 
 export default function App() {
   // Authentication & Permission states
@@ -195,6 +198,7 @@ export default function App() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [showKey, setShowKey] = useState<boolean>(false);
   const [webhookUrl, setWebhookUrl] = useState<string>(DEFAULT_WEBHOOK_URL);
   const [isUrlLocked, setIsUrlLocked] = useState<boolean>(true);
@@ -220,6 +224,7 @@ export default function App() {
   const [key, setKey] = useState("");
   const [leadFollowUpDays, setLeadFollowUpDays] = useState("3");
   const [agentEmail, setAgentEmail] = useState("");
+  const [status, setStatus] = useState<string>("Not Active");
 
   // Split prompt states
   const [botIdentity, setBotIdentity] = useState("");
@@ -611,6 +616,7 @@ export default function App() {
         key: "demo-key",
         leadFollowUpDays: leadFollowUpDays || "3",
         agentEmail: sessionUser?.email || "haim.bar@gmail.com",
+        status: "Not Active",
         
         // 9 parts generated
         botIdentity: newBotIdentity,
@@ -650,6 +656,9 @@ export default function App() {
 
       saveAgentsToServer(updated);
       setShowWizardModal(false);
+
+      // Trigger automatic synchronization to the webhook with the isNewBot parameter set to true
+      handleSyncToWebhook(newAgent, true);
 
       // Reset dirty status so it doesn't request webhook immediately upon creation
       setDirtyAgents(prev => ({ ...prev, [newId]: false }));
@@ -924,6 +933,7 @@ export default function App() {
         .replace(/{BotId}/g, "bot_demo"),
       key: "",
       leadFollowUpDays: "3",
+      status: "Not Active",
     };
     const list = [newAgent];
     setAgents(list);
@@ -963,19 +973,40 @@ export default function App() {
   };
 
   // Synchronously save agent arrays to server-side JSON file
-  const saveAgentsToServer = async (updatedAgents: AgentConfig[], token = sessionToken) => {
+  const saveAgentsToServer = async (updatedAgents: AgentConfig[], token = sessionToken, isDebounced = false) => {
     try {
       localStorage.setItem("n8n_agents_configs", JSON.stringify(updatedAgents));
       if (!token) return;
 
-      await apiFetch("/api/agents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ agents: updatedAgents })
-      });
+      if (globalSaveTimeoutId) {
+        clearTimeout(globalSaveTimeoutId);
+      }
+
+      if (isDebounced) {
+        globalSaveTimeoutId = setTimeout(async () => {
+          try {
+            await apiFetch("/api/agents", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({ agents: updatedAgents })
+            });
+          } catch (e) {
+            console.error("Failed persisting agents to server database in debounced call:", e);
+          }
+        }, 1500);
+      } else {
+        await apiFetch("/api/agents", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ agents: updatedAgents })
+        });
+      }
     } catch (e) {
       console.error("Failed persisting agents to server database:", e);
     }
@@ -1139,6 +1170,7 @@ ${escalation || "(לא הוגדר)"}`;
     setKey(agent.key || "");
     setLeadFollowUpDays(agent.leadFollowUpDays || "3");
     setAgentEmail(agent.agentEmail || "");
+    setStatus(agent.status || "Not Active");
     
     // Load individual sections with extraction support or defaults
     const parts = getOrExtractBypassParts(agent);
@@ -1217,7 +1249,7 @@ ${escalation || "(לא הוגדר)"}`;
       return agent;
     });
     setAgents(updated);
-    saveAgentsToServer(updated);
+    saveAgentsToServer(updated, sessionToken, true);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
   };
 
@@ -1276,16 +1308,54 @@ ${escalation || "(לא הוגדר)"}`;
     else if (field === "key") setKey(value);
     else if (field === "leadFollowUpDays") setLeadFollowUpDays(value);
     else if (field === "agentEmail") setAgentEmail(value);
+    else if (field === "status") setStatus(value);
+
+    let updatedAgentToSync: AgentConfig | undefined;
+    let otherDeactivatedAgents: AgentConfig[] = [];
 
     const updated = agents.map(agent => {
       if (agent.id === activeId) {
-        return { ...agent, [field]: value };
+        const u = { ...agent, [field]: value };
+        updatedAgentToSync = u;
+        return u;
       }
       return agent;
     });
-    setAgents(updated);
-    saveAgentsToServer(updated);
+
+    const { updatedList } = (() => {
+      const targetAgent = updated.find(a => a.id === activeId);
+      if (!targetAgent || targetAgent.status !== "Active" || !targetAgent.whatsappInstance) {
+        return { updatedList: updated };
+      }
+      const currentInstance = targetAgent.whatsappInstance;
+      const otherDeact: AgentConfig[] = [];
+      const resList = updated.map(agent => {
+        if (agent.id !== activeId && agent.whatsappInstance === currentInstance && agent.status === "Active") {
+          const deact = { ...agent, status: "Not Active" };
+          otherDeact.push(deact);
+          return deact;
+        }
+        return agent;
+      });
+      otherDeactivatedAgents = otherDeact;
+      return { updatedList: resList };
+    })();
+
+    setAgents(updatedList);
+    saveAgentsToServer(updatedList, sessionToken, true);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+
+    const finalTarget = updatedList.find(a => a.id === activeId);
+
+    // If change is status or whatsappInstance, sync immediately so webhook responds to toggle
+    if ((field === "status" || field === "whatsappInstance") && finalTarget) {
+      handleSyncToWebhook(finalTarget, false);
+    }
+
+    // Sync any other deactivated agents immediately so the backend database reflects the change
+    for (const deact of otherDeactivatedAgents) {
+      handleSyncToWebhook(deact, false);
+    }
   };
 
   // Add a new agent profile
@@ -1310,6 +1380,7 @@ ${escalation || "(לא הוגדר)"}`;
       key: "",
       leadFollowUpDays: "3",
       agentEmail: sessionUser?.email || "haim.bar@gmail.com",
+      status: "Not Active",
     };
 
     const updated = [...agents, newAgent];
@@ -1510,6 +1581,53 @@ ${escalation || "(לא הוגדר)"}`;
     setActiveId(newId);
     loadAgentToForm(duplicated);
     saveAgentsToServer(updated);
+
+    // Trigger automatic synchronization to the webhook with the isNewBot parameter set to true
+    handleSyncToWebhook(duplicated, true);
+  };
+
+  // Toggle active / not active status for an agent with WhatsApp Instance mutual exclusivity rule
+  const toggleAgentStatus = (targetId: string) => {
+    let updatedAgentToSync: AgentConfig | undefined;
+    let otherDeactivatedAgents: AgentConfig[] = [];
+
+    const currentAgent = agents.find(a => a.id === targetId);
+    if (!currentAgent) return;
+
+    const oldStatus = currentAgent.status || "Not Active";
+    const newStatus = oldStatus === "Active" ? "Not Active" : "Active";
+    const currentInstance = currentAgent.whatsappInstance;
+
+    const updated = agents.map(agent => {
+      if (agent.id === targetId) {
+        const u = { ...agent, status: newStatus };
+        updatedAgentToSync = u;
+        return u;
+      } else {
+        // Enforce same WhatsApp Instance unique Active limit
+        if (newStatus === "Active" && currentInstance && agent.whatsappInstance === currentInstance && agent.status === "Active") {
+          const deact = { ...agent, status: "Not Active" };
+          otherDeactivatedAgents.push(deact);
+          return deact;
+        }
+        return agent;
+      }
+    });
+
+    setAgents(updated);
+    saveAgentsToServer(updated, sessionToken, false);
+
+    if (targetId === activeId) {
+      setStatus(newStatus);
+    }
+
+    if (updatedAgentToSync) {
+      handleSyncToWebhook(updatedAgentToSync, false);
+    }
+
+    for (const deact of otherDeactivatedAgents) {
+      handleSyncToWebhook(deact, false);
+    }
   };
 
   // Log out of session
@@ -1532,7 +1650,7 @@ ${escalation || "(לא הוגדר)"}`;
   };
 
   // Synchronize to n8n Webhook (POST Proxy)
-  const handleSyncToWebhook = async (agentOverride?: AgentConfig) => {
+  const handleSyncToWebhook = async (agentOverride?: AgentConfig, isNewBot?: boolean) => {
     setIsSyncing(true);
     setSyncStatus("idle");
     setSyncMessage("");
@@ -1562,6 +1680,7 @@ ${escalation || "(לא הוגדר)"}`;
     const currentKey = agentOverride ? agentOverride.key : key;
     const currentLeadFollowUpDays = agentOverride ? agentOverride.leadFollowUpDays : leadFollowUpDays;
     const currentAgentEmail = agentOverride ? agentOverride.agentEmail : agentEmail;
+    const currentStatus = agentOverride ? (agentOverride.status || "Not Active") : (status || "Not Active");
     
     const currentBotIdentity = agentOverride ? agentOverride.botIdentity : botIdentity;
     const currentCoursesInfo = agentOverride ? agentOverride.coursesInfo : coursesInfo;
@@ -1586,9 +1705,11 @@ ${escalation || "(לא הוגדר)"}`;
       agentEmail: currentAgentEmail,
       "קהל יעד": currentKidsCourses,
       "קבל יעד": currentKidsCourses,
-      Status: "פעיל",
-      status: "פעיל",
-      "סטטוס": "פעיל",
+      Status: currentStatus,
+      status: currentStatus,
+      "סטטוס": currentStatus === "Active" ? "פעיל" : "לא פעיל",
+      "מצב": currentStatus,
+      "מצב בוט": currentStatus,
       
       // Separate 9 prompt parts
       botIdentity: currentBotIdentity,
@@ -1628,6 +1749,8 @@ ${escalation || "(לא הוגדר)"}`;
       timestamp: new Date().toISOString(),
       source: "עסק חכם - סוכנים דיגיטליים",
       systemId: "ais-agent-configurator",
+      isNewBot: isNewBot || false,
+      "בוט חדש": isNewBot || false,
       
       // Webhook URL option to bypass hardcoding
       webhookUrl: webhookUrl || undefined
@@ -1649,17 +1772,20 @@ ${escalation || "(לא הוגדר)"}`;
         setSyncStatus("success");
         setSyncMessage("השמירה והסנכרון בוצעו בהצלחה! 🚀");
         
-        // Update last synced timestamps
+        // Update last synced timestamps using a functional state updater to avoid stale state closures
         const nowStr = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) + " - " + new Date().toLocaleDateString('he-IL');
         const targetId = agentOverride ? agentOverride.id : activeId;
-        const updated = agents.map(agent => {
-          if (agent.id === targetId) {
-            return { ...agent, lastSyncedAt: nowStr };
-          }
-          return agent;
+        
+        setAgents(prevAgents => {
+          const freshUpdated = prevAgents.map(agent => {
+            if (agent.id === targetId) {
+              return { ...agent, lastSyncedAt: nowStr };
+            }
+            return agent;
+          });
+          saveAgentsToServer(freshUpdated, sessionToken, false);
+          return freshUpdated;
         });
-        setAgents(updated);
-        saveAgentsToServer(updated);
         setDirtyAgents(prev => ({ ...prev, [targetId]: false }));
       } else {
         setSyncStatus("error");
@@ -1672,6 +1798,27 @@ ${escalation || "(לא הוגדר)"}`;
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  // Manual save click handler for prompt editor
+  const handleManualSavePrompt = async (closeAfter = false) => {
+    // 1. Force immediate server save of current agents array to /api/agents (no debounce)
+    if (globalSaveTimeoutId) {
+      clearTimeout(globalSaveTimeoutId);
+    }
+    await saveAgentsToServer(agents, sessionToken, false);
+
+    // 2. Trigger the webhook synchronization
+    await handleSyncToWebhook();
+
+    // 3. Show toast and optionally close
+    setShowSaveToast(true);
+    setTimeout(() => {
+      setShowSaveToast(false);
+      if (closeAfter) {
+        setShowPromptBuilder(false);
+      }
+    }, closeAfter ? 650 : 2500);
   };
 
   // Pull configurations FROM n8n Webhook GET URL and update local fields
@@ -1735,6 +1882,8 @@ ${escalation || "(לא הוגדר)"}`;
         const pulledKey = getVal(["key", "Key", "מפתח"]);
         const pulledLeadFollowUpDays = getVal(["leadFollowUpDays", "זמן למעקב אחרי ליד בימים"]) || "3";
         const pulledAgentEmail = getVal(["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]);
+        const pulledStatusRaw = getVal(["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
+        const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
         const pulledBotIdentity = getVal(["botIdentity", "זהות הבוט"]);
         const pulledCoursesInfo = getVal(["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר"]);
@@ -1816,6 +1965,7 @@ ${escalation || "(לא הוגדר)"}`;
         setBusinessPrompt(compiled);
         setKey(pulledKey);
         setLeadFollowUpDays(pulledLeadFollowUpDays);
+        setStatus(pulledStatus);
         if (pulledAgentEmail) {
           setAgentEmail(pulledAgentEmail);
         }
@@ -1844,6 +1994,7 @@ ${escalation || "(לא הוגדר)"}`;
               key: pulledKey,
               leadFollowUpDays: pulledLeadFollowUpDays,
               agentEmail: pulledAgentEmail || agent.agentEmail || (sessionUser?.email || ""),
+              status: pulledStatus,
               botIdentity: finalBotIdentity,
               coursesInfo: finalCoursesInfo,
               kidsCourses: finalKidsCourses,
@@ -1947,6 +2098,8 @@ ${escalation || "(לא הוגדר)"}`;
           const pulledKey = getVal(item, ["key", "Key", "מפתח"]);
           const pulledLeadFollowUpDays = getVal(item, ["leadFollowUpDays", "זמן למעקב אחרי ליד בימים"]) || "3";
           const pulledAgentEmail = getVal(item, ["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]) || "haim.bar@gmail.com";
+          const pulledStatusRaw = getVal(item, ["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
+          const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
           const pulledBotIdentity = getVal(item, ["botIdentity", "זהות הבוט"]);
           const pulledCoursesInfo = getVal(item, ["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר"]);
@@ -2025,6 +2178,7 @@ ${escalation || "(לא הוגדר)"}`;
             key: pulledKey,
             leadFollowUpDays: pulledLeadFollowUpDays,
             agentEmail: pulledAgentEmail,
+            status: pulledStatus,
             botIdentity: finalBotIdentity,
             coursesInfo: finalCoursesInfo,
             kidsCourses: finalKidsCourses,
@@ -2149,11 +2303,21 @@ ${escalation || "(לא הוגדר)"}`;
   };
 
   // Filter list of agents in memory
-  const filteredAgents = agents.filter(agent => 
-    (agent.businessName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (agent.ownerName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (agent.botId || "").toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAgents = agents.filter(agent => {
+    const matchesSearch = 
+      (agent.businessName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (agent.ownerName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (agent.botId || "").toLowerCase().includes(searchTerm.toLowerCase());
+    
+    if (!matchesSearch) return false;
+
+    if (statusFilter === "active") {
+      return agent.status === "Active";
+    } else if (statusFilter === "inactive") {
+      return agent.status !== "Active";
+    }
+    return true;
+  });
 
   // Loading indicator for active checking
   if (isAuthChecking) {
@@ -2916,16 +3080,57 @@ ${escalation || "(לא הוגדר)"}`;
               )}
             </div>
 
-            {/* Live Search */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="חפש לפי שם/מפתח..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-3 pr-9 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-slate-100 transition placeholder-slate-650"
-              />
-              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
+            {/* Live Search & Filters */}
+            <div className="flex flex-col gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="חפש לפי שם/מפתח..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-3 pr-9 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-slate-100 transition placeholder-slate-650"
+                />
+                <Search className="w-4 h-4 text-slate-500 absolute right-3 top-2.5" />
+              </div>
+
+              {/* Status Filter Segmented Button Group */}
+              <div className="flex bg-[#12141C] p-0.5 rounded-lg border border-slate-850 gap-0.5 text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("all")}
+                  className={`flex-1 py-1.5 rounded-md transition-all cursor-pointer text-center ${
+                    statusFilter === "all"
+                      ? "bg-slate-800 text-slate-100 shadow-sm border border-slate-700/50"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  הכל ({agents.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("active")}
+                  className={`flex-1 py-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                    statusFilter === "active"
+                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 shadow-sm"
+                      : "text-slate-500 hover:text-emerald-400"
+                  }`}
+                >
+                  <span className={`w-1 h-1 rounded-full bg-emerald-500 ${statusFilter === "active" ? "animate-pulse" : ""}`} />
+                  פעילים ({agents.filter(a => a.status === "Active").length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("inactive")}
+                  className={`flex-1 py-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                    statusFilter === "inactive"
+                      ? "bg-slate-800/80 text-slate-300 border border-slate-700/50 shadow-sm"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  <span className="w-1 h-1 rounded-full bg-slate-500" />
+                  לא פעילים ({agents.filter(a => a.status !== "Active").length})
+                </button>
+              </div>
             </div>
 
             <hr className="border-slate-850" />
@@ -2959,22 +3164,25 @@ ${escalation || "(לא הוגדר)"}`;
                           </p>
                         </div>
                         
-                        <div className="flex items-center gap-1 shrink-0">
-                          {agent.lastSyncedAt ? (
-                            <span 
-                              className="text-[9px] bg-sky-500/10 text-sky-400 font-bold px-1.5 py-0.5 rounded border border-sky-500/25"
-                              title={`סטאטוס פעיל: ${agent.lastSyncedAt}`}
-                            >
-                              פעיל
-                            </span>
-                          ) : (
-                            <span 
-                              className="text-[9px] bg-slate-500/10 text-slate-400 font-bold px-1.5 py-0.5 rounded border border-slate-800"
-                              title="הסוכן טרם סונכרן ואינו פעיל"
-                            >
-                              לא פעיל
-                            </span>
-                          )}
+                        <div className="flex items-center gap-1 shrink-0 relative z-10">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleAgentStatus(agent.id);
+                            }}
+                            className={`text-[9.5px] font-black px-2 py-0.5 rounded-full border transition-all cursor-pointer flex items-center gap-1 ${
+                              agent.status === "Active"
+                                ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/25"
+                                : "bg-slate-500/10 hover:bg-slate-500/20 text-slate-400 border-slate-800"
+                            }`}
+                            title="לחץ כדי לשנות מצב פעיל/לא פעיל (Active / Not Active)"
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              agent.status === "Active" ? "bg-emerald-500 animate-pulse" : "bg-slate-500"
+                            }`} />
+                            {agent.status === "Active" ? "פעיל" : "לא פעיל"}
+                          </button>
                           {(sessionUser?.email === "haim.bar@gmail.com" || !agent.lastSyncedAt) && (
                             <button
                               type="button"
@@ -3320,6 +3528,41 @@ ${escalation || "(לא הוגדר)"}`;
                 </div>
                 <p className="text-[10px] text-slate-500 leading-normal">
                   הכנס את מספר הימים שהמערכת תמתין לפני שתשלח הודעת מעקב (Follow-up) אוטומטית לליד שלא הגיב.
+                </p>
+              </div>
+
+              {/* Bot Active/Inactive Status Selector */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${status === "Active" ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`} />
+                  <span>סטטוס פעילות הבוט (Status)</span>
+                </label>
+                <div className="flex bg-[#161821] p-1 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleFieldChange("status", "Active")}
+                    className={`flex-1 py-1.5 text-xs font-black rounded-md transition-all cursor-pointer ${
+                      status === "Active"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 shadow"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    פעיל (Active)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFieldChange("status", "Not Active")}
+                    className={`flex-1 py-1.5 text-xs font-black rounded-md transition-all cursor-pointer ${
+                      status === "Not Active"
+                        ? "bg-slate-800 text-slate-300 border border-slate-700 shadow"
+                        : "text-slate-500 hover:text-slate-350"
+                    }`}
+                  >
+                    לא פעיל (Not Active)
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  בוט במצב <strong>פעיל</strong> יגיב ללקוחות. שים לב שלא ניתן להפעיל שני בוטים על אותו WhatsApp Instance בו זמנית.
                 </p>
               </div>
 
@@ -3847,13 +4090,7 @@ ${escalation || "(לא הוגדר)"}`;
                   {/* Manual Save Button */}
                   <button
                     type="button"
-                    onClick={() => {
-                      // Trigger a beautiful visual success message
-                      setShowSaveToast(true);
-                      setTimeout(() => {
-                        setShowSaveToast(false);
-                      }, 2500);
-                    }}
+                    onClick={() => handleManualSavePrompt(false)}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 hover:shadow-emerald-500/10 border border-emerald-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
                   >
                     <Save className="w-4 h-4 text-emerald-100" />
@@ -3862,14 +4099,7 @@ ${escalation || "(לא הוגדר)"}`;
 
                   <button
                     type="button"
-                    onClick={() => {
-                      // Save, show quick confirmation, and close
-                      setShowSaveToast(true);
-                      setTimeout(() => {
-                        setShowSaveToast(false);
-                        setShowPromptBuilder(false);
-                      }, 400);
-                    }}
+                    onClick={() => handleManualSavePrompt(true)}
                     className="px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-505 hover:to-blue-600 border border-sky-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
                   >
                     <ArrowRight className="w-4 h-4 text-sky-200" />
