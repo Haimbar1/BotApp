@@ -2384,9 +2384,14 @@ ${escalation || "(לא הוגדר)"}`;
                 >
                   {/* Premium Brand Header (Centered) */}
                   <div className="flex flex-col items-center text-center gap-2 max-w-3xl mx-auto w-full select-none">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full w-fit">
-                      <Sparkles className="w-3 h-3 text-indigo-400 animate-pulse" />
-                      <span className="text-[9px] font-bold text-indigo-300">הדגמה ציבורית ללא עלות</span>
+                    <div className="flex gap-2">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full w-fit">
+                        <Sparkles className="w-3 h-3 text-indigo-400 animate-pulse" />
+                        <span className="text-[9px] font-bold text-indigo-300">הדגמה ציבורית ללא עלות</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-sky-500/10 border border-sky-500/20 rounded-full w-fit text-[9px] font-bold text-sky-300">
+                        <span>v2.4.5</span>
+                      </div>
                     </div>
 
                     <h1 className="text-2xl md:text-3xl font-black text-white leading-tight tracking-tight">
@@ -2988,8 +2993,8 @@ ${escalation || "(לא הוגדר)"}`;
             <div>
               <h1 id="app-title" className="text-lg md:text-xl font-extrabold tracking-tight flex items-center gap-2">
                 מערכת הגדרת סוכנים
-                <span className="text-[10px] font-bold px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
-                  ענן עסק חכם
+                <span className="text-[10px] font-bold px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full flex items-center gap-1">
+                  ענן עסק חכם <span className="opacity-70 text-[9px] font-mono border-l border-sky-500/30 pl-1.5 ml-0.5">v2.4.5</span>
                 </span>
               </h1>
               <p className="text-[11px] text-slate-400 font-medium">עריכת פלטפורמות מכירה דיגיטליות וסנכרון דו-כיווני בענן</p>
