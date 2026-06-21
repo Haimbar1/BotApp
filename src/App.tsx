@@ -68,7 +68,8 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
        !currentHost.includes("gitpod") &&
        !currentHost.includes("codesandbox"))
     ) {
-      const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
+      const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
+    // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
       console.log(`[API INTERCEPTOR] Redirecting relative call ${urlString} -> ${backendProdUrl}`);
       
       const updatedInit = {
