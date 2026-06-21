@@ -44,6 +44,43 @@ import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 
+// Safe API Fetch Wrapper with intelligent CORS Proxy routing for production domains (such as app.smartesek.com or smartesek.co.il)
+const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  let urlString = "";
+  if (typeof input === "string") {
+    urlString = input;
+  } else if (input instanceof URL) {
+    urlString = input.href;
+  } else if (input && typeof input === "object" && "url" in input) {
+    urlString = input.url;
+  }
+
+  if (urlString.startsWith("/api/")) {
+    const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+    // If hosted externally (like a static export on app.smartesek.com), dynamically route relative API paths to the AI Studio backend sandbox
+    if (
+      currentHost === "app.smartesek.com" ||
+      currentHost === "smartesek.co.il" ||
+      (currentHost &&
+       !currentHost.includes("localhost") &&
+       !currentHost.includes("127.0.0.1") &&
+       !currentHost.includes("run.app") &&
+       !currentHost.includes("gitpod") &&
+       !currentHost.includes("codesandbox"))
+    ) {
+      const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
+      console.log(`[API INTERCEPTOR] Redirecting relative call ${urlString} -> ${backendProdUrl}`);
+      
+      const updatedInit = {
+        ...init,
+        credentials: init?.credentials || "include" as const
+      };
+      return fetch(backendProdUrl, updatedInit);
+    }
+  }
+  return fetch(input, init);
+};
+
 interface AgentConfig {
   id: string;
   ownerName: string;
@@ -247,7 +284,7 @@ export default function App() {
     try {
       setIsImprovingWizardPart(true);
 
-      const response = await fetch("/api/ai/improve-agent-prompt-part", {
+      const response = await apiFetch("/api/ai/improve-agent-prompt-part", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -336,7 +373,7 @@ export default function App() {
     }, 2200);
 
     try {
-      const res = await fetch("/api/public/create-demo-bot", {
+      const res = await apiFetch("/api/public/create-demo-bot", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -399,7 +436,7 @@ export default function App() {
     setScrapedText("");
     
     try {
-      const res = await fetch("/api/ai/explore-website", {
+      const res = await apiFetch("/api/ai/explore-website", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -490,7 +527,7 @@ export default function App() {
   const handleGenerateAIPrompts = async () => {
     setIsGeneratingPrompts(true);
     try {
-      const res = await fetch("/api/ai/generate-agent-prompt", {
+      const res = await apiFetch("/api/ai/generate-agent-prompt", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -642,7 +679,7 @@ export default function App() {
     const initApp = async () => {
       try {
         // 1. Fetch public Google Client ID configuration
-        const settingsRes = await fetch("/api/settings");
+        const settingsRes = await apiFetch("/api/settings");
         let client_id = "";
         if (settingsRes.ok) {
           const settingsData = await settingsRes.json();
@@ -659,7 +696,7 @@ export default function App() {
 
         if (existingToken) {
           // Verify saved session on server
-          const sessRes = await fetch("/api/auth/session", {
+          const sessRes = await apiFetch("/api/auth/session", {
             headers: {
               "Authorization": `Bearer ${existingToken}`
             }
@@ -739,7 +776,7 @@ export default function App() {
   const handleGoogleSigninCredential = async (response: any) => {
     try {
       setAuthError("");
-      const res = await fetch("/api/auth/google", {
+      const res = await apiFetch("/api/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential: response.credential }),
@@ -771,7 +808,7 @@ export default function App() {
     setAuthError("");
     
     try {
-      const res = await fetch("/api/auth/bypass-login", {
+      const res = await apiFetch("/api/auth/bypass-login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -802,7 +839,7 @@ export default function App() {
   // Fetch agents array saved on the server
   const fetchAgentsFromServer = async (token: string, emailUserOverride?: string) => {
     try {
-      const res = await fetch("/api/agents", {
+      const res = await apiFetch("/api/agents", {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -897,7 +934,7 @@ export default function App() {
   // Fetch settings from the backend (client ID & allowed emails & bypass users)
   const fetchFullSettingsFromServer = async (token: string) => {
     try {
-      const res = await fetch("/api/settings", {
+      const res = await apiFetch("/api/settings", {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -930,7 +967,7 @@ export default function App() {
       localStorage.setItem("n8n_agents_configs", JSON.stringify(updatedAgents));
       if (!token) return;
 
-      await fetch("/api/agents", {
+      await apiFetch("/api/agents", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1193,7 +1230,7 @@ ${escalation || "(לא הוגדר)"}`;
     try {
       setIsImprovingPart(true);
 
-      const response = await fetch("/api/ai/improve-agent-prompt-part", {
+      const response = await apiFetch("/api/ai/improve-agent-prompt-part", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1477,7 +1514,7 @@ ${escalation || "(לא הוגדר)"}`;
   // Log out of session
   const logout = async () => {
     try {
-      await fetch("/api/auth/logout", {
+      await apiFetch("/api/auth/logout", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
@@ -1596,7 +1633,7 @@ ${escalation || "(לא הוגדר)"}`;
     };
 
     try {
-      const response = await fetch("/api/sync", {
+      const response = await apiFetch("/api/sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1644,7 +1681,7 @@ ${escalation || "(לא הוגדר)"}`;
     
     try {
       console.log("[CLIENT] Pulling live settings from n8n GET endpoint proxy with URL:", webhookUrl, "for Bot ID:", botId);
-      const res = await fetch(`/api/fetch-config?url=${encodeURIComponent(webhookUrl)}&botId=${encodeURIComponent(botId)}`, {
+      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(webhookUrl)}&botId=${encodeURIComponent(botId)}`, {
         headers: {
           "Authorization": `Bearer ${sessionToken}`
         }
@@ -1851,7 +1888,7 @@ ${escalation || "(לא הוגדר)"}`;
 
     try {
       console.log("[CLIENT] Pulling ALL configuration presets from n8n GET Webhook (botId=*):", urlToUse);
-      const res = await fetch(`/api/fetch-config?url=${encodeURIComponent(urlToUse)}&botId=*`, {
+      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(urlToUse)}&botId=*`, {
         headers: {
           "Authorization": `Bearer ${tokenToUse}`
         }
@@ -2028,7 +2065,7 @@ ${escalation || "(לא הוגדר)"}`;
     setSecurityFeedback(null);
 
     try {
-      const res = await fetch("/api/settings", {
+      const res = await apiFetch("/api/settings", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
