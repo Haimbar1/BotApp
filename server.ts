@@ -1096,6 +1096,7 @@ async function startServer() {
         source: "עמוד נחיתה והדגמה ציבורי",
         systemId: "ais-public-demo-builder",
         isNewBot: true,
+        IsNewBot: true,
         "בוט חדש": true
       };
 

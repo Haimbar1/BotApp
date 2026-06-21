@@ -1760,6 +1760,7 @@ ${escalation || "(לא הוגדר)"}`;
       source: "עסק חכם - סוכנים דיגיטליים",
       systemId: "ais-agent-configurator",
       isNewBot: resolvedIsNewBot,
+      IsNewBot: resolvedIsNewBot,
       "בוט חדש": resolvedIsNewBot,
       
       // Webhook URL option to bypass hardcoding
