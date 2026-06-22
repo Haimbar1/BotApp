@@ -1989,8 +1989,8 @@ ${videos || "(לא הוגדר)"}
         const pulledWhatNotToDo = getVal(["whatNotToDo", "מה לא לעשות", "איסורים"]);
         const pulledSyllabusLinks = getVal(["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
         const pulledHumanEscalation = getVal(["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
-        const pulledImagesInfo = getVal(["imagesInfo", "תמונות וגלריה"]);
-        const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו"]);
+        const pulledImagesInfo = getVal(["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה"]);
+        const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו"]);
 
         // If pulled data has no separate fields, extract from unified businessPrompt
         let finalBotIdentity = pulledBotIdentity;
@@ -2219,8 +2219,8 @@ ${videos || "(לא הוגדר)"}
           const pulledWhatNotToDo = getVal(item, ["whatNotToDo", "מה לא לעשות", "איסורים"]);
           const pulledSyllabusLinks = getVal(item, ["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
           const pulledHumanEscalation = getVal(item, ["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
-          const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה"]);
-          const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו"]);
+          const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה"]);
+          const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו"]);
 
           let finalBotIdentity = pulledBotIdentity;
           let finalCoursesInfo = pulledCoursesInfo;
