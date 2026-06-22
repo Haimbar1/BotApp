@@ -102,6 +102,8 @@ interface AgentConfig {
   whatNotToDo?: string;
   syllabusLinks?: string;
   humanEscalation?: string;
+  imagesInfo?: string;
+  videosInfo?: string;
   agentEmail?: string; // Associated email address for security and permissions
   status?: string;
 }
@@ -139,6 +141,12 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
   ],
   humanEscalation: [
     { label: "📞 מעבר לנציג", emojis: ["📞", "📱", "🧑‍💻", "👑", "🛎️", "🤝", "💬", "🚨", "⏳", "🆘", "✉️", "📤"] }
+  ],
+  imagesInfo: [
+    { label: "🖼️ תמונות וגלריה", emojis: ["🖼️", "📸", "🎨", "🌆", "✨", "📐", "💎", "🏡", "👔", "🛒"] }
+  ],
+  videosInfo: [
+    { label: "🎥 סרטונים ווידאו", emojis: ["🎥", "📹", "🎬", "📺", "▶️", "👀", "🍿", "🎵", "🔊", "🌐"] }
   ]
 };
 
@@ -236,6 +244,8 @@ export default function App() {
   const [whatNotToDo, setWhatNotToDo] = useState("");
   const [syllabusLinks, setSyllabusLinks] = useState("");
   const [humanEscalation, setHumanEscalation] = useState("");
+  const [imagesInfo, setImagesInfo] = useState("");
+  const [videosInfo, setVideosInfo] = useState("");
 
   // AI Prompt Part Improvement states
   const [aiImproveInstruction, setAiImproveInstruction] = useState("");
@@ -250,6 +260,7 @@ export default function App() {
   const [activeModalTab, setActiveModalTab] = useState("botIdentity");
   const [dirtyAgents, setDirtyAgents] = useState<Record<string, boolean>>({});
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [promptBuilderBackup, setPromptBuilderBackup] = useState<AgentConfig | null>(null);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"blocks" | "editor" | "preview">("blocks");
 
   // AI Bot Creator / Wizard State variables
@@ -590,6 +601,8 @@ export default function App() {
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
+      const newImagesInfo = generatedPrompts?.imagesInfo || "";
+      const newVideosInfo = generatedPrompts?.videosInfo || "";
 
       // Compile dynamic unified businessPrompt based on the generated parts!
       const compiledBusinessPrompt = compilePromptFromParts(
@@ -601,7 +614,9 @@ export default function App() {
         newFaqAnswers,
         newWhatNotToDo,
         newSyllabusLinks,
-        newHumanEscalation
+        newHumanEscalation,
+        newImagesInfo,
+        newVideosInfo
       );
 
       const newId = "agent_" + Date.now();
@@ -611,14 +626,14 @@ export default function App() {
         businessName: finalBusinessName,
         ownerPhone: finalOwnerPhone,
         botId: finalBotId,
-        whatsappInstance: "main-instance",
+        whatsappInstance: "Smarti",
         businessPrompt: compiledBusinessPrompt,
         key: "demo-key",
         leadFollowUpDays: leadFollowUpDays || "3",
         agentEmail: sessionUser?.email || "haim.bar@gmail.com",
         status: "Not Active",
         
-        // 9 parts generated
+        // 11 parts generated
         botIdentity: newBotIdentity,
         coursesInfo: newCoursesInfo,
         kidsCourses: newKidsCourses,
@@ -628,6 +643,8 @@ export default function App() {
         whatNotToDo: newWhatNotToDo,
         syllabusLinks: newSyllabusLinks,
         humanEscalation: newHumanEscalation,
+        imagesInfo: newImagesInfo,
+        videosInfo: newVideosInfo,
       };
 
       const updated = [...agents, newAgent];
@@ -653,6 +670,8 @@ export default function App() {
       setWhatNotToDo(newAgent.whatNotToDo || "");
       setSyllabusLinks(newAgent.syllabusLinks || "");
       setHumanEscalation(newAgent.humanEscalation || "");
+      setImagesInfo(newAgent.imagesInfo || "");
+      setVideosInfo(newAgent.videosInfo || "");
 
       saveAgentsToServer(updated);
       setShowWizardModal(false);
@@ -925,7 +944,7 @@ export default function App() {
       businessName: "סוכן חדש 1",
       ownerPhone: "",
       botId: "bot_" + Math.floor(Math.random() * 90000 + 10000),
-      whatsappInstance: "whatsapp_1",
+      whatsappInstance: "Smarti",
       businessPrompt: promptTemplates[0].content
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
@@ -1022,7 +1041,9 @@ export default function App() {
     faqs: string,
     notTo: string,
     syllabus: string,
-    escalation: string
+    escalation: string,
+    images: string = "",
+    videos: string = ""
   ): string => {
     return `### זהות הבוט
 ${identity || "(לא הוגדר)"}
@@ -1049,7 +1070,15 @@ ${notTo || "(לא הוגדר)"}
 ${syllabus || "(לא הוגדר)"}
 
 ### אסקלציה לאנוש
-${escalation || "(לא הוגדר)"}`;
+${escalation || "(לא הוגדר)"}
+
+### תמונות וגלריה
+${images || "(לא הוגדר)"}
+הנחיית שימוש חיונית: השתמש בקישורי התמונות המופיעים כאן כדי לענות על שאלות הלקוח או להציע אותן באופן יזום ופרואקטיבי כאשר יש ערך ויזואלי התומך בתשובתך. המשתמש לא תמיד מודע לקיומן של תמונות/גלריה, ולכן עליך להציע אותן כשזה רלוונטי!
+
+### סרטוני וידאו
+${videos || "(לא הוגדר)"}
+הנחיית שימוש חיונית: השתמש בקישורי הוידאו המופיעים כאן כדי להעשיר את תגובותיך ולהציע אותם ביוזמתך באופן פרואקטיבי לשאלות משתמשים. המשתמש אינו יודע שיש סרטוני וידאו זמינים, לכן שלב והצע אותם כשזה יכול לעזור להבהיר נושא או להדגים שירות/מוצר!`;
   };
 
   // Extract separate parts from businessPrompt if possible
@@ -1072,6 +1101,8 @@ ${escalation || "(לא הוגדר)"}`;
     const defaultSyllabus = `- סילבוס קורס יסודות: https://sbsgames.dev/syllabus-basics
 - סילבוס קורס מתקדמים: https://sbsgames.dev/syllabus-pro`;
     const defaultHumanEscalation = `הנחיות הפניה לנציג אנושי (שחר בר) בטלפון {OwnerPhone}:\n1. הבוט לעולם אינו מפסיק או מסיים את השיחה מיוזמתו, רק הלקוח מסיים.\n2. בכל פעם שהלקוח מבקש נציג אנושי, שואל שאלה מורכבת שחורגת מהמידע המובנה (כמו קוד או API לדוגמה או הצעות מחיר מורכבות ומיוחדות) – עליו לענות קודם בחום ובנימוס שישנו פירוט רב באתר והוא שמח לנסות לעזור כאן, אך יחד עם זאת עליו להפנות באדיבות למספר של שחר בר {OwnerPhone}, ולשאול באופן מיידי: "בינתיים, האם יש לך שאלות נוספות שתרצה שאשמח לעזור לך בהן?" על מנת להמשיך ברצף השיחה.`;
+    const defaultImages = `- תמונת קורס יסודות: https://sbsgames.dev/img/basics.jpg\n- סביבת הלימודים: https://sbsgames.dev/img/workspace.jpg`;
+    const defaultVideos = `- סרטון פרויקטים של תלמידים: https://sbsgames.dev/video/showcase.mp4\n- סיור קצר בכיתה: https://sbsgames.dev/video/workspace-tour.mp4`;
 
     if (
       agent.botIdentity ||
@@ -1082,7 +1113,9 @@ ${escalation || "(לא הוגדר)"}`;
       agent.faqAnswers ||
       agent.whatNotToDo ||
       agent.syllabusLinks ||
-      agent.humanEscalation
+      agent.humanEscalation ||
+      agent.imagesInfo ||
+      agent.videosInfo
     ) {
       return {
         botIdentity: agent.botIdentity || "",
@@ -1094,6 +1127,8 @@ ${escalation || "(לא הוגדר)"}`;
         whatNotToDo: agent.whatNotToDo || "",
         syllabusLinks: agent.syllabusLinks || "",
         humanEscalation: agent.humanEscalation || "",
+        imagesInfo: agent.imagesInfo || "",
+        videosInfo: agent.videosInfo || "",
       };
     }
 
@@ -1109,6 +1144,8 @@ ${escalation || "(לא הוגדר)"}`;
         whatNotToDo: defaultWhatNotToDo,
         syllabusLinks: defaultSyllabus,
         humanEscalation: defaultHumanEscalation,
+        imagesInfo: defaultImages,
+        videosInfo: defaultVideos,
       };
     }
 
@@ -1157,6 +1194,8 @@ ${escalation || "(לא הוגדר)"}`;
       whatNotToDo: parseSection(["מה לא לעשות", "איסורים", "מגבלות", "חוקי ברזל", "not to do"], defaultWhatNotToDo),
       syllabusLinks: parseSection(["לינקים לסילבוסים", "קישורים לסילבוסים", "סילבוס", "סילבוסים", "links", "syllabus"], defaultSyllabus),
       humanEscalation: parseSection(["אסקלציה", "אנוש", "העברה לאנוש", "escalation"], defaultHumanEscalation),
+      imagesInfo: parseSection(["תמונות", "גלריה", "גלריית תמונות", "images", "gallery", "image"], defaultImages),
+      videosInfo: parseSection(["וידאו", "סרטונים", "סרטוני וידאו", "videos", "video", "youtube"], defaultVideos),
     };
   };
 
@@ -1183,6 +1222,8 @@ ${escalation || "(לא הוגדר)"}`;
     setWhatNotToDo(parts.whatNotToDo);
     setSyllabusLinks(parts.syllabusLinks);
     setHumanEscalation(parts.humanEscalation);
+    setImagesInfo(parts.imagesInfo);
+    setVideosInfo(parts.videosInfo);
 
     // Dynamic prompt compiled result
     const compiled = compilePromptFromParts(
@@ -1194,7 +1235,9 @@ ${escalation || "(לא הוגדר)"}`;
       parts.faqAnswers,
       parts.whatNotToDo,
       parts.syllabusLinks,
-      parts.humanEscalation
+      parts.humanEscalation,
+      parts.imagesInfo,
+      parts.videosInfo
     );
     setBusinessPrompt(compiled);
 
@@ -1213,6 +1256,8 @@ ${escalation || "(לא הוגדר)"}`;
     let freshWhatNot = partKey === "whatNotToDo" ? value : whatNotToDo;
     let freshSyllabus = partKey === "syllabusLinks" ? value : syllabusLinks;
     let freshHuman = partKey === "humanEscalation" ? value : humanEscalation;
+    let freshImages = partKey === "imagesInfo" ? value : imagesInfo;
+    let freshVideos = partKey === "videosInfo" ? value : videosInfo;
 
     if (partKey === "botIdentity") setBotIdentity(value);
     else if (partKey === "coursesInfo") setCoursesInfo(value);
@@ -1223,6 +1268,8 @@ ${escalation || "(לא הוגדר)"}`;
     else if (partKey === "whatNotToDo") setWhatNotToDo(value);
     else if (partKey === "syllabusLinks") setSyllabusLinks(value);
     else if (partKey === "humanEscalation") setHumanEscalation(value);
+    else if (partKey === "imagesInfo") setImagesInfo(value);
+    else if (partKey === "videosInfo") setVideosInfo(value);
 
     // Re-compile businessPrompt dynamically using updated components
     const compiled = compilePromptFromParts(
@@ -1234,7 +1281,9 @@ ${escalation || "(לא הוגדר)"}`;
       freshFaqs,
       freshWhatNot,
       freshSyllabus,
-      freshHuman
+      freshHuman,
+      freshImages,
+      freshVideos
     );
     setBusinessPrompt(compiled);
 
@@ -1371,7 +1420,7 @@ ${escalation || "(לא הוגדר)"}`;
       businessName: "סוכן חדש " + (agents.length + 1),
       ownerPhone: "",
       botId: "bot_" + Math.floor(Math.random() * 90000 + 10000),
-      whatsappInstance: "whatsapp_1",
+      whatsappInstance: "Smarti",
       businessPrompt: promptTemplates[0].content
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
@@ -1683,7 +1732,9 @@ ${escalation || "(לא הוגדר)"}`;
           agentOverride.faqAnswers || "",
           agentOverride.whatNotToDo || "",
           agentOverride.syllabusLinks || "",
-          agentOverride.humanEscalation || ""
+          agentOverride.humanEscalation || "",
+          agentOverride.imagesInfo || "",
+          agentOverride.videosInfo || ""
         )
       : businessPrompt;
       
@@ -1701,6 +1752,8 @@ ${escalation || "(לא הוגדר)"}`;
     const currentWhatNotToDo = agentOverride ? agentOverride.whatNotToDo : whatNotToDo;
     const currentSyllabusLinks = agentOverride ? agentOverride.syllabusLinks : syllabusLinks;
     const currentHumanEscalation = agentOverride ? agentOverride.humanEscalation : humanEscalation;
+    const currentImagesInfo = agentOverride ? agentOverride.imagesInfo : imagesInfo;
+    const currentVideosInfo = agentOverride ? agentOverride.videosInfo : videosInfo;
     
     const payload = {
       // Direct core fields requested
@@ -1721,7 +1774,7 @@ ${escalation || "(לא הוגדר)"}`;
       "מצב": currentStatus,
       "מצב בוט": currentStatus,
       
-      // Separate 9 prompt parts
+      // Separate prompt parts
       botIdentity: currentBotIdentity,
       coursesInfo: currentCoursesInfo,
       kidsCourses: currentKidsCourses,
@@ -1731,6 +1784,8 @@ ${escalation || "(לא הוגדר)"}`;
       whatNotToDo: currentWhatNotToDo,
       syllabusLinks: currentSyllabusLinks,
       humanEscalation: currentHumanEscalation,
+      imagesInfo: currentImagesInfo,
+      videosInfo: currentVideosInfo,
       
       // Hebrew mapping for database filter compatibility
       "שם בעל העסק": currentOwnerName,
@@ -1743,7 +1798,7 @@ ${escalation || "(לא הוגדר)"}`;
       "זמן למעקב אחרי ליד בימים": currentLeadFollowUpDays,
       "אימייל משויך לסוכן": currentAgentEmail,
 
-      // Hebrew mapping for separate 9 prompt parts
+      // Hebrew mapping for separate prompt parts
       "זהות הבוט": currentBotIdentity,
       "מה אני מוכר — קורסים": currentCoursesInfo,
       "קורסי ילדים": currentKidsCourses,
@@ -1754,6 +1809,8 @@ ${escalation || "(לא הוגדר)"}`;
       "מה לא לעשות": currentWhatNotToDo,
       "לינקים לסילבוסים": currentSyllabusLinks,
       "אסקלציה לאנוש": currentHumanEscalation,
+      "תמונות וגלריה": currentImagesInfo,
+      "סרטוני וידאו": currentVideosInfo,
 
       // Metadata properties
       timestamp: new Date().toISOString(),
@@ -1832,6 +1889,33 @@ ${escalation || "(לא הוגדר)"}`;
     }, closeAfter ? 650 : 2500);
   };
 
+  // Cancel edits and close the prompt builder
+  const handleCancelPromptChanges = async () => {
+    if (globalSaveTimeoutId) {
+      clearTimeout(globalSaveTimeoutId);
+    }
+    if (promptBuilderBackup) {
+      // Revert back to the backup's agents array values
+      const restored = agents.map(agent => {
+        if (agent.id === promptBuilderBackup.id) {
+          return promptBuilderBackup;
+        }
+        return agent;
+      });
+      setAgents(restored);
+
+      // Load the restored values back to form states
+      loadAgentToForm(promptBuilderBackup);
+
+      // Persist restored array back to the server immediately
+      await saveAgentsToServer(restored, sessionToken, false);
+
+      // Reset dirty state to false
+      setDirtyAgents(prev => ({ ...prev, [promptBuilderBackup.id]: false }));
+    }
+    setShowPromptBuilder(false);
+  };
+
   // Pull configurations FROM n8n Webhook GET URL and update local fields
   const handlePullConfigFromN8n = async () => {
     setIsSyncing(true);
@@ -1905,6 +1989,8 @@ ${escalation || "(לא הוגדר)"}`;
         const pulledWhatNotToDo = getVal(["whatNotToDo", "מה לא לעשות", "איסורים"]);
         const pulledSyllabusLinks = getVal(["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
         const pulledHumanEscalation = getVal(["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
+        const pulledImagesInfo = getVal(["imagesInfo", "תמונות וגלריה"]);
+        const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו"]);
 
         // If pulled data has no separate fields, extract from unified businessPrompt
         let finalBotIdentity = pulledBotIdentity;
@@ -1916,6 +2002,8 @@ ${escalation || "(לא הוגדר)"}`;
         let finalWhatNotToDo = pulledWhatNotToDo;
         let finalSyllabusLinks = pulledSyllabusLinks;
         let finalHumanEscalation = pulledHumanEscalation;
+        let finalImagesInfo = pulledImagesInfo;
+        let finalVideosInfo = pulledVideosInfo;
 
         if (
           !finalBotIdentity &&
@@ -1926,7 +2014,9 @@ ${escalation || "(לא הוגדר)"}`;
           !finalFaqAnswers &&
           !finalWhatNotToDo &&
           !finalSyllabusLinks &&
-          !finalHumanEscalation
+          !finalHumanEscalation &&
+          !finalImagesInfo &&
+          !finalVideosInfo
         ) {
           const parts = getOrExtractBypassParts({
             id: activeId,
@@ -1947,6 +2037,8 @@ ${escalation || "(לא הוגדר)"}`;
           finalWhatNotToDo = parts.whatNotToDo;
           finalSyllabusLinks = parts.syllabusLinks;
           finalHumanEscalation = parts.humanEscalation;
+          finalImagesInfo = parts.imagesInfo || "";
+          finalVideosInfo = parts.videosInfo || "";
         }
 
         const compiled = compilePromptFromParts(
@@ -1958,7 +2050,9 @@ ${escalation || "(לא הוגדר)"}`;
           finalFaqAnswers,
           finalWhatNotToDo,
           finalSyllabusLinks,
-          finalHumanEscalation
+          finalHumanEscalation,
+          finalImagesInfo,
+          finalVideosInfo
         );
 
         if (!pulledBusinessName && !pulledBotId) {
@@ -1990,6 +2084,8 @@ ${escalation || "(לא הוגדר)"}`;
         setWhatNotToDo(finalWhatNotToDo);
         setSyllabusLinks(finalSyllabusLinks);
         setHumanEscalation(finalHumanEscalation);
+        setImagesInfo(finalImagesInfo);
+        setVideosInfo(finalVideosInfo);
         
         // Sync active agent listing records
         const updated = agents.map(agent => {
@@ -2015,6 +2111,8 @@ ${escalation || "(לא הוגדר)"}`;
               whatNotToDo: finalWhatNotToDo,
               syllabusLinks: finalSyllabusLinks,
               humanEscalation: finalHumanEscalation,
+              imagesInfo: finalImagesInfo,
+              videosInfo: finalVideosInfo,
               lastSyncedAt: `עודכן ונשמר ב-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`
             };
           }
@@ -2121,6 +2219,8 @@ ${escalation || "(לא הוגדר)"}`;
           const pulledWhatNotToDo = getVal(item, ["whatNotToDo", "מה לא לעשות", "איסורים"]);
           const pulledSyllabusLinks = getVal(item, ["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
           const pulledHumanEscalation = getVal(item, ["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
+          const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה"]);
+          const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו"]);
 
           let finalBotIdentity = pulledBotIdentity;
           let finalCoursesInfo = pulledCoursesInfo;
@@ -2131,6 +2231,8 @@ ${escalation || "(לא הוגדר)"}`;
           let finalWhatNotToDo = pulledWhatNotToDo;
           let finalSyllabusLinks = pulledSyllabusLinks;
           let finalHumanEscalation = pulledHumanEscalation;
+          let finalImagesInfo = pulledImagesInfo;
+          let finalVideosInfo = pulledVideosInfo;
 
           const agentId = pulledBotId ? `agent_${pulledBotId}` : `agent_cloud_${Date.now()}_${idx}`;
 
@@ -2143,7 +2245,9 @@ ${escalation || "(לא הוגדר)"}`;
             !finalFaqAnswers &&
             !finalWhatNotToDo &&
             !finalSyllabusLinks &&
-            !finalHumanEscalation
+            !finalHumanEscalation &&
+            !finalImagesInfo &&
+            !finalVideosInfo
           ) {
             const parts = getOrExtractBypassParts({
               id: agentId,
@@ -2164,6 +2268,8 @@ ${escalation || "(לא הוגדר)"}`;
             finalWhatNotToDo = parts.whatNotToDo;
             finalSyllabusLinks = parts.syllabusLinks;
             finalHumanEscalation = parts.humanEscalation;
+            finalImagesInfo = parts.imagesInfo || "";
+            finalVideosInfo = parts.videosInfo || "";
           }
 
           const compiled = compilePromptFromParts(
@@ -2175,7 +2281,9 @@ ${escalation || "(לא הוגדר)"}`;
             finalFaqAnswers,
             finalWhatNotToDo,
             finalSyllabusLinks,
-            finalHumanEscalation
+            finalHumanEscalation,
+            finalImagesInfo,
+            finalVideosInfo
           );
 
           return {
@@ -2199,6 +2307,8 @@ ${escalation || "(לא הוגדר)"}`;
             whatNotToDo: finalWhatNotToDo,
             syllabusLinks: finalSyllabusLinks,
             humanEscalation: finalHumanEscalation,
+            imagesInfo: finalImagesInfo,
+            videosInfo: finalVideosInfo,
             lastSyncedAt: `עודכן ונשמר ב-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`
           };
         });
@@ -3051,8 +3161,8 @@ ${escalation || "(לא הוגדר)"}`;
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 sm:px-6 lg:px-8 flex flex-col lg:flex-row gap-6">
 
         {/* Right Sidebar - List of agents */}
-        <section className="w-full lg:w-80 shrink-0 flex flex-col gap-4">
-          <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-4 flex flex-col gap-3 h-full max-h-[calc(100vh-220px)] overflow-hidden">
+        <section className="w-full lg:w-80 shrink-0 flex flex-col gap-4 lg:sticky lg:top-6 lg:h-[calc(100vh-100px)]">
+          <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-4 flex flex-col gap-3 h-full min-h-[480px] lg:min-h-0 overflow-hidden">
             
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-extrabold text-slate-300 flex items-center gap-2">
@@ -3603,6 +3713,10 @@ ${escalation || "(לא הוגדר)"}`;
                 type="button"
                 onClick={() => {
                   setActiveModalTab("botIdentity");
+                  const currentAgent = agents.find(a => a.id === activeId);
+                  if (currentAgent) {
+                    setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+                  }
                   setShowPromptBuilder(true);
                 }}
                 className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-black rounded-xl text-xs transition duration-200 cursor-pointer shadow-md shadow-sky-500/10 flex items-center justify-center gap-2"
@@ -4121,6 +4235,15 @@ ${escalation || "(לא הוגדר)"}`;
                     <ArrowRight className="w-4 h-4 text-sky-200" />
                     <span>שמור וחזור למערכת 🔙</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCancelPromptChanges}
+                    className="px-4 py-2 bg-[#1e1215] hover:bg-[#2c171c] border border-rose-900/40 text-rose-300 hover:text-rose-200 font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                  >
+                    <X className="w-4 h-4 text-rose-550" />
+                    <span>ביטול ויציאה (ללא שמירה) ❌</span>
+                  </button>
                   
                 </div>
 
@@ -4152,10 +4275,10 @@ ${escalation || "(לא הוגדר)"}`;
               </div>
 
               {/* TWO COLUMN / THREE COLUMN IDE WORKSPACE */}
-              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 h-0">
+              <div className="flex-1 min-h-0 overflow-hidden grid grid-cols-1 lg:grid-cols-12">
                 
                 {/* 1. Left Vertical Nav Side Rail (lg:col-span-3) */}
-                <div className={`${mobileWorkspaceTab === 'blocks' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full lg:border-l border-slate-850 bg-[#08090d]/90 flex-col select-none overflow-hidden text-right`}>
+                <div className={`${mobileWorkspaceTab === 'blocks' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full min-h-0 lg:border-l border-slate-850 bg-[#08090d]/90 flex-col select-none overflow-hidden text-right`}>
                   
                   <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017]">
                     <div className="flex items-center gap-1.5">
@@ -4165,7 +4288,7 @@ ${escalation || "(לא הוגדר)"}`;
                   </div>
 
                   {/* Scrollable tabs */}
-                  <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800">
+                  <div className="flex-1 overflow-y-auto p-2.5 pb-24 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800">
                     {[
                       { key: "botIdentity", title: "זהות הבוט ומאפייניו", emoji: "🤖", desc: "שם וזהות הבוט", value: botIdentity },
                       { key: "coursesInfo", title: "מה אני מוכר — שירותים/מוצרים/קורסים", emoji: "📖", desc: "פירוט השירותים או הקורסים של העסק", value: coursesInfo },
@@ -4175,7 +4298,9 @@ ${escalation || "(לא הוגדר)"}`;
                       { key: "faqAnswers", title: "שאלות פופולריות (FAQ)", emoji: "❓", desc: "תשובות מפורטות לשאלות", value: faqAnswers },
                       { key: "whatNotToDo", title: "חוקי ברזל (מה לא לעשות)", emoji: "⚠️", desc: "מגבלות קריטיות ואיסורים", value: whatNotToDo },
                       { key: "syllabusLinks", title: "ברושורים, חומרי מידע וקישורים", emoji: "🔗", desc: "לינקים ישירים לקטלוגים וברושורים", value: syllabusLinks },
-                      { key: "humanEscalation", title: "אסקלציה לאנוש (הפניה לנציג)", emoji: "📞", desc: "מתי ואיך להפנות למנהל", value: humanEscalation }
+                      { key: "humanEscalation", title: "אסקלציה לאנוש (הפניה לנציג)", emoji: "📞", desc: "מתי ואיך להפנות למנהל", value: humanEscalation },
+                      { key: "imagesInfo", title: "תמונות וגלריית מדיה", emoji: "🖼️", desc: "קישורים לתמונות וגלריות להמחשה", value: imagesInfo },
+                      { key: "videosInfo", title: "סרטוני וידאו והדרכה", emoji: "🎥", desc: "קישורים לסרטונים והסברים ויזואליים", value: videosInfo }
                     ].map((sec) => {
                       const isActive = activeModalTab === sec.key;
                       const charCount = (sec.value || "").trim().length;
@@ -4236,7 +4361,7 @@ ${escalation || "(לא הוגדר)"}`;
                 </div>
 
                 {/* 2. Main Middle Spacious Canvas Column (lg:col-span-6) */}
-                <div className={`${mobileWorkspaceTab === 'editor' ? 'flex' : 'hidden'} lg:flex lg:col-span-6 h-full flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850`} dir="rtl">
+                <div className={`${mobileWorkspaceTab === 'editor' ? 'flex' : 'hidden'} lg:flex lg:col-span-6 h-full min-h-0 flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850`} dir="rtl">
                   {(() => {
                     const sectionsStatic = [
                       {
@@ -4319,6 +4444,24 @@ ${escalation || "(לא הוגדר)"}`;
                         placeholder: "לדוגמה: אם המשתמש שואל שאלות פיננסיות מורכבות או כועס, הפנה אותו לטלפון {OwnerPhone}...",
                         value: humanEscalation,
                         starter: "ברגע שהמשתמש מביע רצון מפורש להירשם או רוצה לשוחח עם נציג מכירות חי, בקש ממנו להשאיר מספר טלפון, או שלח אותו לחייג ישירות לנציג בטלפון {OwnerPhone} או שלח קישור לווטסאפ של מנהל המערכת."
+                      },
+                      {
+                        key: "imagesInfo",
+                        title: "תמונות וגלריית מדיה",
+                        emoji: "🖼️",
+                        desc: "גלריית תמונות, קטלוג תמונות, הדמיות וסביבות לימודים שמופיעות בשיחה כאשר לקוחות שואלים שאלות או כשהבוט מציע להמחיש בעזרת תמונה.",
+                        placeholder: "לדוגמה:\n- תמונת כיתת הלימוד הפיזית בסניף: https://mydomain.com/images/classroom.jpg",
+                        value: imagesInfo,
+                        starter: "- תמונת כיתת הלימוד השקופה של סטודיו SBS: https://sbsgames.dev/img/classroom.jpg\n- הדמיית פרויקטים של תלמידים: https://sbsgames.dev/img/projects-collage.jpg"
+                      },
+                      {
+                        key: "videosInfo",
+                        title: "סרטוני וידאו והדרכה",
+                        emoji: "🎥",
+                        desc: "קישורי וידאו, סרטוני יוטיוב, הדרכות קצרות והתרשמויות מהכלים שהבוט יכול להציג או להציע באופן פרואקטיבי ולפי הקשר.",
+                        placeholder: "לדוגמה:\n- סרטון סיכום פרויקטים ביוטיוב: https://youtube.com/watch?v=...",
+                        value: videosInfo,
+                        starter: "- סרטון קצר המציג פרויקטים נבחרים של תלמידים ביוטיוב: https://youtube.com/watch?v=sbsgames_showcase\n- סרטון סיור מושקע בסטודיו: https://youtube.com/watch?v=sbsgames_tour"
                       }
                     ];
 
@@ -4326,7 +4469,7 @@ ${escalation || "(לא הוגדר)"}`;
                     const activeVal = sec.value || "";
 
                     return (
-                      <div className="flex flex-col flex-1 p-6 gap-5 h-full">
+                      <div className="flex flex-col flex-1 p-6 pb-32 gap-5 min-h-full">
                         
                         {/* Selected info block */}
                         <div className="bg-[#10121d] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -4571,7 +4714,7 @@ ${escalation || "(לא הוגדר)"}`;
                  </div>
 
                  {/* 3. Live Preview of Compiled Markdown Prompt (lg:col-span-3) */}
-                 <div className={`${mobileWorkspaceTab === 'preview' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full bg-[#08090d] border-r border-[#161a24] flex-col`} dir="rtl">
+                 <div className={`${mobileWorkspaceTab === 'preview' ? 'flex' : 'hidden'} lg:flex lg:col-span-3 h-full min-h-0 overflow-hidden bg-[#08090d] border-r border-[#161a24] flex-col`} dir="rtl">
                    
                    <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017] select-none">
                      <div className="flex items-center gap-2">
@@ -4581,7 +4724,7 @@ ${escalation || "(לא הוגדר)"}`;
                    </div>
 
                    {/* Rendering full combined prompt */}
-                   <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-slate-300 space-y-4 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-slate-950/30 text-right" dir="rtl">
+                   <div className="flex-1 overflow-y-auto p-4 pb-32 font-mono text-xs text-slate-300 space-y-4 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-slate-950/30 text-right" dir="rtl">
                      {[
                        { key: "botIdentity", title: "🤖 זהות הבוט ומאפייניו", text: botIdentity },
                        { key: "coursesInfo", title: "📖 מה אני מוכר — מוצרים/שירותים/קורסים", text: coursesInfo },
@@ -4591,7 +4734,9 @@ ${escalation || "(לא הוגדר)"}`;
                        { key: "faqAnswers", title: "❓ תשובות לשאלות נפוצות", text: faqAnswers },
                        { key: "whatNotToDo", title: "⚠️ מה לא לעשות (חוקי הברזל)", text: whatNotToDo },
                        { key: "syllabusLinks", title: "🔗 ברושורים, קטלוגים וקישורים", text: syllabusLinks },
-                       { key: "humanEscalation", title: "📞 אסקלציה לאנוש (הפניה לנציג)", text: humanEscalation }
+                       { key: "humanEscalation", title: "📞 אסקלציה לאנוש (הפניה לנציג)", text: humanEscalation },
+                        { key: "imagesInfo", title: "🖼️ תמונות וגלריית מדיה", text: imagesInfo },
+                        { key: "videosInfo", title: "🎥 סרטוני וידאו והדרכה", text: videosInfo }
                      ].map(part => (
                        <div key={part.key} className="space-y-1 text-right" dir="rtl">
                          <span className="text-sky-455 font-extrabold block text-[9.5px] tracking-wide">{part.title}:</span>
@@ -4853,7 +4998,7 @@ ${escalation || "(לא הוגדר)"}`;
                   </div>
                   <h4 className="text-sm font-black text-white mt-5">מעבד ומקמפל את הפרומפטים בכישוף AI ג'מיני... 🧙‍♂️</h4>
                   <p className="text-xs text-slate-400 font-bold max-w-sm mt-2 leading-relaxed text-center">
-                    ג'מיני בונה ומעצב כעת את 9 החלקים בהתבסס על ניתוח המידע גולמי, התבנית והחוקים המבוקשים.
+                    ג'מיני בונה ומעצב כעת את 11 החלקים בהתבסס על ניתוח המידע גולמי, התבנית והחוקים המבוקשים.
                   </p>
                 </div>
               )}
@@ -4864,8 +5009,8 @@ ${escalation || "(לא הוגדר)"}`;
                   {/* Left panel: Preview of prompt parts compiled */}
                   <div className="flex-1 flex flex-col max-h-[420px] lg:max-h-[65vh] overflow-y-auto border-l border-slate-850 p-5 scrollbar-thin scrollbar-thumb-slate-800 text-right font-sans" dir="rtl">
                     <h4 className="text-xs font-black text-sky-400 pb-2 border-b border-slate-800 mb-3 flex items-center justify-between" dir="rtl">
-                      <span>👀 ערוך ובחן את 9 קטעי הפרומפט שנוצרו</span>
-                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-2 py-0.5 rounded-full font-bold">נוצר בהצלחה!</span>
+                      <span>👀 ערוך ובחן את 11 קטעי הפרומפט שנוצרו</span>
+                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-2 py-0.5 rounded-full font-bold font-mono">נוצר בהצלחה!</span>
                     </h4>
 
                     {generatedPrompts && (
@@ -4879,7 +5024,9 @@ ${escalation || "(לא הוגדר)"}`;
                           { key: "faqAnswers", title: "❓ תשובות לשאלות נפוצות" },
                           { key: "whatNotToDo", title: "⚠️ מגבלות (מה לא לעשות)" },
                           { key: "syllabusLinks", title: "🔗 ברושורים, קטלוגים וקישורים" },
-                          { key: "humanEscalation", title: "📞 מעבר לנציג אנושי" }
+                          { key: "humanEscalation", title: "📞 מעבר לנציג אנושי" },
+                          { key: "imagesInfo", title: "🖼️ תמונות וגלריית מדיה" },
+                          { key: "videosInfo", title: "🎥 סרטוני וידאו והדרכה" }
                         ].map((part) => (
                           <div key={part.key} className="space-y-1">
                             <label className="text-[11px] font-black text-slate-300 block text-right">{part.title}:</label>
