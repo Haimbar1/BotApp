@@ -204,29 +204,48 @@ async function startServer() {
 
   // ---------------- AUTH API ROUTES ----------------
 
-  // Verify Google token & Log in
+  // Verify Google token & Log in (supports both ID tokens and client-side popup Access tokens)
   app.post("/api/auth/google", async (req, res) => {
     try {
-      const { credential } = req.body;
-      if (!credential) {
-        return res.status(400).json({ success: false, error: "missing_credential", message: "חסר קוד כניסה של גוגל" });
-      }
-
-      console.log("[SERVER] Verifying Google token...");
+      const { credential, accessToken } = req.body;
       
-      // Call Google Tokeninfo API to securely verify and decode token
-      const googleResponse = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
-      
-      if (!googleResponse.ok) {
-        const errorText = await googleResponse.text();
-        console.error("[SERVER] Google token verification failed:", errorText);
-        return res.status(401).json({ success: false, error: "invalid_token", message: "אימות מול גוגל נכשל" });
-      }
+      let email = "";
+      let name = "";
+      let picture = "";
 
-      const googlePayload = await googleResponse.json();
-      const email = (googlePayload.email || "").toLowerCase().trim();
-      const name = googlePayload.name || email.split("@")[0];
-      const picture = googlePayload.picture || "";
+      if (accessToken) {
+        console.log("[SERVER] Verifying Google token via Userinfo endpoint (access token)...");
+        const googleResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+          headers: { "Authorization": `Bearer ${accessToken}` }
+        });
+
+        if (!googleResponse.ok) {
+          const errorText = await googleResponse.text();
+          console.error("[SERVER] Google userinfo verification failed:", errorText);
+          return res.status(401).json({ success: false, error: "invalid_token", message: "אימות מפתח הגישה מול גוגל נכשל" });
+        }
+
+        const googlePayload = await googleResponse.json();
+        email = (googlePayload.email || "").toLowerCase().trim();
+        name = googlePayload.name || email.split("@")[0];
+        picture = googlePayload.picture || "";
+      } else if (credential) {
+        console.log("[SERVER] Verifying Google token via Tokeninfo endpoint (ID token)...");
+        const googleResponse = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+
+        if (!googleResponse.ok) {
+          const errorText = await googleResponse.text();
+          console.error("[SERVER] Google token verification failed:", errorText);
+          return res.status(401).json({ success: false, error: "invalid_token", message: "אימות מול גוגל נכשל" });
+        }
+
+        const googlePayload = await googleResponse.json();
+        email = (googlePayload.email || "").toLowerCase().trim();
+        name = googlePayload.name || email.split("@")[0];
+        picture = googlePayload.picture || "";
+      } else {
+        return res.status(400).json({ success: false, error: "missing_token", message: "חסר קוד זיהוי או מפתח גישה של גוגל" });
+      }
 
       if (!email) {
         return res.status(400).json({ success: false, error: "missing_email", message: "לא התקבל אימייל מחשבון הגוגל" });
