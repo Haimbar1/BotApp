@@ -60,16 +60,23 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
 
   if (urlString.startsWith("/api/")) {
     const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+    const isVercel = currentHost.includes("vercel.app");
+    const disableRedirect = import.meta.env.VITE_DISABLE_API_REDIRECT === "true";
+
     // If hosted externally (like a static export on app.smartesek.com), dynamically route relative API paths to the AI Studio backend sandbox
+    // Exclude Vercel environments or when manually disabled so the Vercel server handles its own requests
     if (
-      currentHost === "app.smartesek.com" ||
-      currentHost === "smartesek.co.il" ||
-      (currentHost &&
-       !currentHost.includes("localhost") &&
-       !currentHost.includes("127.0.0.1") &&
-       !currentHost.includes("run.app") &&
-       !currentHost.includes("gitpod") &&
-       !currentHost.includes("codesandbox"))
+      !disableRedirect &&
+      !isVercel &&
+      (currentHost === "app.smartesek.com" ||
+       currentHost === "smartesek.co.il" ||
+       (currentHost &&
+        !currentHost.includes("localhost") &&
+        !currentHost.includes("127.0.0.1") &&
+        !currentHost.includes("run.app") &&
+        !currentHost.includes("gitpod") &&
+        !currentHost.includes("codesandbox") &&
+        !currentHost.includes("vercel.app")))
     ) {
       const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
     // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
