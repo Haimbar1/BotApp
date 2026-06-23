@@ -63,21 +63,21 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
     const isVercel = currentHost.includes("vercel.app");
     const disableRedirect = import.meta.env.VITE_DISABLE_API_REDIRECT === "true";
 
-    // Exclude Vercel, production domains (app.smartesek.com, smartesek.co.il), and when manually disabled,
-    // so the production full-stack server handles its own relative requests directly instead of redirecting to the AI Studio preview.
+    // If hosted externally (like a static export on app.smartesek.com), dynamically route relative API paths to the AI Studio backend sandbox
+    // For Vercel or when manually disabled, let the relative path handle its own requests.
     const isProductionCustomDomain = currentHost === "app.smartesek.com" || currentHost === "smartesek.co.il";
 
     if (
       !disableRedirect &&
       !isVercel &&
-      !isProductionCustomDomain &&
-      (currentHost &&
-       !currentHost.includes("localhost") &&
-       !currentHost.includes("127.0.0.1") &&
-       !currentHost.includes("run.app") &&
-       !currentHost.includes("gitpod") &&
-       !currentHost.includes("codesandbox") &&
-       !currentHost.includes("vercel.app"))
+      (isProductionCustomDomain ||
+       (currentHost &&
+        !currentHost.includes("localhost") &&
+        !currentHost.includes("127.0.0.1") &&
+        !currentHost.includes("run.app") &&
+        !currentHost.includes("gitpod") &&
+        !currentHost.includes("codesandbox") &&
+        !currentHost.includes("vercel.app")))
     ) {
       const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
     // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
@@ -1021,7 +1021,11 @@ export default function App() {
                 const res = await apiFetch("/api/auth/google", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ accessToken: response.access_token, isSignUp }),
+                  body: JSON.stringify({
+                    accessToken: response.access_token,
+                    access_token: response.access_token,
+                    isSignUp
+                  }),
                 });
                 const data = await res.json();
                 if (data.success && data.token) {

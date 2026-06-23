@@ -223,7 +223,8 @@ async function startServer() {
   // Verify Google token & Log in (supports both ID tokens and client-side popup Access tokens)
   app.post("/api/auth/google", async (req, res) => {
     try {
-      const { credential, accessToken } = req.body;
+      const credential = req.body?.credential || req.body?.id_token;
+      const accessToken = req.body?.accessToken || req.body?.access_token;
       
       let email = "";
       let name = "";
