@@ -935,15 +935,23 @@ export default function App() {
     const initApp = async () => {
       try {
         // 1. Fetch public Google Client ID configuration
+        console.log("[CLIENT initApp] Fetching /api/settings relative endpoint...");
         const settingsRes = await apiFetch("/api/settings");
+        console.log("[CLIENT initApp] settingsRes status:", settingsRes.status, "ok:", settingsRes.ok);
         let client_id = "";
         if (settingsRes.ok) {
           const settingsData = await settingsRes.json();
+          console.log("[CLIENT initApp] settingsData response payload:", settingsData);
           if (settingsData.success && settingsData.googleClientId) {
+            console.log("[CLIENT initApp] Setting googleClientId to:", settingsData.googleClientId);
             setGoogleClientId(settingsData.googleClientId);
             setSecurityGoogleClientId(settingsData.googleClientId);
             client_id = settingsData.googleClientId;
+          } else {
+            console.warn("[CLIENT initApp] settingsData didn't have googleClientId or success was false:", settingsData);
           }
+        } else {
+          console.error("[CLIENT initApp] failed to fetch settings with status code:", settingsRes.status);
         }
 
         // 2. Resolve token dynamically

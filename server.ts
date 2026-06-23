@@ -53,6 +53,17 @@ async function startServer() {
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
+  // Startup Environment Variables check (safe logging of keys only, no secrets)
+  console.log("[SERVER STARTUP] Environment variables keys starting with GOOGLE, VITE, or ALLOWED:");
+  Object.keys(process.env).forEach(key => {
+    if (key.includes("GOOGLE") || key.includes("VITE") || key.includes("ALLOWED")) {
+      const val = process.env[key];
+      const length = val ? val.length : 0;
+      const masked = val && val.length > 4 ? `${val.substring(0, 4)}...${val.substring(val.length - 4)}` : "empty/short";
+      console.log(`  - ${key}: length=${length}, format=${masked}`);
+    }
+  });
+
   // Directories & Files Paths
   const DATA_DIR = path.join(process.cwd(), "data");
   const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
@@ -93,10 +104,19 @@ async function startServer() {
     }
 
     // Support environment variables override for serverless environments (like Vercel)
-    const envGoogleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+    let envGoogleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
+    console.log("[SERVER] GOOGLE_CLIENT_ID in process.env:", process.env.GOOGLE_CLIENT_ID ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 15)}...` : "UNDEFINED");
+    console.log("[SERVER] VITE_GOOGLE_CLIENT_ID in process.env:", process.env.VITE_GOOGLE_CLIENT_ID ? `${process.env.VITE_GOOGLE_CLIENT_ID.substring(0, 15)}...` : "UNDEFINED");
+    
+    // Defensive check: strip wrapping quotes or handle empty/placeholder cases
     if (envGoogleClientId) {
-      settings.googleClientId = envGoogleClientId.trim();
+      envGoogleClientId = envGoogleClientId.replace(/^["']|["']$/g, "").trim();
     }
+    
+    if (envGoogleClientId && envGoogleClientId !== "undefined" && envGoogleClientId !== "null") {
+      settings.googleClientId = envGoogleClientId;
+    }
+    console.log("[SERVER] Final googleClientId returning to client:", settings.googleClientId ? `${settings.googleClientId.substring(0, 15)}...` : "NONE");
 
     const envAllowedEmails = process.env.ALLOWED_EMAILS;
     if (envAllowedEmails) {
