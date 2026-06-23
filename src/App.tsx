@@ -58,8 +58,10 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
     urlString = input.url;
   }
 
+  const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+  console.log(`[API FETCH CALL] Requested: "${urlString}" from Host: "${currentHost}"`);
+
   if (urlString.startsWith("/api/")) {
-    const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
     const isVercel = currentHost.includes("vercel.app");
     const disableRedirect = import.meta.env.VITE_DISABLE_API_REDIRECT === "true";
 
@@ -80,17 +82,31 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
         !currentHost.includes("vercel.app")))
     ) {
       const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
-    // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
-      console.log(`[API INTERCEPTOR] Redirecting relative call ${urlString} -> ${backendProdUrl}`);
+      // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
+      console.log(`[API INTERCEPTOR] Intercepted. Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
       
       const updatedInit = {
         ...init,
         credentials: init?.credentials || "include" as const
       };
-      return fetch(backendProdUrl, updatedInit);
+      try {
+        const response = await fetch(backendProdUrl, updatedInit);
+        console.log(`[API INTERCEPTOR RES] "${backendProdUrl}" responded with status: ${response.status} (ok: ${response.ok})`);
+        return response;
+      } catch (err) {
+        console.error(`[API INTERCEPTOR ERR] Failed to fetch from redirected URL "${backendProdUrl}":`, err);
+        throw err;
+      }
     }
   }
-  return fetch(input, init);
+  try {
+    const response = await fetch(input, init);
+    console.log(`[API DIRECT RES] Direct fetch "${urlString}" responded with status: ${response.status} (ok: ${response.ok})`);
+    return response;
+  } catch (err) {
+    console.error(`[API DIRECT ERR] Failed direct fetch for "${urlString}":`, err);
+    throw err;
+  }
 };
 
 interface AgentConfig {

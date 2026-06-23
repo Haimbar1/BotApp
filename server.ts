@@ -53,6 +53,37 @@ async function startServer() {
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
+  // Dynamic CORS configuration to support custom domains with credentials
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, or local testing)
+      if (!origin) return callback(null, true);
+      
+      const allowedOrigins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://app.smartesek.com",
+        "https://smartesek.co.il"
+      ];
+      
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1") ||
+        origin.includes("run.app") ||
+        origin.includes("vercel.app")
+      ) {
+        callback(null, true);
+      } else {
+        // Fallback: allow to ensure no legitimate custom domain gets blocked
+        callback(null, true);
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  }));
+
   // Startup Environment Variables check (safe logging of keys only, no secrets)
   console.log("[SERVER STARTUP] Environment variables keys starting with GOOGLE, VITE, or ALLOWED:");
   Object.keys(process.env).forEach(key => {
