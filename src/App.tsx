@@ -47,6 +47,22 @@ import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 
+// Global array for API fetch history logs
+const globalApiLogs: string[] = [];
+const addGlobalLog = (msg: string) => {
+  const timestamp = new Date().toLocaleTimeString();
+  const formatted = `[${timestamp}] ${msg}`;
+  console.log(formatted);
+  globalApiLogs.push(formatted);
+  if (typeof window !== "undefined" && (window as any).__onLogAdded) {
+    try {
+      (window as any).__onLogAdded(formatted);
+    } catch (e) {
+      // Ignored
+    }
+  }
+};
+
 // Safe API Fetch Wrapper with intelligent CORS Proxy routing for production domains (such as app.smartesek.com or smartesek.co.il)
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let urlString = "";
@@ -59,7 +75,7 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
   }
 
   const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
-  console.log(`[API FETCH CALL] Requested: "${urlString}" from Host: "${currentHost}"`);
+  addGlobalLog(`CALL: "${urlString}" from host: "${currentHost}"`);
 
   if (urlString.startsWith("/api/")) {
     const isVercel = currentHost.includes("vercel.app");
@@ -82,8 +98,7 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
         !currentHost.includes("vercel.app")))
     ) {
       const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
-      // const backendProdUrl = `https://ais-pre-yg5kl6qlbygmuujyeftsgb-57299413701.europe-west2.run.app${urlString}`;
-      console.log(`[API INTERCEPTOR] Intercepted. Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
+      addGlobalLog(`INTERCEPTOR: Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
       
       const updatedInit = {
         ...init,
@@ -91,20 +106,40 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
       };
       try {
         const response = await fetch(backendProdUrl, updatedInit);
-        console.log(`[API INTERCEPTOR RES] "${backendProdUrl}" responded with status: ${response.status} (ok: ${response.ok})`);
+        
+        // Debug clone of response to log body
+        try {
+          const clone = response.clone();
+          clone.text().then(text => {
+            addGlobalLog(`INTERCEPTOR RES: "${backendProdUrl}" status=${response.status}. Payload: ${text.substring(0, 300)}`);
+          });
+        } catch (cloneErr) {
+          addGlobalLog(`INTERCEPTOR RES: "${backendProdUrl}" status=${response.status}`);
+        }
+
         return response;
-      } catch (err) {
-        console.error(`[API INTERCEPTOR ERR] Failed to fetch from redirected URL "${backendProdUrl}":`, err);
+      } catch (err: any) {
+        addGlobalLog(`INTERCEPTOR ERR: Failed fetch from "${backendProdUrl}": ${err?.message || String(err)}`);
         throw err;
       }
     }
   }
   try {
     const response = await fetch(input, init);
-    console.log(`[API DIRECT RES] Direct fetch "${urlString}" responded with status: ${response.status} (ok: ${response.ok})`);
+    
+    // Debug clone of response to log body
+    try {
+      const clone = response.clone();
+      clone.text().then(text => {
+        addGlobalLog(`DIRECT RES: "${urlString}" status=${response.status}. Payload: ${text.substring(0, 300)}`);
+      });
+    } catch (cloneErr) {
+      addGlobalLog(`DIRECT RES: "${urlString}" status=${response.status}`);
+    }
+
     return response;
-  } catch (err) {
-    console.error(`[API DIRECT ERR] Failed direct fetch for "${urlString}":`, err);
+  } catch (err: any) {
+    addGlobalLog(`DIRECT ERR: Failed direct fetch for "${urlString}": ${err?.message || String(err)}`);
     throw err;
   }
 };
@@ -190,6 +225,8 @@ export default function App() {
   const [googleClientId, setGoogleClientId] = useState<string>("");
   const [allowedEmails, setAllowedEmails] = useState<string[]>([]);
   const [authError, setAuthError] = useState<string>("");
+  const [apiLogs, setApiLogs] = useState<string[]>([]);
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   
   // --- PUBLIC DEMO LANDING PAGE STATES ---
   const [isLandingPage, setIsLandingPage] = useState<boolean>(true);
@@ -948,26 +985,32 @@ export default function App() {
 
   // On mount: Fetch Google client ID & check active session
   useEffect(() => {
+    // Sync any pre-mount logs and listen for new ones
+    setApiLogs([...globalApiLogs]);
+    (window as any).__onLogAdded = (newLog: string) => {
+      setApiLogs(prev => [...prev, newLog]);
+    };
+
     const initApp = async () => {
       try {
         // 1. Fetch public Google Client ID configuration
-        console.log("[CLIENT initApp] Fetching /api/settings relative endpoint...");
+        addGlobalLog("[CLIENT initApp] Fetching /api/settings relative endpoint...");
         const settingsRes = await apiFetch("/api/settings");
-        console.log("[CLIENT initApp] settingsRes status:", settingsRes.status, "ok:", settingsRes.ok);
+        addGlobalLog(`[CLIENT initApp] settingsRes status: ${settingsRes.status} (ok: ${settingsRes.ok})`);
         let client_id = "";
         if (settingsRes.ok) {
           const settingsData = await settingsRes.json();
-          console.log("[CLIENT initApp] settingsData response payload:", settingsData);
+          addGlobalLog(`[CLIENT initApp] settingsData response payload: ${JSON.stringify(settingsData)}`);
           if (settingsData.success && settingsData.googleClientId) {
-            console.log("[CLIENT initApp] Setting googleClientId to:", settingsData.googleClientId);
+            addGlobalLog(`[CLIENT initApp] Setting googleClientId to: ${settingsData.googleClientId}`);
             setGoogleClientId(settingsData.googleClientId);
             setSecurityGoogleClientId(settingsData.googleClientId);
             client_id = settingsData.googleClientId;
           } else {
-            console.warn("[CLIENT initApp] settingsData didn't have googleClientId or success was false:", settingsData);
+            addGlobalLog(`[CLIENT initApp] settingsData didn't have googleClientId or success was false: ${JSON.stringify(settingsData)}`);
           }
         } else {
-          console.error("[CLIENT initApp] failed to fetch settings with status code:", settingsRes.status);
+          addGlobalLog(`[CLIENT initApp] failed to fetch settings with status code: ${settingsRes.status}`);
         }
 
         // 2. Resolve token dynamically
@@ -1017,6 +1060,10 @@ export default function App() {
     };
 
     initApp();
+
+    return () => {
+      (window as any).__onLogAdded = null;
+    };
   }, []);
 
   // Secure popup-based Google OAuth login initiator using GSI Client-Side Flow
@@ -3472,8 +3519,43 @@ ${videos || "(לא הוגדר)"}
               </div>
 
               {authError && (
-                <div id="auth-error-banner" className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
-                  {authError}
+                <div className="flex flex-col gap-2">
+                  <div id="auth-error-banner" className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
+                    {authError}
+                  </div>
+                  
+                  {/* Diagnostics toggle */}
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => setShowDiagnostics(!showDiagnostics)}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium cursor-pointer"
+                    >
+                      {showDiagnostics ? "הסתר פרטים טכניים (Hide Diagnostics)" : "הצג פרטים טכניים ויומן רשת (Show Diagnostics)"}
+                    </button>
+                  </div>
+
+                  {showDiagnostics && (
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono text-left max-h-[220px] overflow-y-auto flex flex-col gap-1.5 select-text" dir="ltr">
+                      <div className="text-indigo-400 font-bold border-b border-slate-800/80 pb-1 mb-1 flex justify-between items-center">
+                        <span>CLIENT DIAGNOSTICS</span>
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">Live Logs</span>
+                      </div>
+                      <div className="flex flex-col gap-1 text-[10px]">
+                        <div><strong className="text-slate-300">Host:</strong> {typeof window !== "undefined" ? window.location.href : "N/A"}</div>
+                        <div><strong className="text-slate-300">Client ID State:</strong> {googleClientId ? `${googleClientId.substring(0, 15)}... (len: ${googleClientId.length})` : "EMPTY"}</div>
+                        <div><strong className="text-slate-300">Google GSI Loaded:</strong> {typeof (window as any).google !== "undefined" ? "YES" : "NO"}</div>
+                      </div>
+                      <div className="border-t border-slate-800 pt-1 mt-1 text-slate-500 font-bold text-[9px]">NETWORK CALLS HISTORY:</div>
+                      {apiLogs.length === 0 ? (
+                        <div className="text-slate-600 italic">No network calls captured yet.</div>
+                      ) : (
+                        apiLogs.map((log, idx) => (
+                          <div key={idx} className="whitespace-pre-wrap break-all border-b border-slate-900/40 pb-1 last:border-0">{log}</div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

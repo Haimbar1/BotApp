@@ -469,6 +469,7 @@ async function startServer() {
 
   // Get Settings (partially public, fully private)
   app.get("/api/settings", (req, res) => {
+    console.log(`[SERVER /api/settings] Incoming GET request from Host: "${req.headers.host || ''}", Origin: "${req.headers.origin || ''}", Referer: "${req.headers.referer || ''}"`);
     const currentSettings = readSettings();
     
     // Check if the caller is authenticated to see full allowed emails and passcodes
@@ -476,10 +477,13 @@ async function startServer() {
     const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.substring(7) : "";
     const isAuthed = token ? !!getSession(token) : false;
 
+    const finalClientId = currentSettings.googleClientId || defaultSettings.googleClientId;
+    console.log(`[SERVER /api/settings] Returning googleClientId: "${finalClientId ? finalClientId.substring(0, 20) + '...' : 'NULL'}" (isAuthed: ${isAuthed})`);
+
     if (isAuthed) {
       return res.json({
         success: true,
-        googleClientId: currentSettings.googleClientId || defaultSettings.googleClientId,
+        googleClientId: finalClientId,
         allowedEmails: currentSettings.allowedEmails || defaultSettings.allowedEmails,
         bypassUsers: currentSettings.bypassUsers || defaultSettings.bypassUsers
       });
@@ -487,7 +491,7 @@ async function startServer() {
       // Unauthenticated callers only get Google Client ID to mount the login button
       return res.json({
         success: true,
-        googleClientId: currentSettings.googleClientId || defaultSettings.googleClientId
+        googleClientId: finalClientId
       });
     }
   });
