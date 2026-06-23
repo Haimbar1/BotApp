@@ -210,7 +210,7 @@ export default function App() {
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [sessionUser, setSessionUser] = useState<{ email: string; name: string; picture: string } | null>(null);
   const [sessionToken, setSessionToken] = useState<string>("");
-  const [googleClientId, setGoogleClientId] = useState<string>("");
+  const [googleClientId, setGoogleClientId] = useState<string>("1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com");
   const [allowedEmails, setAllowedEmails] = useState<string[]>([]);
   const [authError, setAuthError] = useState<string>("");
   const [apiLogs, setApiLogs] = useState<string[]>([]);
@@ -361,7 +361,7 @@ export default function App() {
   
   // Security Panel Modal Modal State
   const [showSecurityModal, setShowSecurityModal] = useState<boolean>(false);
-  const [securityGoogleClientId, setSecurityGoogleClientId] = useState<string>("");
+  const [securityGoogleClientId, setSecurityGoogleClientId] = useState<string>("1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com");
   const [securityAllowedEmails, setSecurityAllowedEmails] = useState<string[]>([]);
   const [newAllowedEmailInput, setNewAllowedEmailInput] = useState<string>("");
   const [isSavingSecuritySettings, setIsSavingSecuritySettings] = useState<boolean>(false);
