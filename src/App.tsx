@@ -78,25 +78,13 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
   addGlobalLog(`CALL: "${urlString}" from host: "${currentHost}"`);
 
   if (urlString.startsWith("/api/")) {
-    const isVercel = currentHost.includes("vercel.app");
-    const disableRedirect = import.meta.env.VITE_DISABLE_API_REDIRECT === "true";
+    const isLocal = currentHost.includes("localhost") || currentHost.includes("127.0.0.1");
+    const isSandbox = currentHost.includes("run.app");
+    const shouldRedirect = !isLocal && !isSandbox;
 
-    // If hosted externally (like a static export on app.smartesek.com), dynamically route relative API paths to the AI Studio backend sandbox
-    // For Vercel or when manually disabled, let the relative path handle its own requests.
-    const isProductionCustomDomain = currentHost === "app.smartesek.com" || currentHost === "smartesek.co.il";
+    addGlobalLog(`DECISION: host="${currentHost}" isLocal=${isLocal} isSandbox=${isSandbox} -> shouldRedirect=${shouldRedirect}`);
 
-    if (
-      !disableRedirect &&
-      !isVercel &&
-      (isProductionCustomDomain ||
-       (currentHost &&
-        !currentHost.includes("localhost") &&
-        !currentHost.includes("127.0.0.1") &&
-        !currentHost.includes("run.app") &&
-        !currentHost.includes("gitpod") &&
-        !currentHost.includes("codesandbox") &&
-        !currentHost.includes("vercel.app")))
-    ) {
+    if (shouldRedirect) {
       const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
       addGlobalLog(`INTERCEPTOR: Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
       
