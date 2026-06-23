@@ -1060,68 +1060,62 @@ export default function App() {
     };
   }, []);
 
-  // Secure popup-based Google OAuth login initiator using GSI Client-Side Flow
-  const handleGooglePopupLogin = (isSignUp: boolean = false) => {
+  // Secure popup-based Google OAuth login initiator using OIDC Implicit Flow to obtain ID Token / Credential
+  const handleGooglePopupLogin = (isSignUpVal: boolean = false) => {
     if (!googleClientId) {
       setAuthError("מזהה הלקוח של גוגל טרם נטען מהשרת. אנא המתן מספר שניות ונסה שוב.");
       return;
     }
     
+    isSignUpRef.current = isSignUpVal;
+    setIsSignUp(isSignUpVal);
     setAuthError("");
+    
     try {
-      const googleObj = (window as any).google;
-      if (googleObj?.accounts?.oauth2) {
-        const client = googleObj.accounts.oauth2.initTokenClient({
-          client_id: googleClientId,
-          scope: "openid profile email",
-          callback: async (response: any) => {
-            if (response.error) {
-              console.error("[CLIENT] Google popup login error:", response.error);
-              setAuthError(`שגיאת התחברות: ${response.error}`);
-              return;
-            }
-            if (response.access_token) {
-              console.log("[CLIENT] Google popup login success! Access token obtained.");
-              try {
-                const res = await apiFetch("/api/auth/google", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    accessToken: response.access_token,
-                    access_token: response.access_token,
-                    isSignUp
-                  }),
-                });
-                const data = await res.json();
-                if (data.success && data.token) {
-                  localStorage.removeItem("has_logged_out");
-                  localStorage.setItem("cyber_session_token", data.token);
-                  setSessionToken(data.token);
-                  setSessionUser(data.user);
-                  setIsAuthenticated(true);
-                  
-                  // Fetch user context and agents
-                  fetchAgentsFromServer(data.token, data.user?.email);
-                  fetchFullSettingsFromServer(data.token);
-                } else {
-                  setAuthError(data.message || "האימות נכשל");
-                }
-              } catch (err) {
-                console.error("[CLIENT] Failed to send token to server:", err);
-                setAuthError("שגיאת תקשורת עם השרת");
-              }
-            } else {
-              console.warn("[CLIENT] Google response missing access_token", response);
-              setAuthError("לא התקבל מפתח גישה של גוגל. אנא ודא שחלונות קופצים מאושרים בדפדפן ונסה שוב.");
-            }
-          },
-        });
-        client.requestAccessToken();
-      } else {
-        setAuthError("שירותי גוגל לא נטענו עדיין. אנא נסה שוב בעוד מספר שניות.");
+      const width = 500;
+      const height = 600;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      const nonce = Math.random().toString(36).substring(2);
+      
+      // We pass response_type=id_token so Google returns the real ID Token JWT directly in the hash
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${googleClientId}&redirect_uri=${encodeURIComponent(window.location.origin)}&response_type=id_token&scope=openid%20profile%20email&nonce=${nonce}&prompt=select_account`;
+      
+      console.log("[CLIENT] Opening custom Google popup auth window...");
+      const popup = window.open(authUrl, "google-login-popup", `width=${width},height=${height},top=${top},left=${left}`);
+      
+      if (!popup) {
+        setAuthError("פתיחת החלון הקופץ נחסמה על ידי הדפדפן. אנא אפשר חלונות קופצים (Popups) ונסה שוב.");
+        return;
       }
+      
+      const pollTimer = setInterval(() => {
+        try {
+          if (!popup || popup.closed) {
+            clearInterval(pollTimer);
+            return;
+          }
+          
+          // Once redirected back to our app's origin, we can read the location hash
+          if (popup.location.origin === window.location.origin) {
+            const hash = popup.location.hash;
+            if (hash) {
+              const params = new URLSearchParams(hash.substring(1));
+              const idToken = params.get("id_token");
+              if (idToken) {
+                clearInterval(pollTimer);
+                popup.close();
+                console.log("[CLIENT] Google popup login success! ID Token (credential) obtained.");
+                handleGoogleSigninCredential({ credential: idToken });
+              }
+            }
+          }
+        } catch (err) {
+          // Cross-origin exception is expected while the popup is on Google's domain
+        }
+      }, 300);
     } catch (e: any) {
-      console.error("[CLIENT] GSI Popup init error:", e);
+      console.error("[CLIENT] Google popup login initiator error:", e);
       setAuthError(`שגיאה בהפעלת חלון גוגל: ${e.message || String(e)}`);
     }
   };
@@ -3557,64 +3551,42 @@ ${videos || "(לא הוגדר)"}
               )}
 
               {/* Google Login Options */}
-              <div className="flex flex-col items-center justify-center gap-4 py-4 border-b border-slate-800/50 pb-6 w-full">
+              <div className="flex flex-col items-center justify-center gap-4 py-2 border-b border-slate-800/50 pb-6 w-full">
                 
-                {/* Unified Toggle Selector */}
-                <div className="w-full flex flex-col gap-2">
-                  <span className="text-[10.5px] text-indigo-400 font-extrabold uppercase tracking-wider text-right pr-1">בחר סוג פעולה:</span>
-                  <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800/80 w-full" dir="rtl">
-                    <button
-                      type="button"
-                      onClick={() => setIsSignUp(false)}
-                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        !isSignUp 
-                          ? "bg-slate-800 text-white shadow-md border border-slate-700/50" 
-                          : "text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      🔑 כניסת משתמש רשום
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsSignUp(true)}
-                      className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                        isSignUp 
-                          ? "bg-green-900/40 text-green-300 shadow-md border border-green-700/30" 
-                          : "text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      🚀 פתיחת חשבון חדש
-                    </button>
-                  </div>
-                </div>
-
-                {/* Info Text about Selection */}
-                <div className="text-[11px] text-slate-400 text-center font-medium min-h-[16px]">
-                  {isSignUp ? (
-                    <span className="text-green-400 font-bold">הירשם עכשיו וקבל חודש שלם של התנסות חינם!</span>
-                  ) : (
-                    <span>התחבר באמצעות חשבון הגוגל המורשה שלך.</span>
-                  )}
-                </div>
-
-                {/* Google GSI Sign In Button Mounting Point */}
-                <div className="w-full flex flex-col items-center justify-center gap-2 mt-1 bg-slate-900/20 p-4 rounded-xl border border-slate-800/40">
-                  <div className="text-[10px] text-slate-500 font-mono mb-1">GOOGLE SECURE LOGIN:</div>
-                  <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] w-full"></div>
-                </div>
-
-                {/* Option to also use legacy popup if desired */}
-                <div className="text-center w-full">
+                {/* Option 1: Green Trial Sign-Up Button */}
+                <div className="w-full flex flex-col gap-1.5">
+                  <span className="text-[10.5px] text-green-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות א': פתיחת חשבון חדש</span>
                   <button
                     type="button"
-                    onClick={() => handleGooglePopupLogin(isSignUp)}
-                    className="text-[10px] text-slate-400 hover:text-indigo-400 underline cursor-pointer transition-all"
+                    onClick={() => handleGooglePopupLogin(true)}
+                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
                   >
-                    חיבור OAuth חלופי (במידה והכפתור הרשמי לא מגיב)
+                    🚀 פתח חשבון התנסות חינם לחודש
                   </button>
                 </div>
 
-                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed w-full">
+                {/* Option 2: White Google Sign-In Button */}
+                <div className="w-full flex flex-col gap-1.5 mt-2">
+                  <span className="text-[10.5px] text-slate-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות ב': כניסה למשתמש רשום</span>
+                  <button
+                    type="button"
+                    onClick={() => handleGooglePopupLogin(false)}
+                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-950 font-bold py-2.5 px-4 rounded-xl border border-slate-700/30 transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
+                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
+                      <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
+                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
+                    </svg>
+                    <span>התחברות מהירה עם גוגל (Google Popup)</span>
+                  </button>
+                </div>
+
+                {/* Google GSI Sign In Button Mounting Point */}
+                <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
+                
+                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed mt-2 w-full">
                   💡 <strong>התחברות מאובטחת:</strong> ההרשמה והכניסה מתבצעות באופן מאובטח מול שרתי Google. לתוצאות מיטביות, ודא כי חלונות קופצים (Popups) מאושרים בדפדפן שלך.
                 </div>
               </div>
