@@ -215,6 +215,12 @@ export default function App() {
   const [authError, setAuthError] = useState<string>("");
   const [apiLogs, setApiLogs] = useState<string[]>([]);
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
+  const [isSignUp, setIsSignUp] = useState<boolean>(false);
+  const isSignUpRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    isSignUpRef.current = isSignUp;
+  }, [isSignUp]);
   
   // --- PUBLIC DEMO LANDING PAGE STATES ---
   const [isLandingPage, setIsLandingPage] = useState<boolean>(true);
@@ -1160,7 +1166,10 @@ export default function App() {
       const res = await apiFetch("/api/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential: response.credential }),
+        body: JSON.stringify({ 
+          credential: response.credential,
+          isSignUp: isSignUpRef.current
+        }),
       });
 
       const data = await res.json();
@@ -3548,42 +3557,64 @@ ${videos || "(לא הוגדר)"}
               )}
 
               {/* Google Login Options */}
-              <div className="flex flex-col items-center justify-center gap-4 py-2 border-b border-slate-800/50 pb-6">
+              <div className="flex flex-col items-center justify-center gap-4 py-4 border-b border-slate-800/50 pb-6 w-full">
                 
-                {/* Option 1: Green Trial Sign-Up Button */}
-                <div className="w-full flex flex-col gap-1.5">
-                  <span className="text-[10.5px] text-green-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות א': פתיחת חשבון חדש</span>
-                  <button
-                    type="button"
-                    onClick={() => handleGooglePopupLogin(true)}
-                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
-                  >
-                    🚀 פתח חשבון התנסות חינם לחודש
-                  </button>
+                {/* Unified Toggle Selector */}
+                <div className="w-full flex flex-col gap-2">
+                  <span className="text-[10.5px] text-indigo-400 font-extrabold uppercase tracking-wider text-right pr-1">בחר סוג פעולה:</span>
+                  <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800/80 w-full" dir="rtl">
+                    <button
+                      type="button"
+                      onClick={() => setIsSignUp(false)}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        !isSignUp 
+                          ? "bg-slate-800 text-white shadow-md border border-slate-700/50" 
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      🔑 כניסת משתמש רשום
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSignUp(true)}
+                      className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                        isSignUp 
+                          ? "bg-green-900/40 text-green-300 shadow-md border border-green-700/30" 
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      🚀 פתיחת חשבון חדש
+                    </button>
+                  </div>
                 </div>
 
-                {/* Option 2: White Google Sign-In Button */}
-                <div className="w-full flex flex-col gap-1.5 mt-2">
-                  <span className="text-[10.5px] text-slate-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות ב': כניסה למשתמש רשום</span>
-                  <button
-                    type="button"
-                    onClick={() => handleGooglePopupLogin(false)}
-                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-950 font-bold py-2.5 px-4 rounded-xl border border-slate-700/30 transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                  >
-                    <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
-                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
-                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
-                      <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
-                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
-                    </svg>
-                    <span>התחברות מהירה עם גוגל (Google Popup)</span>
-                  </button>
+                {/* Info Text about Selection */}
+                <div className="text-[11px] text-slate-400 text-center font-medium min-h-[16px]">
+                  {isSignUp ? (
+                    <span className="text-green-400 font-bold">הירשם עכשיו וקבל חודש שלם של התנסות חינם!</span>
+                  ) : (
+                    <span>התחבר באמצעות חשבון הגוגל המורשה שלך.</span>
+                  )}
                 </div>
 
                 {/* Google GSI Sign In Button Mounting Point */}
-                <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
-                
-                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed mt-2 w-full">
+                <div className="w-full flex flex-col items-center justify-center gap-2 mt-1 bg-slate-900/20 p-4 rounded-xl border border-slate-800/40">
+                  <div className="text-[10px] text-slate-500 font-mono mb-1">GOOGLE SECURE LOGIN:</div>
+                  <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] w-full"></div>
+                </div>
+
+                {/* Option to also use legacy popup if desired */}
+                <div className="text-center w-full">
+                  <button
+                    type="button"
+                    onClick={() => handleGooglePopupLogin(isSignUp)}
+                    className="text-[10px] text-slate-400 hover:text-indigo-400 underline cursor-pointer transition-all"
+                  >
+                    חיבור OAuth חלופי (במידה והכפתור הרשמי לא מגיב)
+                  </button>
+                </div>
+
+                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed w-full">
                   💡 <strong>התחברות מאובטחת:</strong> ההרשמה והכניסה מתבצעות באופן מאובטח מול שרתי Google. לתוצאות מיטביות, ודא כי חלונות קופצים (Popups) מאושרים בדפדפן שלך.
                 </div>
               </div>
