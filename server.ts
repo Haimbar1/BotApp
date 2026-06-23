@@ -82,18 +82,34 @@ async function startServer() {
 
   // Helper Functions to read/write JSON files
   function readSettings() {
+    let settings = { ...defaultSettings };
     try {
       if (fs.existsSync(SETTINGS_FILE)) {
         const parsed = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
-        if (!parsed.bypassUsers) {
-          parsed.bypassUsers = [...defaultSettings.bypassUsers];
-        }
-        return parsed;
+        settings = { ...settings, ...parsed };
       }
     } catch (e) {
       console.error("[SERVER] Error reading settings file:", e);
     }
-    return defaultSettings;
+
+    // Support environment variables override for serverless environments (like Vercel)
+    const envGoogleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+    if (envGoogleClientId) {
+      settings.googleClientId = envGoogleClientId.trim();
+    }
+
+    const envAllowedEmails = process.env.ALLOWED_EMAILS;
+    if (envAllowedEmails) {
+      settings.allowedEmails = envAllowedEmails
+        .split(",")
+        .map((email) => email.toLowerCase().trim())
+        .filter(Boolean);
+    }
+
+    if (!settings.bypassUsers) {
+      settings.bypassUsers = [...defaultSettings.bypassUsers];
+    }
+    return settings;
   }
 
   function saveSettings(settings: any) {
@@ -255,7 +271,17 @@ async function startServer() {
       const currentSettings = readSettings();
       const allowedCollection = (currentSettings.allowedEmails || []).map((e: string) => e.toLowerCase().trim());
 
-      const isAllowed = allowedCollection.includes(email);
+      let isAllowed = allowedCollection.includes(email);
+
+      const { isSignUp } = req.body;
+      if (!isAllowed && isSignUp) {
+        // Automatically add the user's email to the allowed list (registration)
+        currentSettings.allowedEmails = currentSettings.allowedEmails || [];
+        currentSettings.allowedEmails.push(email);
+        saveSettings(currentSettings);
+        isAllowed = true;
+        console.log(`[SERVER] Auto-registered and authorized new trial user: ${email}`);
+      }
 
       if (!isAllowed) {
         console.warn(`[SERVER] Unauthorized login attempt from email: ${email}`);

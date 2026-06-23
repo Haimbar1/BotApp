@@ -988,7 +988,7 @@ export default function App() {
   }, []);
 
   // Secure popup-based Google OAuth login initiator using GSI Client-Side Flow
-  const handleGooglePopupLogin = () => {
+  const handleGooglePopupLogin = (isSignUp: boolean = false) => {
     if (!googleClientId) {
       setAuthError("מזהה הלקוח של גוגל טרם נטען מהשרת. אנא המתן מספר שניות ונסה שוב.");
       return;
@@ -1013,7 +1013,7 @@ export default function App() {
                 const res = await apiFetch("/api/auth/google", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ accessToken: response.access_token }),
+                  body: JSON.stringify({ accessToken: response.access_token, isSignUp }),
                 });
                 const data = await res.json();
                 if (data.success && data.token) {
@@ -1033,6 +1033,9 @@ export default function App() {
                 console.error("[CLIENT] Failed to send token to server:", err);
                 setAuthError("שגיאת תקשורת עם השרת");
               }
+            } else {
+              console.warn("[CLIENT] Google response missing access_token", response);
+              setAuthError("לא התקבל מפתח גישה של גוגל. אנא ודא שחלונות קופצים מאושרים בדפדפן ונסה שוב.");
             }
           },
         });
@@ -3361,15 +3364,16 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-2.5">
-                            <a
-                              href="https://wa.me/972547866119?text=%D7%94%D7%99%20%D7%97%D7%99%D7%99%D7%9D%2C%20%D7%90%D7%A0%D7%99%20%D7%9E%D7%AA%D7%A2%D7%99%D7%99%D7%9F%20%D7%91%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%94%D7%91%D7%95%D7%98%D7%99%D7%9D%20%D7%A9%D7%9C%20%D7%A2%D7%A1%D7%A7%20%D7%97%D7%9B%D7%9D"
-                              target="_blank"
-                              referrerPolicy="no-referrer"
+                           <div className="flex flex-col gap-2.5">
+                            <button
+                              onClick={() => {
+                                setShowPremiumModal(false);
+                                handleGooglePopupLogin(true);
+                              }}
                               className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01]"
                             >
-                              💬 דבר עם חיים בר ב-WhatsApp לרכישה ושדרוג
-                            </a>
+                              🚀 פתח חשבון התנסות חינם לחודש
+                            </button>
                             <button
                               onClick={() => setShowPremiumModal(false)}
                               className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 rounded-xl text-xs font-bold transition cursor-pointer"
@@ -3439,40 +3443,42 @@ ${videos || "(לא הוגדר)"}
 
               {/* Google Login Options */}
               <div className="flex flex-col items-center justify-center gap-4 py-2 border-b border-slate-800/50 pb-6">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">התחבר באמצעות</span>
                 
-                {/* 1. Reliable Popup OAuth Button */}
-                <button
-                  type="button"
-                  onClick={handleGooglePopupLogin}
-                  className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-950 font-bold py-2.5 px-4 rounded-xl border border-slate-700/30 transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                >
-                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
-                    <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
-                    <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
-                    <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
-                    <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
-                  </svg>
-                  <span>התחברות מאובטחת בחלון קופץ (Google Popup)</span>
-                </button>
-
-                {/* Separator / Alternative */}
-                <div className="flex items-center w-full gap-2 px-6">
-                  <div className="h-px bg-slate-800/60 flex-1"></div>
-                  <span className="text-[10px] text-slate-600 font-semibold uppercase">או באמצעות כפתור מוטמע</span>
-                  <div className="h-px bg-slate-800/60 flex-1"></div>
+                {/* Option 1: Green Trial Sign-Up Button */}
+                <div className="w-full flex flex-col gap-1.5">
+                  <span className="text-[10.5px] text-green-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות א': פתיחת חשבון חדש</span>
+                  <button
+                    type="button"
+                    onClick={() => handleGooglePopupLogin(true)}
+                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    🚀 פתח חשבון התנסות חינם לחודש
+                  </button>
                 </div>
 
-                {/* 2. Google GSI Sign In Button Mounting Point */}
-                <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px]"></div>
+                {/* Option 2: White Google Sign-In Button */}
+                <div className="w-full flex flex-col gap-1.5 mt-2">
+                  <span className="text-[10.5px] text-slate-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות ב': כניסה למשתמש רשום</span>
+                  <button
+                    type="button"
+                    onClick={() => handleGooglePopupLogin(false)}
+                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-950 font-bold py-2.5 px-4 rounded-xl border border-slate-700/30 transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
+                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
+                      <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
+                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
+                    </svg>
+                    <span>התחברות מהירה עם גוגל (Google Popup)</span>
+                  </button>
+                </div>
+
+                {/* Google GSI Sign In Button Mounting Point */}
+                <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
                 
-                {!googleClientId && (
-                  <p className="text-[10px] text-slate-550 font-medium animate-pulse">טוען מפתח Google API מהשרת...</p>
-                )}
-                
-                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed mt-1">
-                  💡 <strong>הערת סביבת עבודה (Google AI Studio):</strong> כפתורים מוטמעים של גוגל עלולים להיחסם לעיתים על ידי הדפדפן בשל אבטחת iframe. 
-                  במידה ומופיעה שגיאה, <strong>כפתור ה-Popup למעלה</strong> או <strong>מעקף מורשה מהיר</strong> יפתרו את הבעיה באופן מיידי.
+                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed mt-2 w-full">
+                  💡 <strong>התחברות מאובטחת:</strong> ההרשמה והכניסה מתבצעות באופן מאובטח מול שרתי Google. לתוצאות מיטביות, ודא כי חלונות קופצים (Popups) מאושרים בדפדפן שלך.
                 </div>
               </div>
 
@@ -3521,9 +3527,6 @@ ${videos || "(לא הוגדר)"}
                           כניסה
                         </button>
                       </div>
-                      <span className="text-[10px] text-sky-450 font-medium text-center bg-sky-500/5 py-2 px-3 rounded-lg border border-sky-500/10 leading-relaxed">
-                        הזן את אימייל המנהל שלך <strong className="text-white font-mono">haim.bar@gmail.com</strong> או את מפתח המעקף שלך לצורך התחברות מהירה.
-                      </span>
                     </motion.div>
                   )}
                 </AnimatePresence>
