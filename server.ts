@@ -65,7 +65,7 @@ async function startServer() {
 
   // Default Settings (Includes Haim Bar's email as authorized administrator)
   const defaultSettings = {
-    googleClientId: "57299413701-yg5kl6qlbygmuujyeftsgb.apps.googleusercontent.com",
+    googleClientId: "1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com",
     allowedEmails: ["haim.bar@gmail.com"],
     bypassUsers: [
       { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "HaimBarAdmin2026!" }
@@ -1040,6 +1040,8 @@ async function startServer() {
 
       const defaultWebhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
       
+      const defaultBotName = `${businessName} _ ${activeAgentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+
       const payload = {
         // Direct core fields requested by Haim Bar
         ownerName: finalAgentName,
@@ -1051,6 +1053,12 @@ async function startServer() {
         key: "169711FA6EAA-41DA-8DF7-F12280FBA711",
         leadFollowUpDays: "3",
         agentEmail: "haim.bar@gmail.com",
+        name: defaultBotName,
+        agentType: activeAgentType,
+        "שם": defaultBotName,
+        "סוג": activeAgentType === "support" ? "תמיכה טכנית" : "מכירות",
+        "שם הבוט": defaultBotName,
+        "סוג הבוט": activeAgentType === "support" ? "תמיכה טכנית" : "מכירות",
         "קהל יעד": googleAiPromptResponse.kidsCourses,
         "קבל יעד": googleAiPromptResponse.kidsCourses,
         Status: "פעיל",

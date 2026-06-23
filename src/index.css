@@ -177,3 +177,481 @@
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: rgba(56, 189, 248, 0.75) !important;
 }
+
+/* LIGHT THEME GLOBALS AND OVERRIDES */
+.theme-light,
+.theme-light body,
+.theme-light #root {
+  background-color: #faf9f6 !important; /* Soft warm luxury alabaster */
+  background-image: 
+    radial-gradient(circle at top right, rgba(217, 184, 115, 0.16) 0%, transparent 45%), /* Subtle golden luxury glow */
+    radial-gradient(circle at top left, rgba(165, 180, 252, 0.18) 0%, transparent 45%),  /* Subtle lavender glow */
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.95) 0%, transparent 100%),   /* Bright center */
+    radial-gradient(circle at bottom right, rgba(253, 224, 71, 0.08) 0%, transparent 35%),
+    radial-gradient(circle at bottom left, rgba(129, 140, 248, 0.06) 0%, transparent 35%) !important;
+  color: #0f172a !important;
+}
+
+.theme-light * {
+  scrollbar-color: rgba(99, 102, 241, 0.35) #faf9f6 !important;
+}
+
+.theme-light ::-webkit-scrollbar-track {
+  background: #faf9f6 !important;
+}
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.3) !important;
+  border: 1px solid #faf9f6 !important;
+}
+
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.6) !important;
+}
+
+/* Force body and wrapper backgrounds to override dark tokens */
+.theme-light [class*="min-h-screen"],
+.theme-light .min-h-screen,
+.theme-light [class*="radial-gradient"],
+.theme-light [class*="bg-[#07070"],
+.theme-light [class*="bg-[#04040"],
+.theme-light [class*="bg-[#05060"] {
+  background-color: #faf9f6 !important;
+  background-image: 
+    radial-gradient(circle at top right, rgba(217, 184, 115, 0.16) 0%, transparent 45%),
+    radial-gradient(circle at top left, rgba(165, 180, 252, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 50% 100%, rgba(255, 255, 255, 0.95) 0%, transparent 100%) !important;
+}
+
+/* Universal Background overrides: Any custom dark layout box becomes a clean white-card */
+.theme-light [class*="bg-[#"] {
+  background-color: #ffffff !important;
+  color: #0c111d !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Specific elements background override */
+.theme-light [class*="bg-[#0" i],
+.theme-light [class*="bg-[#1" i],
+.theme-light [class*="bg-[#20" i],
+.theme-light [class*="bg-[#21" i],
+.theme-light [class*="bg-[#22" i],
+.theme-light [class*="bg-slate-9" i],
+.theme-light [class*="bg-slate-8" i],
+.theme-light [class*="bg-slate-700" i],
+.theme-light .bg-slate-950,
+.theme-light .bg-slate-900,
+.theme-light .bg-slate-850,
+.theme-light .bg-slate-800,
+.theme-light .bg-black {
+  background-color: #ffffff !important; /* Premium crisp white backdrop */
+  background-image: none !important;
+  border-color: #e2e8f0 !important; /* Elegant clean visual border lines */
+  box-shadow: 0 10px 30px -10px rgba(100, 116, 139, 0.12), 0 1px 3px rgba(100, 116, 139, 0.05) !important;
+}
+
+/* Specific inner containers, fields, selectors and cards that should be pure white in light mode */
+.theme-light input,
+.theme-light textarea,
+.theme-light select,
+.theme-light [class*="bg-[#050608]" i],
+.theme-light [class*="bg-[#050609]" i],
+.theme-light [class*="bg-[#07080c]" i],
+.theme-light [class*="bg-[#10121d]" i],
+.theme-light [class*="bg-[#151720]" i],
+.theme-light [class*="bg-[#171b2e]" i],
+.theme-light [class*="bg-[#0e1017]" i] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Inputs and editable textareas focus and hover styling */
+.theme-light input,
+.theme-light textarea,
+.theme-light select,
+.theme-light [class*="bg-[#050608]"] input,
+.theme-light [class*="bg-[#050608]"] textarea,
+.theme-light [class*="bg-[#1c1e26]"],
+.theme-light [class*="bg-[#06070a]"],
+.theme-light [class*="bg-[#08090d]"],
+.theme-light [class*="bg-[#0a0c14]"] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+.theme-light input:focus,
+.theme-light textarea:focus,
+.theme-light select:focus {
+  border-color: #4f46e5 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2.5px rgba(79, 70, 229, 0.15) !important;
+}
+
+/* Selected layout tabs configurations exactly from user image design */
+.theme-light [class*="bg-indigo-600/10"],
+.theme-light [class*="bg-indigo-600/15"],
+.theme-light .bg-indigo-600\/10,
+.theme-light .bg-indigo-600\/15 {
+  background-color: #e9ecf9 !important;
+  border-color: #4f46e5 !important;
+  color: #312e81 !important;
+}
+
+.theme-light [class*="bg-indigo-600/10"] *,
+.theme-light [class*="bg-indigo-600/15"] *,
+.theme-light .bg-indigo-600\/10 *,
+.theme-light .bg-indigo-600\/15 * {
+  color: #312e81 !important;
+  font-weight: 700 !important;
+}
+
+/* Active sidebar items precisely targeted */
+.theme-light [class*="bg-[#161c2d]"],
+.theme-light [class*="bg-[#181d2d]"] {
+  background-color: #e9ecf9 !important;
+  color: #312e81 !important;
+  border-color: #818cf8 !important;
+}
+
+.theme-light [class*="bg-[#161c2d]"] *,
+.theme-light [class*="bg-[#181d2d]"] * {
+  color: #312e81 !important;
+}
+
+/* Ensure solid background active buttons and status badges maintain white text */
+.theme-light .bg-indigo-600,
+.theme-light .bg-indigo-600 *,
+.theme-light .bg-indigo-505,
+.theme-light .bg-indigo-505 *,
+.theme-light .bg-indigo-500,
+.theme-light .bg-indigo-500 *,
+.theme-light button[type="submit"],
+.theme-light button[type="submit"] *,
+.theme-light button.bg-indigo-600,
+.theme-light button.bg-indigo-600 *,
+.theme-light .bg-gradient-to-r,
+.theme-light .bg-gradient-to-r *,
+.theme-light .bg-gradient-to-tr,
+.theme-light .bg-gradient-to-tr * {
+  color: #ffffff !important;
+}
+
+/* Drag & drop helper zone styled perfectly from user image */
+.theme-light [class*="border-dashed"] {
+  background-color: #e9ecf9 !important;
+  border-color: #4f46e5 !important;
+  border-style: dashed !important;
+}
+
+.theme-light [class*="border-dashed"] * {
+  color: #312e81 !important;
+}
+
+/* Soft status alerts/highlight blocks in light mode */
+.theme-light .bg-sky-950\/40,
+.theme-light .bg-sky-500\/10,
+.theme-light .bg-indigo-950\/30 {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .bg-rose-950\/30,
+.theme-light .bg-rose-500\/10 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+}
+
+.theme-light .bg-rose-950\/30 *,
+.theme-light .bg-rose-500\/10 * {
+  color: #be123c !important;
+}
+
+.theme-light .bg-emerald-950\/30,
+.theme-light .bg-emerald-500\/10 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+}
+
+.theme-light .bg-emerald-950\/30 *,
+.theme-light .bg-emerald-500\/10 * {
+  color: #047857 !important;
+}
+
+/* Universal border override in light theme */
+.theme-light .border-slate-800,
+.theme-light .border-slate-850,
+.theme-light .border-slate-900,
+.theme-light .border-slate-700,
+.theme-light [class*="border-[#141C2C]"],
+.theme-light [class*="border-[#1c1d29]"],
+.theme-light [class*="border-[#181D29]"],
+.theme-light [class*="border-[#1E2433]"],
+.theme-light .border-slate-755,
+.theme-light .border-slate-750,
+.theme-light .border-slate-500\/10,
+.theme-light .border-slate-500\/20 {
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light [class*="border-[#"] {
+  border-color: #cbd5e1 !important;
+}
+
+/* Maintain special active border highlights */
+.theme-light .border-indigo-500,
+.theme-light [class*="border-indigo-500"],
+.theme-light .border-sky-500,
+.theme-light [class*="border-sky-500"],
+.theme-light .border-emerald-500,
+.theme-light [class*="border-emerald-500"],
+.theme-light .border-red-500,
+.theme-light [class*="border-red-500"] {
+  border-color: #4f46e5 !important;
+}
+
+/* Map text colors to high-contrast dark tones for slate classes */
+.theme-light .text-slate-350,
+.theme-light .text-slate-300,
+.theme-light .text-slate-250,
+.theme-light .text-slate-200,
+.theme-light .text-slate-150,
+.theme-light .text-slate-100,
+.theme-light .text-slate-50,
+.theme-light .text-slate-205,
+.theme-light .text-white:not(button, button *, a, a *, [class*="bg-indigo-"] *, [class*="bg-sky-"] *, [class*="bg-emerald-"] *, [class*="bg-rose-"] *) {
+  color: #111827 !important;
+}
+
+.theme-light .text-slate-400,
+.theme-light .text-slate-500 {
+  color: #475569 !important;
+}
+
+.theme-light .text-slate-600 {
+  color: #64748b !important;
+}
+
+.theme-light .text-sky-305,
+.theme-light .text-sky-300,
+.theme-light .text-sky-450,
+.theme-light .text-sky-400,
+.theme-light .text-indigo-400,
+.theme-light .text-indigo-300 {
+  color: #4338ca !important;
+}
+
+.theme-light .text-teal-400,
+.theme-light .text-teal-300 {
+  color: #0f766e !important;
+}
+
+.theme-light .text-rose-400,
+.theme-light .text-rose-300,
+.theme-light .text-rose-250 {
+  color: #be123c !important;
+}
+
+/* Specific styling rules for CountryPhoneInput widget inside theme-light */
+.theme-light button[id*="country-btn"],
+.theme-light button.bg-\[\#151720\] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light button[id*="country-btn"]:hover,
+.theme-light button.bg-\[\#151720\]:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.theme-light button[id*="country-btn"] *,
+.theme-light button.bg-\[\#151720\] * {
+  color: #0f172a !important;
+}
+
+/* Country Selection Dropdown Dialog Panel */
+.theme-light div[id*="country-dropdown"] {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02) !important;
+}
+
+.theme-light div[id*="country-dropdown"] [class*="bg-[#151724]"] {
+  background-color: #f8fafc !important;
+  border-bottom-color: #e2e8f0 !important;
+}
+
+.theme-light div[id*="country-dropdown"] input {
+  background-color: transparent !important;
+  color: #0f172a !important;
+  border: none !important;
+}
+
+.theme-light div[id*="country-dropdown"] svg {
+  color: #64748b !important;
+}
+
+.theme-light div[id*="country-dropdown"] button {
+  color: #334155 !important;
+}
+
+.theme-light div[id*="country-dropdown"] button:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.theme-light div[id*="country-dropdown"] button [class*="text-slate-500"] {
+  color: #475569 !important;
+}
+
+.theme-light div[id*="country-dropdown"] button [class*="text-indigo-400"] {
+  color: #4f46e5 !important;
+}
+
+.theme-light div[id*="country-dropdown"] button [class*="bg-indigo-650/10"] {
+  background-color: #e0e7ff !important;
+}
+
+/* Pull/Read content database button overrides - styling to look professional, visible and beautiful */
+.theme-light button[class*="bg-[#171923]"],
+.theme-light button.bg-\[\#171923\],
+.theme-light button[class*="bg-[#1E2433]"],
+.theme-light button.bg-\[\#1E2433\] {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #1e293b !important;
+}
+
+.theme-light button[class*="bg-[#171923]"]:hover,
+.theme-light button.bg-\[\#171923\]:hover,
+.theme-light button[class*="bg-[#1E2433]"]:hover,
+.theme-light button.bg-\[\#1E2433\]:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+.theme-light button[class*="bg-[#171923]"] *,
+.theme-light button.bg-\[\#171923\] *,
+.theme-light button[class*="bg-[#1E2433]"] *,
+.theme-light button.bg-\[\#1E2433\] * {
+  color: #1e293b !important;
+}
+
+/* Overlays override for Light Theme - crisp high-end glass structures */
+.theme-light [class*="bg-[#06070a]"],
+.theme-light .bg-slate-950\/85,
+.theme-light .bg-slate-950\/90,
+.theme-light .bg-black\/80 {
+  background-color: rgba(250, 249, 246, 0.94) !important;
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+}
+
+/* Handle fullscreen modal windows beautifully */
+.theme-light div[class*="z-50 bg-[#06070a]"] {
+  background-color: #faf9f6 !important;
+  background-image: 
+    radial-gradient(circle at top right, rgba(217, 184, 115, 0.16) 0%, transparent 45%),
+    radial-gradient(circle at top left, rgba(165, 180, 252, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 50% 100%, rgba(255, 255, 255, 0.95) 0%, transparent 100%) !important;
+}
+
+/* Specific modal cards and dialogue wrappers */
+.theme-light div[class*="bg-[#0b0c16]"],
+.theme-light div[class*="bg-[#0C0D12]"],
+.theme-light div[class*="bg-[#0b0c10]"],
+.theme-light div[class*="bg-[#0e0f14]"],
+.theme-light div[class*="bg-[#0d0f16]"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 20px 25px -5px rgba(100, 116, 139, 0.08), 0 10px 10px -5px rgba(100, 116, 139, 0.04) !important;
+}
+
+/* Animated Smart logo paths styling updates in Light Mode */
+.theme-light svg rect[fill="#0B0D13"],
+.theme-light svg path[fill="#0B0D13"] {
+  fill: #ffffff !important;
+}
+
+/* Ensure headings/texts have rich contrast */
+.theme-light h1,
+.theme-light h2,
+.theme-light h3,
+.theme-light h4,
+.theme-light h5,
+.theme-light h6,
+.theme-light strong {
+  color: #0f172a !important;
+}
+
+.theme-light h1 *,
+.theme-light h2 *,
+.theme-light h3 *,
+.theme-light h4 * {
+  color: inherit !important;
+}
+
+/* Title gradients styles in light mode */
+.theme-light .text-transparent {
+  background-clip: text !important;
+  -webkit-background-clip: text !important;
+  color: transparent !important;
+}
+
+/* Ensure selected tabs and select inputs borders */
+.theme-light .border-sky-505,
+.theme-light .border-indigo-500 {
+  border-color: #4f46e5 !important;
+}
+
+/* Markdown overrides in light theme */
+.theme-light .md-preview-container h1 {
+  color: #0f172a !important;
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.theme-light .md-preview-container h2 {
+  color: #4f46e5 !important; /* Beautiful deep indigo */
+  border-bottom-color: #e2e8f0 !important;
+}
+
+.theme-light .md-preview-container h3 {
+  color: #1e293b !important;
+}
+
+.theme-light .md-preview-container p {
+  color: #334155 !important; /* Rich readable slate-700 */
+}
+
+.theme-light .md-preview-container li {
+  color: #334155 !important;
+}
+
+.theme-light .md-preview-container strong {
+  color: #0f172a !important;
+}
+
+.theme-light .md-preview-container blockquote {
+  background-color: #f1f5f9 !important;
+  border-right-color: #4f46e5 !important;
+  color: #475569 !important;
+}
+
+.theme-light .md-preview-container pre {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .md-preview-container code {
+  background-color: #f1f5f9 !important;
+  color: #dc2626 !important;
+  border-color: #e2e8f0 !important;
+}
+

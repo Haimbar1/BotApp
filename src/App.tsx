@@ -35,7 +35,10 @@ import {
   Globe,
   Phone,
   Zap,
-  Paperclip
+  Paperclip,
+  Sun,
+  Moon,
+  Sliders
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
@@ -106,6 +109,8 @@ interface AgentConfig {
   videosInfo?: string;
   agentEmail?: string; // Associated email address for security and permissions
   status?: string;
+  name?: string;
+  agentType?: "sales" | "support";
 }
 
 const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
@@ -171,11 +176,139 @@ export default function App() {
   const [landingAgentType, setLandingAgentType] = useState<"sales" | "support">("sales");
   const [landingAdditionalContext, setLandingAdditionalContext] = useState<string>("");
   const [fileLoading, setFileLoading] = useState<boolean>(false);
+  const [dragOverDemo, setDragOverDemo] = useState<boolean>(false);
   const [isCreatingDemo, setIsCreatingDemo] = useState<boolean>(false);
   const [demoStep, setDemoStep] = useState<number>(0);
   const [demoResult, setDemoResult] = useState<any>(null);
   const [demoSubmitError, setDemoSubmitError] = useState<string>("");
   const [showPremiumModal, setShowPremiumModal] = useState<boolean>(false);
+  
+  // Custom helper to parse PDF files client-side using pdf.js loaded dynamically from public CDN
+  const extractTextFromPdf = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      // 1. Ensure pdfjsLib is loaded
+      if ((window as any).pdfjsLib) {
+        proceedWithParsing((window as any).pdfjsLib);
+      } else {
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js";
+        script.onload = () => {
+          const pdfjsLib = (window as any).pdfjsLib;
+          if (pdfjsLib) {
+            proceedWithParsing(pdfjsLib);
+          } else {
+            reject(new Error("שגיאה בטעינת ספריית קריאת קבצי PDF"));
+          }
+        };
+        script.onerror = () => {
+          reject(new Error("נכשלה טעינת מפענח ה-PDF מהשרת הציבורי. אנא ודא חיבור תקין לרשת."));
+        };
+        document.head.appendChild(script);
+      }
+
+      function proceedWithParsing(pdfjsLib: any) {
+        try {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const arrayBuffer = e.target?.result as ArrayBuffer;
+              if (!arrayBuffer) {
+                reject(new Error("קובץ ה-PDF ריק או פגום"));
+                return;
+              }
+
+              const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+              const pdf = await loadingTask.promise;
+              
+              let fullText = "";
+              const numPages = pdf.numPages;
+
+              for (let i = 1; i <= numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items
+                  .map((item: any) => item.str)
+                  .join(" ");
+                fullText += pageText + "\n";
+              }
+
+              if (!fullText.trim()) {
+                reject(new Error("לא ניתן היה לחלץ טקסט תקין מקובץ ה-PDF (ייתכן ומדובר במסמך סרוק/תמונה ללא שכבת טקסט דיגיטלית)"));
+              } else {
+                resolve(fullText);
+              }
+            } catch (err: any) {
+              reject(new Error(`שגיאה בפענוח ה-PDF: ${err.message || err}`));
+            }
+          };
+
+          reader.onerror = () => {
+            reject(new Error("שגיאה בקריאת הקובץ מהזיכרון"));
+          };
+
+          reader.readAsArrayBuffer(file);
+        } catch (err: any) {
+          reject(new Error(`שגיאה באתחול תהליך פענוח ה-PDF: ${err.message || err}`));
+        }
+      }
+    });
+  };
+
+  const handleFileSelect = async (file: File) => {
+    if (!file) return;
+
+    const fileExtension = file.name.split(".").pop()?.toLowerCase();
+    const allowedExtensions = ["pdf", "txt", "json", "csv", "md"];
+
+    if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
+      alert(`פורמט הקובץ אינו נתמך (${file.name}).\nניתן להעלות קבצים המכילים טקסט בלבד התואמים לאחד מהפורמטים הבאים: (.pdf, .txt, .json, .csv, .md)`);
+      return;
+    }
+
+    setFileLoading(true);
+
+    try {
+      if (fileExtension === "pdf") {
+        const text = await extractTextFromPdf(file);
+        if (text && text.trim()) {
+          setLandingAdditionalContext((prev) => {
+            const cleanPrev = prev ? prev.trim() : "";
+            return (cleanPrev ? cleanPrev + "\n\n" : "") + `=== תוכן מסמך ${file.name} ===\n` + text;
+          });
+          alert(`הקובץ ${file.name} נקרא ונתוניו חולצו בהצלחה!`);
+        }
+      } else {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const text = event.target?.result;
+          if (typeof text === "string" && text.trim()) {
+            setLandingAdditionalContext((prev) => {
+              const cleanPrev = prev ? prev.trim() : "";
+              return (cleanPrev ? cleanPrev + "\n\n" : "") + `=== תוכן מסמך ${file.name} ===\n` + text;
+            });
+            alert(`הקובץ ${file.name} נטען בהצלחה!`);
+          } else {
+            alert(`לא נמצא תוכן טקסטואלי תקין בקובץ: ${file.name}`);
+          }
+          setFileLoading(false);
+        };
+        reader.onerror = () => {
+          alert(`שגיאה בקריאת קובץ הטקסט: ${file.name}`);
+          setFileLoading(false);
+        };
+        reader.readAsText(file);
+      }
+    } catch (error: any) {
+      alert(`עיבוד הקובץ נכשל: ${error.message || error}`);
+      setFileLoading(false);
+    } finally {
+      if (fileExtension === "pdf") {
+        setFileLoading(false);
+      }
+    }
+  };
   
   // Security Panel Modal Modal State
   const [showSecurityModal, setShowSecurityModal] = useState<boolean>(false);
@@ -233,6 +366,9 @@ export default function App() {
   const [leadFollowUpDays, setLeadFollowUpDays] = useState("3");
   const [agentEmail, setAgentEmail] = useState("");
   const [status, setStatus] = useState<string>("Not Active");
+  const [name, setName] = useState("");
+  const [agentType, setAgentType] = useState<"sales" | "support">("sales");
+  const [partFileLoading, setPartFileLoading] = useState(false);
 
   // Split prompt states
   const [botIdentity, setBotIdentity] = useState("");
@@ -262,6 +398,89 @@ export default function App() {
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [promptBuilderBackup, setPromptBuilderBackup] = useState<AgentConfig | null>(null);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"blocks" | "editor" | "preview">("blocks");
+
+  // Persistent theme style (Default to "light" model based on user request)
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("theme");
+    return (saved === "dark" || saved === "light") ? saved : "light";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+    const root = document.documentElement;
+    if (theme === "light") {
+      root.classList.add("theme-light");
+      root.classList.remove("theme-dark");
+      root.style.backgroundColor = "#faf9f6";
+    } else {
+      root.classList.add("theme-dark");
+      root.classList.remove("theme-light");
+      root.style.backgroundColor = "#07070a";
+    }
+  }, [theme]);
+
+  // Handle file uploads for individual prompt parts (like brochures / syllabusLinks)
+  const handlePartFileSelect = async (file: File, partKey: keyof AgentConfig) => {
+    if (!file) return;
+
+    const fileExtension = file.name.split(".").pop()?.toLowerCase();
+    const allowedExtensions = ["pdf", "txt", "json", "csv", "md"];
+
+    if (!fileExtension || !allowedExtensions.includes(fileExtension)) {
+      alert(`שגיאה: פורמט הקובץ אינו נתמך (${file.name}).\nניתן להעלות קבצים שעבורם ניתן לחלץ טקסט בפורמטים הבאים בלבד: (.pdf, .txt, .json, .csv, .md)`);
+      return;
+    }
+
+    setPartFileLoading(true);
+
+    try {
+      let text = "";
+      if (fileExtension === "pdf") {
+        text = await extractTextFromPdf(file);
+      } else {
+        text = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            if (typeof event.target?.result === "string") {
+              resolve(event.target.result);
+            } else {
+              reject(new Error(`לא נמצא תוכן טקסטואלי תקין בקובץ: ${file.name}`));
+            }
+          };
+          reader.onerror = () => reject(new Error(`שגיאה בקריאת קובץ הטקסט: ${file.name}`));
+          reader.readAsText(file);
+        });
+      }
+
+      if (text && text.trim()) {
+        let currentValue = "";
+        if (partKey === "syllabusLinks") currentValue = syllabusLinks;
+        else if (partKey === "coursesInfo") currentValue = coursesInfo;
+        else if (partKey === "faqAnswers") currentValue = faqAnswers;
+        else if (partKey === "botIdentity") currentValue = botIdentity;
+        else if (partKey === "kidsCourses") currentValue = kidsCourses;
+        else if (partKey === "conversationFlow") currentValue = conversationFlow;
+        else if (partKey === "writingStyle") currentValue = writingStyle;
+        else if (partKey === "whatNotToDo") currentValue = whatNotToDo;
+        else if (partKey === "humanEscalation") currentValue = humanEscalation;
+        else if (partKey === "imagesInfo") currentValue = imagesInfo;
+        else if (partKey === "videosInfo") currentValue = videosInfo;
+
+        const cleanPrev = currentValue ? currentValue.trim() : "";
+        const formattedTitle = `\n\n=== תוכן מסמך שחולץ: ${file.name} ===\n`;
+        const appended = (cleanPrev ? cleanPrev + "\n" : "") + formattedTitle + text.trim() + `\n=== סוף מסמך: ${file.name} ===\n`;
+
+        handlePromptPartChange(partKey as any, appended);
+        alert(`הקובץ "${file.name}" נקרא בהצלחה! ${text.trim().length} תווים חולצו והתווספו ישירות אל החלק הנבחר.`);
+      } else {
+        alert(`לא נמצא תוכן טקסטואלי תקין או שחיץ בקובץ: ${file.name}`);
+      }
+    } catch (error: any) {
+      alert(`עיבוד הקובץ נכשל: ${error.message || error}`);
+    } finally {
+      setPartFileLoading(false);
+    }
+  };
 
   // AI Bot Creator / Wizard State variables
   const [showWizardModal, setShowWizardModal] = useState<boolean>(false);
@@ -1210,6 +1429,8 @@ ${videos || "(לא הוגדר)"}
     setLeadFollowUpDays(agent.leadFollowUpDays || "3");
     setAgentEmail(agent.agentEmail || "");
     setStatus(agent.status || "Not Active");
+    setName(agent.name || (agent.businessName ? `${agent.businessName} _ ${agent.agentType === "support" ? "תמיכה טכנית" : "מכירות"}` : ""));
+    setAgentType(agent.agentType || "sales");
     
     // Load individual sections with extraction support or defaults
     const parts = getOrExtractBypassParts(agent);
@@ -1298,7 +1519,6 @@ ${videos || "(לא הוגדר)"}
       return agent;
     });
     setAgents(updated);
-    saveAgentsToServer(updated, sessionToken, true);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
   };
 
@@ -1349,7 +1569,17 @@ ${videos || "(לא הוגדר)"}
   // Update current active agent configuration in state & server
   const handleFieldChange = (field: keyof AgentConfig, value: string) => {
     if (field === "ownerName") setOwnerName(value);
-    else if (field === "businessName") setBusinessName(value);
+    else if (field === "businessName") {
+      setBusinessName(value);
+      const prevDefault = `${businessName} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+      if (!name || name === prevDefault || name === "[שם העסק] _ מכירות" || name === "[שם העסק] _ תמיכה טכנית" || name.trim() === "_ מכירות" || name.trim() === "_ תמיכה טכנית" || name === "סוכן חדש 1 _ מכירות" || name.startsWith("סוכן חדש ")) {
+        const newDefault = `${value} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+        setName(newDefault);
+        setTimeout(() => {
+          setAgents(prev => prev.map(a => a.id === activeId ? { ...a, name: newDefault } : a));
+        }, 0);
+      }
+    }
     else if (field === "ownerPhone") setOwnerPhone(value);
     else if (field === "botId") setBotId(value);
     else if (field === "whatsappInstance") setWhatsappInstance(value);
@@ -1358,13 +1588,37 @@ ${videos || "(לא הוגדר)"}
     else if (field === "leadFollowUpDays") setLeadFollowUpDays(value);
     else if (field === "agentEmail") setAgentEmail(value);
     else if (field === "status") setStatus(value);
+    else if (field === "name") setName(value);
+    else if (field === "agentType") {
+      const typedVal = value as "sales" | "support";
+      setAgentType(typedVal);
+      const prevDefault = `${businessName} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+      if (!name || name === prevDefault || name === "[שם העסק] _ מכירות" || name === "[שם העסק] _ תמיכה טכנית" || name.trim() === "_ מכירות" || name.trim() === "_ תמיכה טכנית" || name === "סוכן חדש 1 _ מכירות" || name.startsWith("סוכן חדש ")) {
+        const newDefault = `${businessName} _ ${typedVal === "support" ? "תמיכה טכנית" : "מכירות"}`;
+        setName(newDefault);
+        setTimeout(() => {
+          setAgents(prev => prev.map(a => a.id === activeId ? { ...a, name: newDefault, agentType: typedVal } : a));
+        }, 0);
+      }
+    }
 
     let updatedAgentToSync: AgentConfig | undefined;
     let otherDeactivatedAgents: AgentConfig[] = [];
 
     const updated = agents.map(agent => {
       if (agent.id === activeId) {
-        const u = { ...agent, [field]: value };
+        let u = { ...agent, [field]: value };
+        if (field === "businessName") {
+          const prevDefault = `${agent.businessName} _ ${agent.agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+          if (!agent.name || agent.name === prevDefault || agent.name === "[שם העסק] _ מכירות" || agent.name === "[שם העסק] _ תמיכה טכנית" || agent.name.trim() === "_ מכירות" || agent.name.trim() === "_ תמיכה טכנית" || agent.name === "סוכן חדש 1 _ מכירות" || agent.name.startsWith("סוכן חדש ")) {
+            u.name = `${value} _ ${agent.agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+          }
+        } else if (field === "agentType") {
+          const prevDefault = `${agent.businessName} _ ${agent.agentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
+          if (!agent.name || agent.name === prevDefault || agent.name === "[שם העסק] _ מכירות" || agent.name === "[שם העסק] _ תמיכה טכנית" || agent.name.trim() === "_ מכירות" || agent.name.trim() === "_ תמיכה טכנית" || agent.name === "סוכן חדש 1 _ מכירות" || agent.name.startsWith("סוכן חדש ")) {
+            u.name = `${agent.businessName} _ ${value === "support" ? "תמיכה טכנית" : "מכירות"}`;
+          }
+        }
         updatedAgentToSync = u;
         return u;
       }
@@ -1391,7 +1645,6 @@ ${videos || "(לא הוגדר)"}
     })();
 
     setAgents(updatedList);
-    saveAgentsToServer(updatedList, sessionToken, true);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
 
     const finalTarget = updatedList.find(a => a.id === activeId);
@@ -1755,12 +2008,25 @@ ${videos || "(לא הוגדר)"}
     const currentImagesInfo = agentOverride ? agentOverride.imagesInfo : imagesInfo;
     const currentVideosInfo = agentOverride ? agentOverride.videosInfo : videosInfo;
     
+    const currentName = agentOverride 
+      ? (agentOverride.name || `${currentBusinessName} _ ${agentOverride.agentType === "support" ? "תמיכה טכנית" : "מכירות"}`) 
+      : (name || `${currentBusinessName} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`);
+    const currentAgentType = agentOverride 
+      ? (agentOverride.agentType || "sales") 
+      : agentType;
+    
     const payload = {
       // Direct core fields requested
       ownerName: currentOwnerName,
       businessName: currentBusinessName,
       ownerPhone: currentOwnerPhone,
       botId: currentBotId,
+      name: currentName,
+      agentType: currentAgentType,
+      "שם": currentName,
+      "סוג": currentAgentType === "support" ? "תמיכה טכנית" : "מכירות",
+      "שם הבוט": currentName,
+      "סוג הבוט": currentAgentType === "support" ? "תמיכה טכנית" : "מכירות",
       whatsappInstance: currentWhatsappInstance,
       businessPrompt: currentBusinessPrompt,
       key: currentKey,
@@ -1966,6 +2232,10 @@ ${videos || "(לא הוגדר)"}
         const pulledBusinessName = getVal(["businessName", "שם העסק"]);
         const pulledOwnerPhone = getVal(["ownerPhone", "טלפון בעל העסק"]);
         const pulledBotId = getVal(["botId", "Bot ID"]);
+        const pulledAgentTypeRaw = getVal(["agentType", "סוג", "סוג הבוט"]);
+        const pulledAgentType: "sales" | "support" = (pulledAgentTypeRaw.includes("תמיכה") || pulledAgentTypeRaw.toLowerCase().includes("support")) ? "support" : "sales";
+        const pulledNameRaw = getVal(["name", "שם", "שם הבוט"]);
+        const pulledName = pulledNameRaw || (pulledBusinessName ? `${pulledBusinessName} _ ${pulledAgentType === "support" ? "תמיכה טכנית" : "מכירות"}` : "");
         const pulledWhatsappInstance = getVal([
           "whatsappInstance", 
           "שם ואטסאפ instance", 
@@ -2071,6 +2341,8 @@ ${videos || "(לא הוגדר)"}
         setKey(pulledKey);
         setLeadFollowUpDays(pulledLeadFollowUpDays);
         setStatus(pulledStatus);
+        setName(pulledName);
+        setAgentType(pulledAgentType);
         if (pulledAgentEmail) {
           setAgentEmail(pulledAgentEmail);
         }
@@ -2102,6 +2374,8 @@ ${videos || "(לא הוגדר)"}
               leadFollowUpDays: pulledLeadFollowUpDays,
               agentEmail: pulledAgentEmail || agent.agentEmail || (sessionUser?.email || ""),
               status: pulledStatus,
+              name: pulledName,
+              agentType: pulledAgentType,
               botIdentity: finalBotIdentity,
               coursesInfo: finalCoursesInfo,
               kidsCourses: finalKidsCourses,
@@ -2196,6 +2470,10 @@ ${videos || "(לא הוגדר)"}
           const pulledBusinessName = getVal(item, ["businessName", "שם העסק"]) || `פרויקט מה-Webhook ${idx + 1}`;
           const pulledOwnerPhone = getVal(item, ["ownerPhone", "טלפון בעל העסק"]);
           const pulledBotId = getVal(item, ["botId", "Bot ID"]);
+          const pulledAgentTypeRaw = getVal(item, ["agentType", "סוג", "סוג הבוט"]);
+          const pulledAgentType: "sales" | "support" = (pulledAgentTypeRaw.includes("תמיכה") || pulledAgentTypeRaw.toLowerCase().includes("support")) ? "support" : "sales";
+          const pulledNameRaw = getVal(item, ["name", "שם", "שם הבוט"]);
+          const pulledName = pulledNameRaw || (pulledBusinessName ? `${pulledBusinessName} _ ${pulledAgentType === "support" ? "תמיכה טכנית" : "מכירות"}` : "");
           const pulledWhatsappInstance = getVal(item, [
             "whatsappInstance", 
             "שם ואטסאפ instance", 
@@ -2298,6 +2576,8 @@ ${videos || "(לא הוגדר)"}
             leadFollowUpDays: pulledLeadFollowUpDays,
             agentEmail: pulledAgentEmail,
             status: pulledStatus,
+            name: pulledName,
+            agentType: pulledAgentType,
             botIdentity: finalBotIdentity,
             coursesInfo: finalCoursesInfo,
             kidsCourses: finalKidsCourses,
@@ -2456,30 +2736,58 @@ ${videos || "(לא הוגדר)"}
   // Render Google Login Gateway screen when not authenticated
   if (!isAuthenticated) {
     if (isLandingPage) {
+      const isLt = theme === "light";
       return (
-        <div style={{ zoom: 1.1 }} className="min-h-screen bg-[#070709] text-slate-300 p-3 md:p-4 font-sans bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406] flex flex-col justify-between" dir="rtl">
+        <div 
+          style={{ zoom: 1.1 }} 
+          className={`min-h-screen p-3 md:p-4 font-sans flex flex-col justify-between transition-all duration-300 ${
+            isLt 
+              ? "bg-slate-50 text-slate-700 bg-[radial-gradient(ellipse_at_top,_rgba(224,231,255,0.4))] from-indigo-50/50 via-slate-50 to-slate-100" 
+              : "bg-[#070709] text-slate-300 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406]"
+          }`} 
+          dir="rtl"
+        >
           {/* Header with brand and login trigger */}
-          <div className="max-w-6xl mx-auto w-full flex items-center justify-between pb-3 border-b border-slate-800/40 mb-3 select-none">
+          <div className={`max-w-6xl mx-auto w-full flex items-center justify-between pb-3 border-b mb-3 select-none ${isLt ? "border-slate-205 border-slate-200" : "border-slate-800/40"}`}>
             <div className="flex items-center gap-2">
-              <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/15">
-                <Bot className="w-5 h-5 text-indigo-400" />
+              <div className={`p-2 rounded-xl border ${isLt ? "bg-indigo-50 border-indigo-150" : "bg-indigo-500/10 border-indigo-500/15"}`}>
+                <Bot className={`w-5 h-5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
               </div>
               <div>
-                <h2 className="text-xs font-extrabold text-white tracking-tight">עסק חכם • הדמיית בוטים</h2>
-                <p className="text-[9px] text-indigo-450 font-bold uppercase tracking-wider">Smart Sales Agents</p>
+                <h2 className={`text-xs font-extrabold tracking-tight ${isLt ? "text-slate-900" : "text-white"}`}>עסק חכם • הדמיית בוטים</h2>
+                <p className={`text-[9px] font-bold uppercase tracking-wider ${isLt ? "text-indigo-600" : "text-indigo-450"}`}>Smart Sales Agents</p>
               </div>
             </div>
             
-            <button
-              onClick={() => {
-                setAuthError("");
-                setIsLandingPage(false);
-              }}
-              className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg border border-slate-800 hover:border-slate-700 text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-            >
-              <Lock className="w-3 h-3 text-indigo-400" />
-              כניסת צוות ומנהלים
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+                className={`p-1.5 px-2 rounded-lg border transition flex items-center gap-1.5 cursor-pointer text-[10px] font-bold ${
+                  isLt 
+                    ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-200" 
+                    : "bg-slate-900 text-slate-300 hover:text-sky-400 border-slate-800"
+                }`}
+                title={isLt ? "עבור למצב כהה" : "עבור למצב בהיר"}
+              >
+                {isLt ? <Moon className="w-3.5 h-3.5 text-slate-600" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
+                <span className="hidden sm:inline">{isLt ? "מצב כהה" : "מצב בהיר"}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setAuthError("");
+                  setIsLandingPage(false);
+                }}
+                className={`px-3 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                  isLt 
+                    ? "bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-950 border-slate-200 hover:border-slate-300" 
+                    : "bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700"
+                }`}
+              >
+                <Lock className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                כניסת צוות ומנהלים
+              </button>
+            </div>
           </div>
 
           <div className="max-w-5xl mx-auto w-full flex-1 flex flex-col justify-center py-1">
@@ -2495,40 +2803,40 @@ ${videos || "(לא הוגדר)"}
                   {/* Premium Brand Header (Centered) */}
                   <div className="flex flex-col items-center text-center gap-2 max-w-3xl mx-auto w-full select-none">
                     <div className="flex gap-2">
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full w-fit">
-                        <Sparkles className="w-3 h-3 text-indigo-400 animate-pulse" />
-                        <span className="text-[9px] font-bold text-indigo-300">הדגמה ציבורית ללא עלות</span>
+                      <div className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full w-fit border ${isLt ? "bg-indigo-50 border-indigo-150 text-indigo-700" : "bg-indigo-500/10 border-indigo-500/20 text-indigo-300"}`}>
+                        <Sparkles className={`w-3 h-3 animate-pulse ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                        <span className="text-[9px] font-bold">הדגמה ציבורית ללא עלות</span>
                       </div>
-                      <div className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-sky-500/10 border border-sky-500/20 rounded-full w-fit text-[9px] font-bold text-sky-300">
+                      <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full w-fit text-[9px] font-bold border ${isLt ? "bg-sky-50 border-sky-150 text-sky-700" : "bg-sky-500/10 border-sky-500/20 text-sky-300"}`}>
                         <span>v2.4.5</span>
                       </div>
                     </div>
 
-                    <h1 className="text-2xl md:text-3xl font-black text-white leading-tight tracking-tight">
+                    <h1 className={`text-2xl md:text-3xl font-black leading-tight tracking-tight ${isLt ? "text-slate-900" : "text-white"}`}>
                       ניצור לך בוט מכירות חכם{" "}
-                      <span className="bg-gradient-to-r from-indigo-400 to-sky-400 bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-r from-indigo-505 from-indigo-500 to-sky-500 bg-clip-text text-transparent">
                         בתוך דקה אחת בלבד! 🤖
                       </span>
                     </h1>
 
-                    <p className="text-[11px] md:text-xs text-slate-400 leading-normal max-w-md md:max-w-xl">
+                    <p className={`text-[11px] md:text-xs leading-normal max-w-md md:max-w-xl ${isLt ? "text-slate-600" : "text-slate-400"}`}>
                       הקלט היחיד שנדרש הוא כתובת האתר שמכילה את המידע על העסק.
                       ה-AI שלנו יסרוק את האתר, יחלץ את השירותים וייצור סוכן דיגיטלי מתוחכם ב-WhatsApp לעמידה ביעדי המכירות שלך – וברירת המחדל שלו תוגדר כבוט קיים!
                     </p>
 
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/25 text-green-400 text-[10px] font-bold">
-                      <span className="text-emerald-400 leading-none">✓</span>
+                    <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold ${isLt ? "bg-emerald-50 border-emerald-150 text-emerald-700" : "bg-green-500/5 border-green-500/25 text-green-400"}`}>
+                      <span className={`${isLt ? "text-emerald-600" : "text-emerald-400"} leading-none`}>✓</span>
                       <span>תיעדוף מוצרים ושירותים שבאמת מופיעים באתר שלך למכירה ישירה</span>
                     </div>
                   </div>
 
                   {/* Clean Interactive Side-by-Side Widescreen Form Container */}
-                  <div className="bg-[#0E0F14]/90 border border-slate-800/95 rounded-2xl p-4 md:p-5.5 shadow-2xl relative overflow-hidden backdrop-blur-md w-full">
+                  <div className={`border rounded-2xl p-4 md:p-5.5 shadow-2xl relative overflow-hidden backdrop-blur-md w-full ${isLt ? "bg-white border-slate-205 border-slate-200/80 shadow-slate-200/40 text-slate-800" : "bg-[#0E0F14]/90 border-slate-800/95"}`}>
                     <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl"></div>
                     
                     <form onSubmit={handleCreateDemoBot} className="flex flex-col gap-4">
                       {demoSubmitError && (
-                        <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
+                        <div className={`p-2.5 rounded-xl border text-xs text-center font-medium leading-relaxed ${isLt ? "bg-red-50 border-red-150 text-red-700" : "bg-red-500/10 border-red-500/25 text-red-300"}`}>
                           {demoSubmitError}
                         </div>
                       )}
@@ -2538,19 +2846,19 @@ ${videos || "(לא הוגדר)"}
                         
                         {/* Right Form Column: Primary Credentials & Inputs */}
                         <div className="flex flex-col gap-4 w-full">
-                          <div className="border-b border-indigo-550/10 pb-1.5 mb-0.5">
-                            <h2 className="text-xs font-bold text-white flex items-center gap-2">
-                              <Zap className="w-3.5 h-3.5 text-indigo-400 fill-indigo-400/20" />
+                          <div className={`border-b pb-1.5 mb-0.5 ${isLt ? "border-slate-100" : "border-indigo-550/10"}`}>
+                            <h2 className={`text-xs font-bold flex items-center gap-2 ${isLt ? "text-slate-800" : "text-white"}`}>
+                              <Zap className={`w-3.5 h-3.5 ${isLt ? "text-indigo-650 text-indigo-600 animate-pulse" : "text-indigo-400 fill-indigo-400/20"}`} />
                               הזנת פרטים ליצירה מהירה
                             </h2>
-                            <p className="text-[10px] text-slate-450 leading-relaxed mt-0.5">
+                            <p className={`text-[10px] leading-relaxed mt-0.5 ${isLt ? "text-slate-500 relative" : "text-slate-450"}`}>
                               רושמים פרטים בסיסיים, ושלב הסריקה מתחיל מיידית.
                             </p>
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                              <Globe className="w-3 h-3 text-indigo-400" />
+                            <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                              <Globe className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                               כתובת אתר העסק (URL) <span className="text-red-400 font-bold">*</span>:
                             </label>
                             <input
@@ -2558,17 +2866,21 @@ ${videos || "(לא הוגדר)"}
                               placeholder="לדוגמה: www.mybusiness.co.il"
                               value={landingUrl}
                               onChange={(e) => setLandingUrl(e.target.value)}
-                              className="w-full px-3 py-2 bg-[#151720] border border-slate-805 border-slate-800 focus:border-indigo-500/85 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition duration-150 pl-8 font-mono text-left"
+                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-mono text-left ${
+                                isLt 
+                                  ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                                  : "bg-[#151720] border-slate-805 border-slate-800 text-white focus:border-indigo-500/85 focus:ring-indigo-500/30"
+                              }`}
                               dir="ltr"
                               disabled={isCreatingDemo}
                             />
-                            <span className="text-[9px] text-slate-500 leading-none">האתר שממנו ה-AI יסרוק וישאב את מוצרי המכירות שלך</span>
+                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>האתר שממנו ה-AI יסרוק וישאב את מוצרי המכירות שלך</span>
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
                               <span className="flex items-center gap-1.5">
-                                <Phone className="w-3 h-3 text-indigo-400" />
+                                <Phone className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                                 טלפון בעל העסק לקבלת סיכומים <span className="text-red-500 font-bold">*</span>:
                               </span>
                               <span className="text-[9px] text-red-500 font-bold">חובה</span>
@@ -2584,14 +2896,14 @@ ${videos || "(לא הוגדר)"}
                               placeholder="רשום טלפון ללא קידומת"
                             />
                             {!landingPhoneError && (
-                              <span className="text-[9px] text-slate-500 leading-none">הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
+                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
                             )}
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
                               <span className="flex items-center gap-1.5">
-                                <User className="w-3 h-3 text-indigo-400" />
+                                <User className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                                 שם נציג המכירות / התמיכה:
                               </span>
                               <span className="text-[9px] text-slate-500 font-normal">חובה</span>
@@ -2601,27 +2913,31 @@ ${videos || "(לא הוגדר)"}
                               placeholder="לדוגמה: חיים בר"
                               value={landingAgentName}
                               onChange={(e) => setLandingAgentName(e.target.value)}
-                              className="w-full px-3 py-2 bg-[#151720] border border-slate-800 focus:border-indigo-500/80 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 transition duration-150 pl-8 font-medium text-right"
+                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-medium text-right ${
+                                isLt 
+                                  ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                                  : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"
+                              }`}
                               disabled={isCreatingDemo}
                             />
-                            <span className="text-[9px] text-slate-500 leading-none">שם הנציג שהבוט יציג ויפנה אליו לקוחות</span>
+                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>שם הנציג שהבוט יציג ויפנה אליו לקוחות</span>
                           </div>
                         </div>
 
                         {/* Left Form Column: Configuration & Rich Materials */}
                         <div className="flex flex-col gap-4 w-full">
-                          <div className="border-b border-indigo-550/10 pb-1.5 mb-0.5">
-                            <h2 className="text-xs font-bold text-white flex items-center gap-2">
-                              <Bot className="w-3.5 h-3.5 text-indigo-400 fill-indigo-400/20" />
+                          <div className={`border-b pb-1.5 mb-0.5 ${isLt ? "border-slate-100" : "border-indigo-550/10"}`}>
+                            <h2 className={`text-xs font-bold flex items-center gap-2 ${isLt ? "text-slate-800" : "text-white"}`}>
+                              <Bot className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600 animate-pulse" : "text-indigo-400 fill-indigo-400/20"}`} />
                               סוג הסוכן ותוספי ידע
                             </h2>
-                            <p className="text-[10px] text-slate-455 text-slate-400 leading-relaxed mt-0.5">
+                            <p className={`text-[10px] leading-relaxed mt-0.5 ${isLt ? "text-slate-500" : "text-slate-455 text-slate-400"}`}>
                               קבע את המיומנות של הסוכן והוסף חומרי מידע מורחבים.
                             </p>
                           </div>
 
                           <div className="flex flex-col gap-1">
-                            <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                            <label className={`text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>
                               סוג הסוכן הדיגיטלי (סוכן ברירת מחדל):
                             </label>
                             <div className="grid grid-cols-2 gap-2">
@@ -2631,8 +2947,12 @@ ${videos || "(לא הוגדר)"}
                                 disabled={isCreatingDemo}
                                 className={`flex flex-col items-center gap-0.5 py-2 px-2 rounded-xl border text-center cursor-pointer transition-all duration-150 ${
                                   landingAgentType === "sales"
-                                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
-                                    : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
+                                    ? isLt
+                                      ? "bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-100 font-bold"
+                                      : "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
+                                    : isLt
+                                      ? "bg-slate-50 hover:bg-slate-100/30 border-slate-200 text-slate-500 font-normal"
+                                      : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
                                 }`}
                               >
                                 <span className="text-[10px]">סוכן מכירות</span>
@@ -2644,8 +2964,12 @@ ${videos || "(לא הוגדר)"}
                                 disabled={isCreatingDemo}
                                 className={`flex flex-col items-center gap-0.5 py-2 px-2 rounded-xl border text-center cursor-pointer transition-all duration-150 ${
                                   landingAgentType === "support"
-                                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
-                                    : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
+                                    ? isLt
+                                      ? "bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-100 font-bold"
+                                      : "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
+                                    : isLt
+                                      ? "bg-slate-50 hover:bg-slate-100/30 border-slate-200 text-slate-500 font-normal"
+                                      : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
                                 }`}
                               >
                                 <span className="text-[10px]">סוכן תמיכה טכנית</span>
@@ -2654,52 +2978,79 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-1">
-                            <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                          <div 
+                            className={`flex flex-col gap-1 p-2 rounded-2xl transition-all duration-150 ${
+                              dragOverDemo 
+                                ? isLt
+                                  ? "bg-indigo-50 border-2 border-dashed border-indigo-400 scale-[1.01]"
+                                  : "bg-indigo-950/20 border-2 border-dashed border-indigo-500 scale-[1.01]" 
+                                : "bg-transparent border border-transparent"
+                            }`}
+                            onDragEnter={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDragOverDemo(true);
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDragOverDemo(true);
+                            }}
+                            onDragLeave={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDragOverDemo(false);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDragOverDemo(false);
+                              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                                handleFileSelect(e.dataTransfer.files[0]);
+                              }
+                            }}
+                          >
+                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
                               <span className="flex items-center gap-1.5">
-                                <FileText className="w-3 h-3 text-indigo-400" />
-                                שדה טקסט חופשי / דפי מידע מורחבים:
+                                <FileText className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                                שדה טקסט חופשי / דפי מידע מורחבים וקבצי ידע:
                               </span>
-                              <span className="text-[8px] text-[#818cf8] font-mono select-none">אופציונלי</span>
+                              <span className={`text-[8px] font-mono select-none ${isLt ? "text-indigo-700" : "text-indigo-300"}`}>גרור קבצים לכאן או הדבק</span>
                             </label>
                             <textarea
-                              placeholder="הדבק כאן חומר נוסף על החברה, ברושורים, מחירונים, שירותים..."
+                              placeholder="הדבק כאן חומר נוסף על החברה, ברושורים, מחירונים... (או גרור קובץ ידע לכאן)"
                               value={landingAdditionalContext}
                               onChange={(e) => setLandingAdditionalContext(e.target.value)}
                               rows={2}
-                              className="w-full px-3 py-1.5 bg-[#151720] border border-slate-800 focus:border-indigo-500/80 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 transition duration-150 resize-y"
+                              className={`w-full px-3 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 resize-y ${
+                                isLt
+                                  ? "bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-550 focus:border-indigo-505/20 focus:border-indigo-500 focus:ring-indigo-500/20"
+                                  : "bg-[#151720] border-slate-800 focus:border-indigo-500 text-slate-800 dark:text-white focus:ring-1 focus:ring-indigo-500/50"
+                              }`}
                               disabled={isCreatingDemo}
                             />
-                            <div className="border border-dashed border-slate-800 hover:border-slate-700 rounded-xl px-2.5 py-1.5 bg-[#12131a] flex items-center justify-between gap-1 overflow-hidden transition duration-150 mt-0.5">
-                              <span className="text-[8px] text-slate-400 truncate max-w-[190px]">
-                                {fileLoading ? "מעבד ומחלץ טקסט..." : "קריאה של מסמכים וקבצי ברושור (.txt, .json)"}
-                              </span>
-                              <label className="shrink-0 flex items-center gap-1 px-2 py-0.5 bg-[#1a1b26] hover:bg-[#252736] border border-slate-800 hover:border-slate-700 text-slate-300 rounded-lg text-[8px] font-bold cursor-pointer transition">
-                                <Paperclip className="w-2 h-2 text-indigo-400" />
-                                הוסף מסמך
+                            <div className="border border-dashed border-indigo-300 dark:border-indigo-800/80 rounded-xl px-2.5 py-1.5 bg-indigo-50/30 dark:bg-indigo-950/10 flex items-center justify-between gap-2 overflow-hidden transition duration-150 mt-1">
+                              <div className="flex flex-col text-right">
+                                <span className="text-[9px] font-bold text-indigo-950 dark:text-indigo-250">
+                                  {fileLoading ? "מעבד ומחלץ טקסט..." : "רוצה לטעון קובץ ידע? גרור לכאן או לחץ:"}
+                                </span>
+                                <span className="text-[8px] text-slate-500 dark:text-slate-450">
+                                  מחלץ טקסט אוטומטית ממסמכים וקבצי ברושור (.pdf, .txt, .json, .csv, .md)
+                                </span>
+                              </div>
+                              <label className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-indigo-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-indigo-300 focus:border-indigo-500 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 rounded-lg text-[9px] font-bold cursor-pointer transition shadow-sm select-none">
+                                <Paperclip className="w-3 h-3 text-indigo-500" />
+                                הוסף מסמך 📎
                                 <input
                                   type="file"
-                                  accept=".txt,.json,.csv,.md"
+                                  accept=".txt,.json,.csv,.md,.pdf"
                                   className="hidden"
                                   disabled={isCreatingDemo || fileLoading}
                                   onChange={(e) => {
                                     const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    setFileLoading(true);
-                                    const reader = new FileReader();
-                                    reader.onload = (event) => {
-                                      const text = event.target?.result;
-                                      if (typeof text === "string" && text.trim()) {
-                                        setLandingAdditionalContext(
-                                          (prev) => (prev ? prev + "\n\n" : "") + `=== תוכן מסמך ${file.name} ===\n` + text
-                                        );
-                                      }
-                                      setFileLoading(false);
-                                    };
-                                    reader.onerror = () => {
-                                      setFileLoading(false);
-                                    };
-                                    reader.readAsText(file);
+                                    if (file) {
+                                      handleFileSelect(file);
+                                    }
                                   }}
                                 />
                               </label>
@@ -2732,20 +3083,24 @@ ${videos || "(לא הוגדר)"}
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
-                  className="max-w-md mx-auto w-full bg-[#0E0F14]/90 border border-slate-800 rounded-2xl p-8 shadow-2xl flex flex-col items-center justify-center text-center gap-6"
+                  className={`max-w-md mx-auto w-full border rounded-2xl p-8 shadow-2xl flex flex-col items-center justify-center text-center gap-6 ${
+                    isLt ? "bg-white border-slate-200 text-slate-800 shadow-slate-100" : "bg-[#0E0F14]/90 border-slate-800 text-white"
+                  }`}
                 >
                   <div className="relative flex items-center justify-center mb-2">
                     <div className="absolute w-20 h-20 border-4 border-indigo-500/10 border-t-indigo-500 rounded-full animate-spin"></div>
-                    <Bot className="w-10 h-10 text-indigo-400 animate-pulse" />
+                    <Bot className={`w-10 h-10 animate-pulse ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <h3 className="text-base font-bold text-white">ה-AI שלנו סורק ומייצר את הבוט...</h3>
-                    <p className="text-xs text-[#38BDF8] font-bold tracking-wide">זמן משוער: פחות מדקה לשלמות</p>
+                    <h3 className={`text-base font-bold ${isLt ? "text-slate-950" : "text-white"}`}>ה-AI שלנו סורק ומייצר את הבוט...</h3>
+                    <p className={`text-xs font-bold tracking-wide ${isLt ? "text-indigo-600" : "text-[#38BDF8]"}`}>זמן משוער: פחות מדקה לשלמות</p>
                   </div>
 
                   {/* Staggered progress logs from Haim Bar's request specifications */}
-                  <div className="w-full bg-[#151720] border border-slate-800/80 rounded-xl p-4 flex flex-col gap-3 text-right">
+                  <div className={`w-full border rounded-xl p-4 flex flex-col gap-3 text-right ${
+                    isLt ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-[#151720] border-slate-800/80 text-white"
+                  }`}>
                     {[
                       "🔍 סורק ומחלץ את המידע האמיתי מאתר האינטרנט של העסק...",
                       "🧠 מנתח את מוצרי העסק, יתרונותיו האמיתיים וקהל היעד באמצעות AI...",
@@ -2757,10 +3112,22 @@ ${videos || "(לא הוגדר)"}
                       const isCurrent = idx === demoStep;
                       return (
                         <div key={idx} className="flex items-start gap-2.5 transition-all text-xs">
-                          <span className={`shrink-0 ${isPast ? "text-green-400" : isCurrent ? "text-indigo-400 animate-pulse" : "text-slate-600"}`}>
+                          <span className={`shrink-0 ${
+                            isPast 
+                              ? "text-green-500" 
+                              : isCurrent 
+                                ? isLt ? "text-indigo-600 animate-pulse" : "text-indigo-400 animate-pulse" 
+                                : isLt ? "text-slate-300" : "text-slate-600"
+                          }`}>
                             {isPast ? "✓" : isCurrent ? "●" : "○"}
                           </span>
-                          <span className={`${isPast ? "text-slate-400" : isCurrent ? "text-white font-bold" : "text-slate-600"}`}>
+                          <span className={`${
+                            isPast 
+                              ? isLt ? "text-slate-400" : "text-slate-400" 
+                              : isCurrent 
+                                ? isLt ? "text-slate-800 font-extrabold" : "text-white font-bold" 
+                                : isLt ? "text-slate-400" : "text-slate-600"
+                          }`}>
                             {stepText}
                           </span>
                         </div>
@@ -2777,19 +3144,25 @@ ${videos || "(לא הוגדר)"}
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
-                  className="max-w-2xl mx-auto w-full bg-[#0E0F14]/95 border border-green-500/20 rounded-2xl p-4 md:p-5.5 shadow-2xl flex flex-col gap-4"
+                  className={`max-w-2xl mx-auto w-full border rounded-2xl p-4 md:p-5.5 shadow-2xl flex flex-col gap-4 ${
+                    isLt ? "bg-white border-green-200 text-slate-800 shadow-slate-200/50" : "bg-[#0E0F14]/95 border border-green-500/20 text-white"
+                  }`}
                 >
                   {/* WhatsApp Bot Connection Box */}
-                  <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/15 to-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 text-right flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg pb-4 border-b border-slate-800/20">
+                  <div className={`border rounded-2xl p-4 text-right flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg pb-4 border-b ${
+                    isLt 
+                      ? "bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-emerald-200 text-slate-800" 
+                      : "bg-gradient-to-r from-emerald-500/10 via-teal-500/15 to-emerald-500/10 border-emerald-500/20 text-white"
+                  }`}>
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2 justify-start">
                         <span className="flex h-2 w-2 relative">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-550 bg-green-500"></span>
                         </span>
-                        <h4 className="text-xs font-black text-white">הבוט שלך נוצר ומוכן לשיחה! 🚀</h4>
+                        <h4 className={`text-xs font-black ${isLt ? "text-slate-900" : "text-white"}`}>הבוט שלך נוצר ומוכן לשיחה! 🚀</h4>
                       </div>
-                      <p className="text-[11px] text-slate-300 leading-normal max-w-md">
+                      <p className={`text-[11px] leading-normal max-w-md ${isLt ? "text-slate-600" : "text-slate-300"}`}>
                         מערכת ה-AI חיברה את הסוכן למספר WhatsApp הדינמי. לחץ על הכפתור כדי להתחיל בשיחה איתו כעת!
                       </p>
                     </div>
@@ -2797,78 +3170,82 @@ ${videos || "(לא הוגדר)"}
                       href="https://wa.me/972503054731?text=%D7%94%D7%99%D7%99%2C%20%D7%90%D7%A0%D7%99%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%9C%D7%91%D7%97%D7%95%D7%9F%20%D7%90%D7%AA%20%D7%94%D7%91%D7%95%D7%98%20%D7%A9%D7%99%D7%A6%D7%A8%D7%AA%D7%99"
                       target="_blank"
                       referrerPolicy="no-referrer"
-                      className="px-4 py-2.5 bg-[#25D366] hover:bg-[#1ebd59] text-slate-950 font-black text-[11px] rounded-xl shadow-xl transition-all hover:scale-[1.02] active:scale-95 duration-100 flex items-center gap-1.5 cursor-pointer"
+                      className="px-4 py-2.5 bg-[#25D366] hover:bg-[#1ebd59] text-white font-black text-[11px] rounded-xl shadow-xl transition-all hover:scale-[1.02] active:scale-95 duration-100 flex items-center gap-1.5 cursor-pointer"
                     >
                       💬 כנס לשיחה עם הבוט ב-WhatsApp
                     </a>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-right">
-                    <div className="bg-[#141620] border border-slate-800 rounded-xl p-3 flex flex-col gap-0.5">
+                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
                       <span className="text-[9px] text-slate-500 font-bold">שם בעל העסק</span>
-                      <span className="text-xs font-bold text-white">חיים בר</span>
+                      <span className={`text-xs font-bold ${isLt ? "text-slate-905 text-slate-800" : "text-white"}`}>חיים בר</span>
                     </div>
 
-                    <div className="bg-[#141620] border border-slate-800 rounded-xl p-3 flex flex-col gap-0.5">
+                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
                       <span className="text-[9px] text-slate-500 font-bold">שם העסק שזוהה</span>
-                      <span className="text-xs font-bold text-indigo-400">{demoResult.businessName}</span>
+                      <span className={`text-xs font-bold ${isLt ? "text-indigo-650 text-indigo-600" : "text-indigo-400"}`}>{demoResult.businessName}</span>
                     </div>
 
-                    <div className="bg-[#141620] border border-slate-800 rounded-xl p-3 flex flex-col gap-0.5">
+                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
                       <span className="text-[9px] text-slate-500 font-bold">מספר טלפון לקבלת סיכומים</span>
-                      <span className="text-xs font-bold text-white font-mono">{demoResult.ownerPhone}</span>
+                      <span className={`text-xs font-bold font-mono ${isLt ? "text-slate-805 text-slate-800" : "text-white"}`}>{demoResult.ownerPhone}</span>
                     </div>
                   </div>
 
                   {/* Scrollable preview of generated Sales System Prompts */}
                   <div className="flex flex-col gap-1.5 text-right">
-                    <span className="text-[11px] font-bold text-slate-300">תצוגה מקדימה של פרומפט המכירות שהורכב ב-AI:</span>
-                    <div className="bg-[#0b0c10] border border-slate-850 rounded-xl p-3.5 max-h-52 overflow-y-auto text-xs text-slate-300 leading-relaxed font-mono whitespace-pre-line scrollbar-thin">
+                    <span className={`text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>תצוגה מקדימה של פרומפט המכירות שהורכב ב-AI:</span>
+                    <div className={`border rounded-xl p-3.5 max-h-52 overflow-y-auto text-xs leading-relaxed font-mono whitespace-pre-line scrollbar-thin ${
+                      isLt 
+                        ? "bg-slate-50 border-slate-200 text-slate-700" 
+                        : "bg-[#0b0c10] border-slate-850 text-slate-300"
+                    }`}>
                       <div className="font-sans md-preview-container">
-                        <div className="text-indigo-400 font-bold mb-1.5"># פרומפט מכירות סלקטיבי מעולה ({demoResult.businessName})</div>
+                        <div className={`font-bold mb-1.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`}># פרומפט מכירות סלקטיבי מעולה ({demoResult.businessName})</div>
                         
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">🤖 זהות הבוט</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🤖 זהות הבוט</strong>
                           {demoResult.prompts.botIdentity}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">🛍️ שירותים ומוצרים מהאתר</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🛍️ שירותים ומוצרים מהאתר</strong>
                           {demoResult.prompts.coursesInfo}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">💎 חבילות והצעות מותאמות</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>💎 חבילות והצעות מותאמות</strong>
                           {demoResult.prompts.kidsCourses}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">💬 זרימת שיחת וווטסאפ ממוקדת</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>💬 זרימת שיחת וווטסאפ ממוקדת</strong>
                           {demoResult.prompts.conversationFlow}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">✍️ סגנון כתיבה ואימוג'י</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>✍️ סגנון כתיבה ואימוג'י</strong>
                           {demoResult.prompts.writingStyle}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">❓ שאלות ותשובות (FAQ)</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>❓ שאלות ותשובות (FAQ)</strong>
                           {demoResult.prompts.faqAnswers}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">🛑 חוקי ברזל ("מה לא לעשות")</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🛑 חוקי ברזל ("מה לא לעשות")</strong>
                           {demoResult.prompts.whatNotToDo}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">🔗 קישורים מהסורק</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🔗 קישורים מהסורק</strong>
                           {demoResult.prompts.syllabusLinks}
                         </div>
 
                         <div className="mb-2.5">
-                          <strong className="text-white block mt-1.5">🚨 {landingAgentType === "support" ? "אסקלציה לתמיכה טכנית" : "אסקלציה לסוכן מכירות"}</strong>
+                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🚨 {landingAgentType === "support" ? "אסקלציה לתמיכה טכנית" : "אסקלציה לסוכן מכירות"}</strong>
                           {demoResult.prompts.humanEscalation}
                         </div>
                       </div>
@@ -3072,9 +3449,19 @@ ${videos || "(לא הוגדר)"}
               <button
                 type="button"
                 onClick={() => setIsLandingPage(true)}
-                className="mt-2 text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1.5 font-bold transition hover:underline cursor-pointer"
+                className="mt-2 text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1.5 font-bold transition hover:underline cursor-pointer select-none"
               >
                 ← חזרה לעמוד הבית וההדגמה המהירה
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+                className="mt-4 px-3 py-1.5 bg-[#171A24] text-slate-300 hover:text-sky-400 rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-[10px] font-bold mx-auto select-none shadow-sm"
+                title={theme === "light" ? "עבור למצב כהה" : "עבור למצב בהיר"}
+              >
+                {theme === "light" ? <Moon className="w-3.5 h-3.5 text-indigo-400" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
+                <span>{theme === "light" ? "עבור למצב כהה 🌙" : "עבור למצב בהיר ☀️"}</span>
               </button>
 
             </div>
@@ -3130,6 +3517,25 @@ ${videos || "(לא הוגדר)"}
                 אישור והרשאות כניסה
               </button>
             )}
+
+            {/* Theme Toggle Button */}
+            <button
+              onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+              className="p-2 bg-[#171A24] text-slate-300 hover:text-sky-400 rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
+              title={theme === "light" ? "עבור למצב כהה" : "עבור למצב בהיר"}
+            >
+              {theme === "light" ? (
+                <>
+                  <Moon className="w-4 h-4 text-indigo-400" />
+                  <span className="hidden sm:inline">מצב כהה 🌙</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-4 h-4 text-amber-500" />
+                  <span className="hidden sm:inline">מצב בהיר ☀️</span>
+                </>
+              )}
+            </button>
 
             {/* User credentials banner */}
             <div className="bg-[#141722] px-3 py-1.5 rounded-xl border border-slate-850 flex items-center gap-2 text-xs">
@@ -3397,60 +3803,17 @@ ${videos || "(לא הוגדר)"}
               <div className="flex items-center gap-2.5">
                 <FileText className="w-5 h-5 text-sky-400" />
                 <div>
-                  <h2 className="text-sm font-black text-white">1. פרטי הסוכן והעסק</h2>
-                  <p className="text-[11px] text-slate-400 font-medium font-sans">מלא את הפרטים ליצירת התאמה דינמית בפרומפטים ובחיבור הנתונים</p>
+                  <h2 className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
+                    <span>פרטי סוכן:</span>
+                    <span className="text-sky-450 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/15">
+                      {name || `${businessName || "[שם העסק]"} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`}
+                    </span>
+                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/15 text-[10px]">
+                      {agentType === "support" ? "🛠️ תמיכה טכנית ושירות" : "💼 שיווק ומכירות 🚀"}
+                    </span>
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-medium font-sans mt-0.5">מלא את הפרטים ליצירת התאמה דינמית בפרומפטים ובחיבור הנתונים</p>
                 </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Pull Configuration Button (קריאת התוכן) */}
-                <button
-                  type="button"
-                  onClick={handlePullConfigFromN8n}
-                  disabled={isSyncing}
-                  className="p-2 px-3.5 bg-[#171923] hover:bg-[#1E2433] disabled:bg-slate-950 disabled:text-slate-600 border border-slate-800 text-sky-400 font-black rounded-lg text-[11px] flex items-center gap-1.5 transition duration-200 cursor-pointer shadow-sm hover:shadow-[0_0_12px_rgba(56,189,248,0.15)]"
-                  title="משוך את תוכן השדות העדכני ביותר"
-                >
-                  <Download className="w-3.5 h-3.5 shrink-0" />
-                  קריאת התוכן 🔄
-                </button>
-
-                 {/* Push Configuration Button (שמירת התוכן) */}
-                <button
-                  type="button"
-                  onClick={() => handleSyncToWebhook()}
-                  disabled={isSyncing || !businessName || !dirtyAgents[activeId]}
-                  className={`p-2 px-4.5 font-extrabold rounded-lg text-[11px] text-white flex items-center gap-1.5 transition duration-200 cursor-pointer shadow-md ${
-                    dirtyAgents[activeId]
-                      ? "bg-sky-600 hover:bg-sky-500 shadow-sky-500/10"
-                      : "bg-emerald-600/15 border border-emerald-500/15 text-emerald-400 cursor-not-allowed opacity-90"
-                  }`}
-                  title={dirtyAgents[activeId] ? "לחץ לעדכון וסנכרן את השינויים החדשים בענן" : "אין שינויים שממתינים לסנכרון. הכל מעודכן לענן!"}
-                >
-                  {isSyncing ? (
-                    <>
-                      <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      טוען...
-                    </>
-                  ) : (
-                    <>
-                      {dirtyAgents[activeId] ? (
-                        <>
-                          <Send className="w-3.5 h-3.5 text-white shrink-0" />
-                          <span>שמירת התוכן 🚀</span>
-                        </>
-                      ) : (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span>התוכן מסונכרן לענן ✅</span>
-                        </>
-                      )}
-                    </>
-                  )}
-                </button>
               </div>
             </div>
 
@@ -3488,6 +3851,91 @@ ${videos || "(לא הוגדר)"}
             </AnimatePresence>
 
             {/* Responsive grid for input elements */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-850/50 pb-5">
+              
+              {/* Bot Name */}
+              <div className="flex flex-col gap-1.5 col-span-1 md:col-span-2">
+                <label className="text-xs font-black text-sky-400 flex items-center gap-1.5">
+                  <Bot className="w-3.5 h-3.5 text-sky-450" />
+                  שם הבוט (שדה חובה בקובץ/ענן/webhook) <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="הזן שם עבור הבוט (לדוגמה: אופטיקה רונן _ מכירות)"
+                    value={name}
+                    onChange={(e) => {
+                      handleFieldChange("name", e.target.value);
+                      setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+                    }}
+                    className="w-full px-3.5 py-2 bg-[#161821] border border-sky-900/30 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white transition placeholder-slate-600 pl-24"
+                    required
+                  />
+                  {!name && (
+                    <span className="absolute left-3.5 top-2.5 text-[9px] text-slate-500 pointer-events-none font-bold" dir="rtl">
+                      ברירת מחדל: {businessName || "[שם העסק]"} _ {agentType === "support" ? "תמיכה טכנית" : "מכירות"}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Bot Agent Type Selection */}
+              <div className="flex flex-col gap-2 col-span-1 md:col-span-3 mt-1" dir="rtl">
+                <label className="text-xs font-black text-sky-400 flex items-center gap-1.5 select-none">
+                  <Sliders className="w-3.5 h-3.5 text-sky-450" />
+                  <span>סוג הסוכן הדיגיטלי (סוכן ברירת מחדל):</span>
+                  <span className="text-red-500 font-bold">*</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Sales Agent Button/Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleFieldChange("agentType", "sales");
+                      setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+                    }}
+                    className={`p-4 rounded-2xl border text-right transition-all duration-200 cursor-pointer flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
+                      agentType === "sales"
+                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10"
+                        : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xl">💼</span>
+                      <span className="text-xs font-black select-none">סוכן שיווק ומכירות 🚀</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 leading-relaxed font-semibold pr-8 select-none">
+                      סוכן דינמי החותר להשארת פרטים, תיאום שיעורי התנסות או פגישות, חיוג ושירות לקוחות יזום.
+                    </span>
+                  </button>
+
+                  {/* Support Agent Button/Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleFieldChange("agentType", "support");
+                      setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+                    }}
+                    className={`p-4 rounded-2xl border text-right transition-all duration-200 cursor-pointer flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
+                      agentType === "support"
+                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10"
+                        : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xl">🛠️</span>
+                      <span className="text-xs font-black select-none">סוכן תמיכה טכנית ושירות 🛠️</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 leading-relaxed font-semibold pr-8 select-none">
+                      עוזר אישי המעניק מענה לשאלות נפוצות, פתרון בעיות, הסבר על השירותים והכוונת לקוחות.
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Responsive grid for original business elements */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               
               {/* Business Name */}
@@ -4207,16 +4655,6 @@ ${videos || "(לא הוגדר)"}
                     <span>מחולל סוכנים (AI Magic) 🪄</span>
                   </button>
 
-                  <div className="hidden lg:block h-5 w-px bg-slate-800" />
-
-                  {/* Auto-save notification pill */}
-                  <div className="hidden lg:flex items-center gap-1.5 px-3.5 py-2 bg-[#0d151d] border border-emerald-500/20 rounded-xl text-[11px] text-emerald-400 font-extrabold select-none whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                    <span>השינויים נשמרים אוטומטית 💾 קליק/הקלדה</span>
-                  </div>
-
-                  <div className="hidden md:block h-5 w-px bg-slate-800" />
-
                   {/* Manual Save Button */}
                   <button
                     type="button"
@@ -4687,6 +5125,40 @@ ${videos || "(לא הוגדר)"}
                              dir="rtl"
                            />
                          </div>
+
+                        {/* File Upload Area specifically for Brochures and Information */}
+                        {sec.key === "syllabusLinks" && (
+                          <div className="border border-dashed border-sky-500/35 rounded-2xl p-5 bg-sky-500/5 flex flex-col sm:flex-row items-center justify-between gap-4 mt-2 transition duration-200 hover:border-sky-500/55 select-none" dir="rtl">
+                            <div className="flex items-center gap-3">
+                              <span className="text-3xl">📁</span>
+                              <div className="flex flex-col text-right">
+                                <span className="text-xs font-black text-sky-400">
+                                  {partFileLoading ? "⏳ מעבד ומחלץ טקסט מהמחירון/ברושור..." : "העלאת ברושורים וחומרי מידע ישירות אל החלק הנבחר (PDF, Word, TXT, CSV)"}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-extrabold mt-0.5 leading-normal">
+                                  רוצה להזין מחירון שלם, ברושור או קובץ פירוט מוצרים? גרור לפה או לחץ על הכפתור. נפרסר את הטקסט ונשבץ אותו אוטומטית!
+                                </span>
+                              </div>
+                            </div>
+
+                            <label className="shrink-0 flex items-center gap-2 p-2.5 px-4 bg-gradient-to-tr from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-black rounded-xl text-xs transition duration-200 cursor-pointer shadow border border-sky-450/20 hover:scale-102">
+                              <Paperclip className="w-3.5 h-3.5 text-sky-200" />
+                              <span>בחירת קובץ להעלאה 📎</span>
+                              <input
+                                type="file"
+                                accept=".txt,.json,.csv,.md,.pdf"
+                                className="hidden"
+                                disabled={partFileLoading}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    handlePartFileSelect(file, "syllabusLinks");
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        )}
 
                          {/* Active Area count/reset footer */}
                          <div className="flex items-center justify-between text-[11px] text-slate-500 font-bold border-t border-slate-850 pt-3 select-none">
