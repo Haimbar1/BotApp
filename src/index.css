@@ -655,3 +655,21 @@
   border-color: #e2e8f0 !important;
 }
 
+/* Force WhatsApp brand green colors in both light and dark themes */
+.theme-light .bg-whatsapp,
+.theme-light a.bg-whatsapp,
+.theme-light button.bg-whatsapp,
+.bg-whatsapp {
+  background-color: #25D366 !important;
+  color: #ffffff !important;
+}
+
+.theme-light .bg-whatsapp:hover,
+.theme-light a.bg-whatsapp:hover,
+.theme-light button.bg-whatsapp:hover,
+.bg-whatsapp:hover {
+  background-color: #1ebd59 !important;
+  color: #ffffff !important;
+}
+
+
