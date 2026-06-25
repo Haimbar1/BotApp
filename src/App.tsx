@@ -46,6 +46,7 @@ import ReactMarkdown from "react-markdown";
 import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import CountryPhoneInput from "./components/CountryPhoneInput";
+import { Language, languageNames, translations } from "./translations";
 
 // Global array for API fetch history logs
 const globalApiLogs: string[] = [];
@@ -205,6 +206,28 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
 let globalSaveTimeoutId: any = null;
 
 export default function App() {
+  // Language & Translation states
+  const [language, setLanguage] = useState<Language>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("app_lang") as Language;
+      return saved || "he";
+    }
+    return "he";
+  });
+
+  const handleLanguageChange = (lang: Language) => {
+    setLanguage(lang);
+    localStorage.setItem("app_lang", lang);
+  };
+
+  const t = (key: string): string => {
+    return translations[language]?.[key] || translations["he"]?.[key] || key;
+  };
+
+  const dir = language === "he" ? "rtl" : "ltr";
+
+  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState<boolean>(false);
+
   // Authentication & Permission states
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
@@ -228,7 +251,8 @@ export default function App() {
   const [landingPhone, setLandingPhone] = useState<string>("");
   const [landingPhoneError, setLandingPhoneError] = useState<string>("");
   const [landingAgentName, setLandingAgentName] = useState<string>("חיים בר");
-  const [landingAgentType, setLandingAgentType] = useState<"sales" | "support">("sales");
+  const [landingAgentType, setLandingAgentType] = useState<"sales" | "support" | "leads">("sales");
+  const [landingWizardStep, setLandingWizardStep] = useState<number>(1);
   const [landingAdditionalContext, setLandingAdditionalContext] = useState<string>("");
   const [fileLoading, setFileLoading] = useState<boolean>(false);
   const [dragOverDemo, setDragOverDemo] = useState<boolean>(false);
@@ -459,6 +483,7 @@ export default function App() {
     const saved = localStorage.getItem("theme");
     return (saved === "dark" || saved === "light") ? saved : "light";
   });
+  const isLt = theme === "light";
 
   useEffect(() => {
     localStorage.setItem("theme", theme);
@@ -623,6 +648,26 @@ export default function App() {
   const [wizardOwnerPhoneError, setWizardOwnerPhoneError] = useState<string>("");
 
   // --- Landing page demo action ---
+  const handleNextLandingStep = () => {
+    setDemoSubmitError("");
+    if (landingWizardStep === 1) {
+      if (!landingAgentName || !landingAgentName.trim()) {
+        setDemoSubmitError("שם בעל העסק / הנציג הוא שדה חובה *");
+        return;
+      }
+      if (!landingPhone || !landingPhone.trim()) {
+        setLandingPhoneError("טלפון בעל העסק הוא שדה חובה *");
+        setDemoSubmitError("אנא הזן מספר טלפון תקין לקבלת סיכומי שיחה!");
+        return;
+      }
+      if (landingPhoneError) {
+        setDemoSubmitError(`מספר הטלפון שהוזן אינו תקין: ${landingPhoneError}`);
+        return;
+      }
+      setLandingWizardStep(2);
+    }
+  };
+
   const handleCreateDemoBot = async (e: React.FormEvent) => {
     e.preventDefault();
     setDemoSubmitError("");
@@ -2891,7 +2936,7 @@ ${videos || "(לא הוגדר)"}
               </div>
               <div>
                 <h2 className={`text-xs font-extrabold tracking-tight ${isLt ? "text-slate-900" : "text-white"}`}>עסק חכם • הדמיית בוטים</h2>
-                <p className={`text-[9px] font-bold uppercase tracking-wider ${isLt ? "text-indigo-600" : "text-indigo-450"}`}>Smart Sales Agents</p>
+                <p className={`text-[9px] font-bold uppercase tracking-wider ${isLt ? "text-indigo-600" : "text-indigo-455"}`}>Smart Sales Agents</p>
               </div>
             </div>
             
@@ -2943,7 +2988,7 @@ ${videos || "(לא הוגדר)"}
                         <Sparkles className={`w-3 h-3 animate-pulse ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                         <span className="text-[9px] font-bold">הדגמה ציבורית ללא עלות</span>
                       </div>
-                      <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full w-fit text-[9px] font-bold border ${isLt ? "bg-sky-50 border-sky-150 text-sky-700" : "bg-sky-500/10 border-sky-500/20 text-sky-300"}`}>
+                      <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full w-fit text-[9px] font-bold border ${isLt ? "bg-sky-550/10 border-sky-500/20 text-sky-300" : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"}`}>
                         <span>v2.4.5</span>
                       </div>
                     </div>
@@ -2966,35 +3011,123 @@ ${videos || "(לא הוגדר)"}
                     </div>
                   </div>
 
-                  {/* Clean Interactive Side-by-Side Widescreen Form Container */}
-                  <div className={`border rounded-2xl p-4 md:p-5.5 shadow-2xl relative overflow-hidden backdrop-blur-md w-full ${isLt ? "bg-white border-slate-205 border-slate-200/80 shadow-slate-200/40 text-slate-800" : "bg-[#0E0F14]/90 border-slate-800/95"}`}>
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl"></div>
-                    
-                    <form onSubmit={handleCreateDemoBot} className="flex flex-col gap-4">
-                      {demoSubmitError && (
-                        <div className={`p-2.5 rounded-xl border text-xs text-center font-medium leading-relaxed ${isLt ? "bg-red-50 border-red-150 text-red-700" : "bg-red-500/10 border-red-500/25 text-red-300"}`}>
-                          {demoSubmitError}
+                  <form onSubmit={handleCreateDemoBot} className="flex flex-col gap-4 w-full">
+                    {/* STEP 1: BUSINESS DETAILS */}
+                      {landingWizardStep === 1 && (
+                        <div className="flex flex-col gap-4 animate-fadeIn">
+                          <div className={`border rounded-xl p-4 flex items-start gap-3 transition-all duration-300 ${
+                            isLt 
+                              ? "bg-indigo-50/50 border-indigo-100" 
+                              : "bg-gradient-to-r from-indigo-500/10 to-sky-500/10 border-indigo-500/20"
+                          }`}>
+                            <Sparkles className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isLt ? "text-indigo-600" : "text-sky-400"}`} />
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className={`text-xs font-bold ${isLt ? "text-indigo-900" : "text-sky-300"}`}>ברוך הבא לקוסם ה-AI של עסק חכם!</p>
+                                <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-black">שלב 1/2</span>
+                              </div>
+                              <p className={`text-[11px] font-semibold mt-0.5 ${isLt ? "text-slate-600" : "text-slate-400"}`}>הזן את פרטי העסק הבסיסיים כדי שנוכל לכייל עבורך את עוזר ה-AI בצורה אישית ומקצועית.</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="flex flex-col gap-1.5">
+                              <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                                שם בעל העסק / הנציג 👤 <span className="text-red-500 font-bold">*</span>:
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="לדוגמה: חיים בר"
+                                value={landingAgentName}
+                                onChange={(e) => setLandingAgentName(e.target.value)}
+                                className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 font-medium text-right ${
+                                  isLt 
+                                    ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                                    : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"
+                                }`}
+                                disabled={isCreatingDemo}
+                              />
+                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>שם הנציג שהבוט יציג ויפנה אליו לקוחות</span>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                              <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                                <span className="flex items-center gap-1.5">
+                                  טלפון בעל העסק לקבלת סיכומים 📞 <span className="text-red-500 font-bold">*</span>:
+                                </span>
+                              </label>
+                              <CountryPhoneInput
+                                id="landingPhone"
+                                value={landingPhone}
+                                onChange={(val, isValid, error) => {
+                                  setLandingPhone(val);
+                                  setLandingPhoneError(error);
+                                }}
+                                disabled={isCreatingDemo}
+                                placeholder="רשום טלפון ללא קידומת"
+                              />
+                              {!landingPhoneError && (
+                                <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 mt-2">
+                            <label className={`block text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>תבנית בסיס / אופי הפעילות של הסוכן ⚙️</label>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              {[
+                                { id: "sales", title: "סוכן שיווק ומכירות 🚀", desc: "סוכן דינמי החותר להשארת פרטים ותזמון שיעורי התנסות/פגישות" },
+                                { id: "support", title: "סוכן תמיכה ושירות 🛠️", desc: "סוכן המסייע במענה לשאלות נפוצות, פתרון בעיות ומתן מידע" },
+                                { id: "leads", title: "יועץ לימודים ואופטימיזציה 🎓", desc: "סוכן עם מיקוד אקדמי המלווה בסבלנות קהלי יעד הורים וילדים" }
+                              ].map((tpl) => (
+                                <button
+                                  key={tpl.id}
+                                  type="button"
+                                  onClick={() => setLandingAgentType(tpl.id as any)}
+                                  className={`p-3 rounded-xl text-right border transition cursor-pointer flex flex-col gap-1 ${
+                                    landingAgentType === tpl.id
+                                      ? isLt
+                                        ? "bg-indigo-50 border-indigo-500 text-indigo-900 shadow-md ring-1 ring-indigo-550/20"
+                                        : "bg-sky-550/10 border-sky-500 text-white shadow-lg ring-1 ring-sky-500/20"
+                                      : isLt
+                                        ? "bg-slate-50 border-slate-205 border-slate-200 text-slate-500 hover:border-slate-350"
+                                        : "bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800"
+                                  }`}
+                                >
+                                  <span className="text-xs font-extrabold">{tpl.title}</span>
+                                  <span className={`text-[10px] opacity-75 leading-relaxed font-semibold ${
+                                    landingAgentType === tpl.id
+                                      ? isLt ? "text-indigo-800" : "text-white"
+                                      : isLt ? "text-slate-500" : "text-slate-400"
+                                  }`}>{tpl.desc}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       )}
 
-                      {/* Main Form Fields Layout: Side-by-Side */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-7 items-start">
-                        
-                        {/* Right Form Column: Primary Credentials & Inputs */}
-                        <div className="flex flex-col gap-4 w-full">
-                          <div className={`border-b pb-1.5 mb-0.5 ${isLt ? "border-slate-100" : "border-indigo-550/10"}`}>
-                            <h2 className={`text-xs font-bold flex items-center gap-2 ${isLt ? "text-slate-800" : "text-white"}`}>
-                              <Zap className={`w-3.5 h-3.5 ${isLt ? "text-indigo-650 text-indigo-600 animate-pulse" : "text-indigo-400 fill-indigo-400/20"}`} />
-                              הזנת פרטים ליצירה מהירה
-                            </h2>
-                            <p className={`text-[10px] leading-relaxed mt-0.5 ${isLt ? "text-slate-500 relative" : "text-slate-450"}`}>
-                              רושמים פרטים בסיסיים, ושלב הסריקה מתחיל מיידית.
-                            </p>
+                      {/* STEP 2: KNOWLEDGE SOURCES */}
+                      {landingWizardStep === 2 && (
+                        <div className="flex flex-col gap-4 animate-fadeIn">
+                          <div className={`border rounded-xl p-4 flex items-start gap-3 transition-all duration-300 ${
+                            isLt 
+                              ? "bg-indigo-50/50 border-indigo-100" 
+                              : "bg-gradient-to-r from-amber-500/10 to-rose-500/10 border-amber-500/20"
+                          }`}>
+                            <Sparkles className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isLt ? "text-indigo-600" : "text-amber-400"}`} />
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className={`text-xs font-bold ${isLt ? "text-indigo-900" : "text-amber-300"}`}>הזן חומרי למידה ומקורות ידע 📚</p>
+                                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-black">שלב 2/2</span>
+                              </div>
+                              <p className={`text-[11px] font-semibold mt-0.5 ${isLt ? "text-slate-600" : "text-slate-400"}`}>סרוק באופן אוטומטי את האתר העסקי שלך או הדבק חומרים ידניים (שיעורים, קטלוגים, מחירים).</p>
+                            </div>
                           </div>
 
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col gap-1.5">
                             <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              <Globe className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                              <Globe className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                               כתובת אתר העסק (URL) <span className="text-red-400 font-bold">*</span>:
                             </label>
                             <input
@@ -3002,116 +3135,15 @@ ${videos || "(לא הוגדר)"}
                               placeholder="לדוגמה: www.mybusiness.co.il"
                               value={landingUrl}
                               onChange={(e) => setLandingUrl(e.target.value)}
-                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-mono text-left ${
+                              className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-mono text-left ${
                                 isLt 
                                   ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
-                                  : "bg-[#151720] border-slate-805 border-slate-800 text-white focus:border-indigo-500/85 focus:ring-indigo-500/30"
+                                  : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/85 focus:ring-indigo-500/30"
                               }`}
                               dir="ltr"
                               disabled={isCreatingDemo}
                             />
                             <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>האתר שממנו ה-AI יסרוק וישאב את מוצרי המכירות שלך</span>
-                          </div>
-
-                          <div className="flex flex-col gap-1">
-                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              <span className="flex items-center gap-1.5">
-                                <Phone className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
-                                טלפון בעל העסק לקבלת סיכומים <span className="text-red-500 font-bold">*</span>:
-                              </span>
-                              <span className="text-[9px] text-red-500 font-bold">חובה</span>
-                            </label>
-                            <CountryPhoneInput
-                              id="landingPhone"
-                              value={landingPhone}
-                              onChange={(val, isValid, error) => {
-                                setLandingPhone(val);
-                                setLandingPhoneError(error);
-                              }}
-                              disabled={isCreatingDemo}
-                              placeholder="רשום טלפון ללא קידומת"
-                            />
-                            {!landingPhoneError && (
-                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
-                            )}
-                          </div>
-
-                          <div className="flex flex-col gap-1">
-                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              <span className="flex items-center gap-1.5">
-                                <User className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
-                                שם נציג המכירות / התמיכה:
-                              </span>
-                              <span className="text-[9px] text-slate-500 font-normal">חובה</span>
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="לדוגמה: חיים בר"
-                              value={landingAgentName}
-                              onChange={(e) => setLandingAgentName(e.target.value)}
-                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-medium text-right ${
-                                isLt 
-                                  ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
-                                  : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"
-                              }`}
-                              disabled={isCreatingDemo}
-                            />
-                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>שם הנציג שהבוט יציג ויפנה אליו לקוחות</span>
-                          </div>
-                        </div>
-
-                        {/* Left Form Column: Configuration & Rich Materials */}
-                        <div className="flex flex-col gap-4 w-full">
-                          <div className={`border-b pb-1.5 mb-0.5 ${isLt ? "border-slate-100" : "border-indigo-550/10"}`}>
-                            <h2 className={`text-xs font-bold flex items-center gap-2 ${isLt ? "text-slate-800" : "text-white"}`}>
-                              <Bot className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600 animate-pulse" : "text-indigo-400 fill-indigo-400/20"}`} />
-                              סוג הסוכן ותוספי ידע
-                            </h2>
-                            <p className={`text-[10px] leading-relaxed mt-0.5 ${isLt ? "text-slate-500" : "text-slate-455 text-slate-400"}`}>
-                              קבע את המיומנות של הסוכן והוסף חומרי מידע מורחבים.
-                            </p>
-                          </div>
-
-                          <div className="flex flex-col gap-1">
-                            <label className={`text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              סוג הסוכן הדיגיטלי (סוכן ברירת מחדל):
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setLandingAgentType("sales")}
-                                disabled={isCreatingDemo}
-                                className={`flex flex-col items-center gap-0.5 py-2 px-2 rounded-xl border text-center cursor-pointer transition-all duration-150 ${
-                                  landingAgentType === "sales"
-                                    ? isLt
-                                      ? "bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-100 font-bold"
-                                      : "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
-                                    : isLt
-                                      ? "bg-slate-50 hover:bg-slate-100/30 border-slate-200 text-slate-500 font-normal"
-                                      : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
-                                }`}
-                              >
-                                <span className="text-[10px]">סוכן מכירות</span>
-                                <span className="text-[8px] opacity-70">חשיפה ומיומנות מכירה</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setLandingAgentType("support")}
-                                disabled={isCreatingDemo}
-                                className={`flex flex-col items-center gap-0.5 py-2 px-2 rounded-xl border text-center cursor-pointer transition-all duration-150 ${
-                                  landingAgentType === "support"
-                                    ? isLt
-                                      ? "bg-indigo-50 border-indigo-500 text-indigo-700 shadow-sm shadow-indigo-100 font-bold"
-                                      : "bg-indigo-600/15 border-indigo-500 text-white shadow-md shadow-indigo-500/5 font-bold"
-                                    : isLt
-                                      ? "bg-slate-50 hover:bg-slate-100/30 border-slate-200 text-slate-500 font-normal"
-                                      : "bg-[#151720] border-slate-800 text-slate-400 hover:border-slate-700 font-normal"
-                                }`}
-                              >
-                                <span className="text-[10px]">סוכן תמיכה טכנית</span>
-                                <span className="text-[8px] opacity-70">פתרון תקלות ומדריכים</span>
-                              </button>
-                            </div>
                           </div>
 
                           <div 
@@ -3148,7 +3180,7 @@ ${videos || "(לא הוגדר)"}
                           >
                             <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
                               <span className="flex items-center gap-1.5">
-                                <FileText className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                                <FileText className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
                                 שדה טקסט חופשי / דפי מידע מורחבים וקבצי ידע:
                               </span>
                               <span className={`text-[8px] font-mono select-none ${isLt ? "text-indigo-700" : "text-indigo-300"}`}>גרור קבצים לכאן או הדבק</span>
@@ -3157,11 +3189,11 @@ ${videos || "(לא הוגדר)"}
                               placeholder="הדבק כאן חומר נוסף על החברה, ברושורים, מחירונים... (או גרור קובץ ידע לכאן)"
                               value={landingAdditionalContext}
                               onChange={(e) => setLandingAdditionalContext(e.target.value)}
-                              rows={2}
-                              className={`w-full px-3 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 resize-y ${
+                              rows={3}
+                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 resize-y ${
                                 isLt
-                                  ? "bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-550 focus:border-indigo-505/20 focus:border-indigo-500 focus:ring-indigo-500/20"
-                                  : "bg-[#151720] border-slate-800 focus:border-indigo-500 text-slate-800 dark:text-white focus:ring-1 focus:ring-indigo-500/50"
+                                  ? "bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20"
+                                  : "bg-[#151720] border-slate-800 text-white focus:ring-1 focus:ring-indigo-500/50"
                               }`}
                               disabled={isCreatingDemo}
                             />
@@ -3170,7 +3202,7 @@ ${videos || "(לא הוגדר)"}
                                 <span className="text-[9px] font-bold text-indigo-950 dark:text-indigo-250">
                                   {fileLoading ? "מעבד ומחלץ טקסט..." : "רוצה לטעון קובץ ידע? גרור לכאן או לחץ:"}
                                 </span>
-                                <span className="text-[8px] text-slate-500 dark:text-slate-450">
+                                <span className="text-[8px] text-slate-500 dark:text-slate-450 font-semibold">
                                   מחלץ טקסט אוטומטית ממסמכים וקבצי ברושור (.pdf, .txt, .json, .csv, .md)
                                 </span>
                               </div>
@@ -3193,24 +3225,51 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
                         </div>
+                      )}
 
-                      </div>
+                      {/* Wizard Navigation Footer controls */}
+                      <div className={`pt-4 border-t flex items-center justify-between select-none ${isLt ? "border-slate-100" : "border-slate-800/60"}`}>
+                        {landingWizardStep > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => setLandingWizardStep(landingWizardStep - 1)}
+                            className={`px-5 py-2.5 font-black rounded-xl text-xs transition cursor-pointer flex items-center gap-1 ${
+                              isLt 
+                                ? "bg-slate-100 hover:bg-slate-200 text-slate-600" 
+                                : "bg-slate-850 hover:bg-slate-800 text-slate-300"
+                            }`}
+                          >
+                            <ArrowRight className="w-3.5 h-3.5" />
+                            <span>חזור</span>
+                          </button>
+                        ) : (
+                          <div />
+                        )}
 
-                      {/* Wide Layout Form Action Button */}
-                      <div className="pt-2 border-t border-slate-800/60">
-                        <button
-                          type="submit"
-                          disabled={isCreatingDemo}
-                          className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs shadow-lg shadow-indigo-600/10 cursor-pointer transition-all duration-200 flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
-                          {landingAgentType === "support" ? "ייצר בוט תמיכה טכנית חכם ב-60 שניות! 🚀" : "ייצר בוט מכירות חכם ב-60 שניות! 🚀"}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {landingWizardStep < 2 ? (
+                            <button
+                              type="button"
+                              onClick={handleNextLandingStep}
+                              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-lg shadow-indigo-600/10 transition duration-150"
+                            >
+                              המשך לשלב הבא
+                            </button>
+                          ) : (
+                            <button
+                              type="submit"
+                              disabled={isCreatingDemo}
+                              className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs shadow-lg shadow-indigo-600/10 cursor-pointer transition duration-150 flex items-center gap-1.5"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                              <span>{landingAgentType === "support" ? "ייצר בוט תמיכה טכנית חכם ב-60 שניות! 🚀" : landingAgentType === "leads" ? "ייצר יועץ לימודים חכם ב-60 שניות! 🎓" : "ייצר בוט מכירות חכם ב-60 שניות! 🚀"}</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </form>
-                  </div>
-                </motion.div>
-              )}
+                  </motion.div>
+                )}
 
               {/* Loader screen with custom Israeli Hebrew progress steps */}
               {isCreatingDemo && (
@@ -3490,28 +3549,32 @@ ${videos || "(לא הוגדר)"}
       );
     } else {
       // Secure login view
+      const isLt = theme === "light";
       return (
-        <div className="min-h-screen bg-[#070709] text-slate-300 flex items-center justify-center p-4 md:p-8 font-sans select-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406]" dir="rtl">
+        <div className={`min-h-screen flex items-center justify-center p-4 md:p-8 font-sans select-none transition-all duration-300 ${
+          isLt 
+            ? "bg-slate-100 text-slate-800 bg-[radial-gradient(ellipse_at_top,_rgba(224,231,255,0.4))] from-indigo-50/50 via-slate-100 to-slate-200" 
+            : "bg-[#070709] text-slate-300 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#07070a] to-[#040406]"
+        }`} dir="rtl">
           <motion.div 
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             className="w-full max-w-md flex flex-col items-center"
           >
-            {/* Logo Card representing "עסק חכם" */}
-            <SmartBusinessLogo size="lg" showContact={true} />
-
             {/* Login Control Form panel */}
-            <div className="w-full mt-6 bg-[#0E0F14]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col gap-5 backdrop-blur">
-              <div className="text-center">
-                <h3 className="text-base font-bold text-slate-150">כניסה למערכת מאובטחת</h3>
-                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  מערכת זו חסומה לעריכה פומבית. רק משתמשים המוגדרים ברשימת המורשים רשאים להתחבר.
-                </p>
-              </div>
+            <div className={`w-full rounded-2xl p-6 shadow-xl flex flex-col gap-5 border transition-all duration-300 ${
+              isLt 
+                ? "bg-white border-slate-200 shadow-slate-200/40" 
+                : "bg-[#0E0F14]/90 border-slate-800/80 backdrop-blur shadow-black/40"
+            }`}>
 
               {authError && (
                 <div className="flex flex-col gap-2">
-                  <div id="auth-error-banner" className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-300 text-xs text-center font-medium leading-relaxed">
+                  <div id="auth-error-banner" className={`p-3.5 rounded-xl text-xs text-center font-medium leading-relaxed border ${
+                    isLt
+                      ? "bg-red-50 border-red-200 text-red-600"
+                      : "bg-red-500/10 border-red-500/25 text-red-300"
+                  }`}>
                     {authError}
                   </div>
                   
@@ -3520,7 +3583,7 @@ ${videos || "(לא הוגדר)"}
                     <button
                       type="button"
                       onClick={() => setShowDiagnostics(!showDiagnostics)}
-                      className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-medium cursor-pointer"
+                      className="text-[11px] text-indigo-500 hover:text-indigo-600 underline font-medium cursor-pointer animate-pulse"
                     >
                       {showDiagnostics ? "הסתר פרטים טכניים (Hide Diagnostics)" : "הצג פרטים טכניים ויומן רשת (Show Diagnostics)"}
                     </button>
@@ -3551,119 +3614,82 @@ ${videos || "(לא הוגדר)"}
               )}
 
               {/* Google Login Options */}
-              <div className="flex flex-col items-center justify-center gap-4 py-2 border-b border-slate-800/50 pb-6 w-full">
+              <div className="flex flex-col items-center justify-center gap-4 w-full">
                 
-                {/* Option 1: Green Trial Sign-Up Button */}
-                <div className="w-full flex flex-col gap-1.5">
-                  <span className="text-[10.5px] text-green-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות א': פתיחת חשבון חדש</span>
-                  <button
-                    type="button"
-                    onClick={() => handleGooglePopupLogin(true)}
-                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
-                  >
-                    🚀 פתח חשבון התנסות חינם לחודש
-                  </button>
-                </div>
+                {/* Green Trial Sign-Up Button */}
+                <button
+                  type="button"
+                  onClick={() => handleGooglePopupLogin(true)}
+                  className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
+                >
+                  🚀 פתח חשבון התנסות חינם לחודש
+                </button>
 
-                {/* Option 2: White Google Sign-In Button */}
-                <div className="w-full flex flex-col gap-1.5 mt-2">
-                  <span className="text-[10.5px] text-slate-500 font-extrabold uppercase tracking-wider text-right pr-1">אפשרות ב': כניסה למשתמש רשום</span>
-                  <button
-                    type="button"
-                    onClick={() => handleGooglePopupLogin(false)}
-                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-950 font-bold py-2.5 px-4 rounded-xl border border-slate-700/30 transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
-                  >
-                    <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
-                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
-                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
-                      <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
-                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
-                    </svg>
-                    <span>התחברות מהירה עם גוגל (Google Popup)</span>
-                  </button>
-                </div>
+                {/* White Google Sign-In Button */}
+                <button
+                  type="button"
+                  onClick={() => handleGooglePopupLogin(false)}
+                  className={`w-full flex items-center justify-center gap-3 font-bold py-2.5 px-4 rounded-xl border transition-all shadow-md text-xs cursor-pointer hover:scale-[1.01] active:scale-[0.99] ${
+                    isLt 
+                      ? "bg-white hover:bg-slate-50 text-slate-800 border-slate-200" 
+                      : "bg-white hover:bg-slate-100 text-slate-950 border-slate-700/30"
+                  }`}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                    <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.67 1.62 14.99 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.92-2.76 3.5-4.51 6.76-4.51z"/>
+                    <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.12 2.73-2.37 3.58l3.77 2.92c2.2-2.03 3.61-5.09 3.61-8.66z"/>
+                    <path fill="#FBBC05" d="M5.24 14.55c-.24-.72-.38-1.5-.38-2.3s.14-1.58.38-2.3L1.39 7.56C.5 9.36 0 11.45 0 13.63s.5 4.27 1.39 6.07l3.85-2.99c-.24-.72-.38-1.5-.38-2.3z"/>
+                    <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.77-2.92c-1.1.74-2.52 1.18-4.19 1.18-3.26 0-5.84-1.75-6.76-4.51L1.39 16.82C3.37 20.71 7.35 23 12 23z"/>
+                  </svg>
+                  <span>התחברות מהירה עם גוגל (Google Popup)</span>
+                </button>
 
                 {/* Google GSI Sign In Button Mounting Point */}
                 <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
-                
-                <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/40 border border-slate-800/60 text-slate-400 text-[10.5px] text-right leading-relaxed mt-2 w-full">
-                  💡 <strong>התחברות מאובטחת:</strong> ההרשמה והכניסה מתבצעות באופן מאובטח מול שרתי Google. לתוצאות מיטביות, ודא כי חלונות קופצים (Popups) מאושרים בדפדפן שלך.
-                </div>
               </div>
 
-              {/* Secondary bypass passcode login (useful for strict iframes or offline checks) */}
-              <div className="flex flex-col gap-2">
+
+
+              {/* Secure Notice Card */}
+              <div className={`px-4 py-3 rounded-xl border text-[11px] text-right leading-relaxed mt-1 w-full ${
+                isLt 
+                  ? "bg-slate-50 border-slate-200/80 text-slate-500" 
+                  : "bg-slate-900/40 border-slate-800/60 text-slate-400"
+              }`}>
+                💡 <strong>התחברות מאובטחת:</strong> ההרשמה והכניסה מתבצעות באופן מאובטח מול שרתי Google. לתוצאות מיטביות, ודא כי חלונות קופצים (Popups) מאושרים בדפדפן שלך.
+              </div>
+
+              {/* Toggle Back to Landing Page & Theme switcher */}
+              <div className="flex flex-col gap-2.5 items-center mt-2 border-t border-dashed pt-4 border-slate-200/30">
                 <button
                   type="button"
-                  onClick={() => setShowPasscodeField(!showPasscodeField)}
-                  className="text-xs text-[#38BDF8] hover:text-sky-350 font-bold flex items-center justify-center gap-1 hover:underline cursor-pointer"
+                  onClick={() => setIsLandingPage(true)}
+                  className={`text-xs flex items-center justify-center gap-1.5 font-bold transition hover:underline cursor-pointer select-none ${
+                    isLt ? "text-slate-500 hover:text-slate-800" : "text-slate-400 hover:text-white"
+                  }`}
                 >
-                  <Unlock className="w-3.5 h-3.5" />
-                  מעקף מורשה מהיר (ללא Google Login)
+                  ← חזרה לעמוד הבית וההדגמה המהירה
                 </button>
 
-                <AnimatePresence>
-                  {showPasscodeField && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="flex flex-col gap-2 pt-2"
-                    >
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <input
-                            type={showBypassPasscode ? "text" : "password"}
-                            placeholder="הזן מפתח מעקף מורשה או מספר טלפון מאושר..."
-                            value={bypassPasscode}
-                            onChange={(e) => setBypassPasscode(e.target.value)}
-                            className="w-full pl-9 pr-3 py-2.5 bg-[#161821] border border-sky-500/30 rounded-lg text-xs font-mono text-center text-white focus:outline-none focus:ring-1 focus:ring-sky-500 transition"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowBypassPasscode(!showBypassPasscode)}
-                            className="absolute left-2.5 top-2.5 p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-sky-400 transition"
-                            title={showBypassPasscode ? "הסתר סיסמה" : "הצג סיסמה"}
-                          >
-                            {showBypassPasscode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handlePasscodeLoginBypass}
-                          className="px-4 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs cursor-pointer shadow-md transition shrink-0"
-                        >
-                          כניסה
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                <button
+                  type="button"
+                  onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1.5 cursor-pointer select-none shadow-sm ${
+                    isLt 
+                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-200" 
+                      : "bg-[#171A24] hover:bg-slate-800 text-slate-300 border-slate-800"
+                  }`}
+                  title={theme === "light" ? "עבור למצב כהה" : "עבור למצב בהיר"}
+                >
+                  {theme === "light" ? <Moon className="w-3.5 h-3.5 text-indigo-500" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
+                  <span>{theme === "light" ? "עבור למצב כהה 🌙" : "עבור למצב בהיר ☀️"}</span>
+                </button>
               </div>
-
-              {/* Toggle Back to Landing Page button */}
-              <button
-                type="button"
-                onClick={() => setIsLandingPage(true)}
-                className="mt-2 text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1.5 font-bold transition hover:underline cursor-pointer select-none"
-              >
-                ← חזרה לעמוד הבית וההדגמה המהירה
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setTheme(prev => prev === "light" ? "dark" : "light")}
-                className="mt-4 px-3 py-1.5 bg-[#171A24] text-slate-300 hover:text-sky-400 rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-[10px] font-bold mx-auto select-none shadow-sm"
-                title={theme === "light" ? "עבור למצב כהה" : "עבור למצב בהיר"}
-              >
-                {theme === "light" ? <Moon className="w-3.5 h-3.5 text-indigo-400" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
-                <span>{theme === "light" ? "עבור למצב כהה 🌙" : "עבור למצב בהיר ☀️"}</span>
-              </button>
 
             </div>
 
             {/* Secure disclaimer brand message */}
-            <p className="text-[10px] text-slate-500 text-center mt-6 tracking-wide">
+            <p className={`text-[10px] text-center mt-6 tracking-wide select-none ${isLt ? "text-slate-500" : "text-slate-600"}`}>
               הרשאות וניהול מפתחות מנוהלים על ידי <strong>עסק חכם</strong>
             </p>
           </motion.div>
@@ -3674,7 +3700,7 @@ ${videos || "(לא הוגדר)"}
 
   // MAIN SYSTEM PANEL (Rendered when authenticated)
   return (
-    <div dir="rtl" className="min-h-screen bg-[#07070A] font-sans text-slate-300 flex flex-col">
+    <div dir={dir} className="min-h-screen bg-[#07070A] font-sans text-slate-300 flex flex-col">
       
       {/* Top Banner / Header */}
       <header className="bg-[#0D0E13] text-white shadow-xl border-b border-[#141C2C] shrink-0 select-none">
@@ -3685,12 +3711,12 @@ ${videos || "(לא הוגדר)"}
             <div className="h-6 w-px bg-slate-800 self-center hidden md:block mx-1"></div>
             <div>
               <h1 id="app-title" className="text-lg md:text-xl font-extrabold tracking-tight flex items-center gap-2">
-                מערכת הגדרת סוכנים
+                {t("appTitle")}
                 <span className="text-[10px] font-bold px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full flex items-center gap-1">
                   ענן עסק חכם <span className="opacity-70 text-[9px] font-mono border-l border-sky-500/30 pl-1.5 ml-0.5">v2.4.5</span>
                 </span>
               </h1>
-              <p className="text-[11px] text-slate-400 font-medium">עריכת פלטפורמות מכירה דיגיטליות וסנכרון דו-כיווני בענן</p>
+              <p className="text-[11px] text-slate-400 font-medium">{t("appSubtitle")}</p>
             </div>
           </div>
 
@@ -3710,9 +3736,52 @@ ${videos || "(לא הוגדר)"}
                 title="נהל הרשאות ואימיילים מורשים"
               >
                 <Shield className="w-4 h-4 text-sky-400" />
-                אישור והרשאות כניסה
+                {t("permissions")}
               </button>
             )}
+
+            {/* Language Selector Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
+                className="p-2 bg-[#171A24] text-slate-300 hover:text-sky-400 rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold shadow-sm"
+                title="בחר שפה / Select Language"
+              >
+                <Globe className="w-4 h-4 text-sky-400" />
+                <span>{languageNames[language].flag} {languageNames[language].name}</span>
+              </button>
+
+              {isLangDropdownOpen && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-45" 
+                    onClick={() => setIsLangDropdownOpen(false)}
+                  />
+                  <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} mt-2 w-36 bg-[#171A24] border border-slate-800 rounded-xl shadow-2xl z-50 overflow-hidden animate-fadeIn`}>
+                    {(Object.keys(languageNames) as Language[]).map((lang) => (
+                      <button
+                        key={lang}
+                        onClick={() => {
+                          handleLanguageChange(lang);
+                          setIsLangDropdownOpen(false);
+                        }}
+                        className={`w-full px-4 py-2 text-xs flex items-center justify-between transition-colors ${
+                          language === lang 
+                            ? "bg-sky-500/10 text-sky-400 font-extrabold" 
+                            : "text-slate-300 hover:bg-slate-800"
+                        } ${dir === "rtl" ? "text-right" : "text-left"}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="text-sm">{languageNames[lang].flag}</span>
+                          <span>{languageNames[lang].name}</span>
+                        </span>
+                        {language === lang && <Check className="w-3 h-3 text-sky-400" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Theme Toggle Button */}
             <button
@@ -3723,12 +3792,12 @@ ${videos || "(לא הוגדר)"}
               {theme === "light" ? (
                 <>
                   <Moon className="w-4 h-4 text-indigo-400" />
-                  <span className="hidden sm:inline">מצב כהה 🌙</span>
+                  <span className="hidden sm:inline">{t("darkMode")}</span>
                 </>
               ) : (
                 <>
                   <Sun className="w-4 h-4 text-amber-500" />
-                  <span className="hidden sm:inline">מצב בהיר ☀️</span>
+                  <span className="hidden sm:inline">{t("lightMode")}</span>
                 </>
               )}
             </button>
@@ -3769,7 +3838,7 @@ ${videos || "(לא הוגדר)"}
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-extrabold text-slate-300 flex items-center gap-2">
                 <List className="w-4.5 h-4.5 text-sky-400" />
-                רשימת סוכנים שמורים ({agents.length})
+                {t("savedAgents")} ({agents.length})
               </h2>
               
               {sessionUser?.email === "haim.bar@gmail.com" && (
@@ -3789,20 +3858,20 @@ ${videos || "(לא הוגדר)"}
                       setGeneratedPrompts(null);
                       setShowWizardModal(true);
                     }}
-                    className="p-1 px-2.5 text-[10px] bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold rounded-lg border border-amber-700/50 shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+                    className="h-7 w-[74px] flex items-center justify-center gap-1 text-[10px] bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold rounded-lg border border-amber-700/50 shadow-sm transition-all cursor-pointer"
                     title="מחולל סוכנים (AI Magic)"
                   >
                     <Sparkles className="w-3 h-3 text-amber-250 animate-pulse" />
-                    <span>מחולל 🪄</span>
+                    <span>{t("generator")}</span>
                   </button>
                   <button
                     type="button"
                     onClick={createNewAgent}
-                    className="p-1 px-2.5 text-[10px] bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg border border-sky-700/50 shadow-sm transition-colors flex items-center gap-1 cursor-pointer"
+                    className="h-7 w-[74px] flex items-center justify-center gap-1 text-[10px] bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg border border-sky-700/50 shadow-sm transition-all cursor-pointer"
                     title="הוסף סוכן חדש"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>חדש</span>
+                    <span>{t("newAgent")}</span>
                   </button>
                 </div>
               )}
@@ -3813,7 +3882,7 @@ ${videos || "(לא הוגדר)"}
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="חפש לפי שם/מפתח..."
+                  placeholder={t("searchAgent")}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-3 pr-9 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-slate-100 transition placeholder-slate-650"
@@ -5456,14 +5525,13 @@ ${videos || "(לא הוגדר)"}
                 <div className="bg-[#080911] px-6 py-4 border-b border-slate-850 flex items-center justify-between text-xs font-black select-none text-slate-400">
                   <div className="flex items-center gap-8 w-full justify-around">
                     {[
-                      { nr: 1, label: "הזנת פרטי עסק" },
-                      { nr: 2, label: "מקורות ידע" },
-                      { nr: 3, label: "סנכרון ופריסה לענן" }
-                    ].map((step) => {
-                      const isActive = wizardStep === step.nr;
-                      const isDone = wizardStep > step.nr;
+                      { nr: 1, label: "שלב 1/2: הגדרות ומקורות ידע", activeSteps: [1, 2] },
+                      { nr: 2, label: "שלב 2/2: סנכרון והקמת הסוכן לענן", activeSteps: [3] }
+                    ].map((step, idx) => {
+                      const isActive = step.activeSteps.includes(wizardStep);
+                      const isDone = idx === 0 && wizardStep === 3;
                       return (
-                        <div key={step.nr} className="flex items-center gap-2">
+                        <div key={idx} className="flex items-center gap-2">
                           <span className={`w-6 h-6 rounded-full flex items-center justify-center font-mono text-[11px] font-black border ${
                             isActive 
                               ? "bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/25" 
@@ -5471,7 +5539,7 @@ ${videos || "(לא הוגדר)"}
                                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" 
                                 : "bg-slate-900 text-slate-500 border-slate-800"
                           }`}>
-                            {step.nr}
+                            {idx + 1}
                           </span>
                           <span className={`${isActive ? "text-white font-extrabold" : "text-slate-500 font-bold"} text-[10.5px]`}>
                             {step.label}
@@ -5487,8 +5555,11 @@ ${videos || "(לא הוגדר)"}
                   <div className="flex-1 flex flex-col gap-5 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-800">
                     <div className="bg-gradient-to-r from-sky-500/10 to-indigo-500/10 border border-sky-500/20 rounded-xl p-4 flex items-start gap-3">
                       <Sparkles className="w-5 h-5 text-sky-400 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-sky-305">ברוך הבא לקוסם ה-AI של עסק חכם!</p>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs font-bold text-sky-305">ברוך הבא לקוסם ה-AI של עסק חכם!</p>
+                          <span className="text-[10px] bg-sky-500/25 text-sky-300 px-2 py-0.5 rounded-full font-black">שלב 1/2 (א)</span>
+                        </div>
                         <p className="text-[11px] text-slate-400 font-semibold mt-0.5">הזן את פרטי העסק הבסיסיים כדי שנוכל לכייל עבורך את עוזר ה-AI בצורה אישית ומקצועית.</p>
                       </div>
                     </div>
@@ -5559,12 +5630,20 @@ ${videos || "(לא הוגדר)"}
                             onClick={() => setWizardTemplateId(tpl.id)}
                             className={`p-3 rounded-xl text-right border transition cursor-pointer flex flex-col gap-1 ${
                               wizardTemplateId === tpl.id
-                                ? "bg-sky-550/10 border-sky-500 text-white shadow-lg ring-1 ring-sky-500/20"
-                                : "bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800"
+                                ? isLt
+                                  ? "bg-indigo-50 border-indigo-500 text-indigo-900 shadow-md ring-1 ring-indigo-550/20"
+                                  : "bg-sky-550/10 border-sky-500 text-white shadow-lg ring-1 ring-sky-500/20"
+                                : isLt
+                                  ? "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-350"
+                                  : "bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800"
                             }`}
                           >
                             <span className="text-xs font-extrabold">{tpl.title}</span>
-                            <span className="text-[10px] opacity-75 leading-relaxed font-semibold">{tpl.desc}</span>
+                            <span className={`text-[10px] opacity-75 leading-relaxed font-semibold ${
+                              wizardTemplateId === tpl.id
+                                ? isLt ? "text-indigo-800" : "text-white"
+                                : isLt ? "text-slate-500" : "text-slate-400"
+                            }`}>{tpl.desc}</span>
                           </button>
                         ))}
                       </div>
@@ -5577,8 +5656,11 @@ ${videos || "(לא הוגדר)"}
                 <div className="flex-1 flex flex-col gap-5 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-slate-800 text-right">
                   <div className="bg-gradient-to-r from-amber-500/10 to-rose-500/10 border border-amber-500/20 rounded-xl p-4 flex items-start gap-3">
                     <Sparkles className="w-5 h-5 text-amber-500 text-amber-400 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs font-bold text-amber-300">הזן חומרי למידה ומקורות ידע 📚</p>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-bold text-amber-300">הזן חומרי למידה ומקורות ידע 📚</p>
+                        <span className="text-[10px] bg-amber-500/25 text-amber-300 px-2 py-0.5 rounded-full font-black">שלב 1/2 (ב)</span>
+                      </div>
                       <p className="text-[11px] text-slate-400 font-semibold mt-0.5">סרוק באופן אוטומטי את האתר העסקי שלך או הדבק חומרים ידניים (שיעורים, קטלוגים, מחירים).</p>
                     </div>
                   </div>
@@ -5677,7 +5759,10 @@ ${videos || "(לא הוגדר)"}
                   {/* Left panel: Preview of prompt parts compiled */}
                   <div className="flex-1 flex flex-col max-h-[420px] lg:max-h-[65vh] overflow-y-auto border-l border-slate-850 p-5 scrollbar-thin scrollbar-thumb-slate-800 text-right font-sans" dir="rtl">
                     <h4 className="text-xs font-black text-sky-400 pb-2 border-b border-slate-800 mb-3 flex items-center justify-between" dir="rtl">
-                      <span>👀 ערוך ובחן את 11 קטעי הפרומפט שנוצרו</span>
+                      <div className="flex items-center gap-2">
+                        <span>👀 ערוך ובחן את 11 קטעי הפרומפט שנוצרו</span>
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-black">שלב 2/2</span>
+                      </div>
                       <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-2 py-0.5 rounded-full font-bold font-mono">נוצר בהצלחה!</span>
                     </h4>
 

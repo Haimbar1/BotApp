@@ -7,16 +7,20 @@ interface SmartBusinessLogoProps {
 
 export default function SmartBusinessLogo({ size = "md", showContact = false }: SmartBusinessLogoProps) {
   // Define sizing classes
-  const robotWidth = size === "sm" ? 36 : size === "md" ? 64 : 120;
-  const robotHeight = size === "sm" ? 36 : size === "md" ? 64 : 120;
+  const robotWidth = size === "sm" ? 32 : size === "md" ? 56 : 72;
+  const robotHeight = size === "sm" ? 32 : size === "md" ? 56 : 72;
   
   return (
-    <div className={`flex flex-col items-center justify-center select-none ${size === "lg" ? "p-8 rounded-2xl bg-gradient-to-b from-[#0B0D13]/90 to-[#05060A]/95 border border-[#141F35]/70 shadow-[0_0_50px_rgba(30,144,255,0.15)] max-w-sm w-full" : ""}`}>
+    <div className={`flex flex-col items-center justify-center select-none ${
+      size === "lg" 
+        ? "py-5 px-6 rounded-2xl bg-gradient-to-b from-[#0e1017] to-[#07080c] border border-slate-800/80 shadow-[0_4px_20px_rgba(0,0,0,0.3)] max-w-sm w-full" 
+        : ""
+    }`}>
       
       {/* Animated Glowing Robot SVG */}
       <motion.div
         animate={{ 
-          y: size === "lg" ? [0, -6, 0] : 0,
+          y: size === "lg" ? [0, -4, 0] : 0,
         }}
         transition={{ 
           duration: 3, 
@@ -27,16 +31,16 @@ export default function SmartBusinessLogo({ size = "md", showContact = false }: 
       >
         {/* Glow Background Effect for large size */}
         {size === "lg" && (
-          <div className="absolute w-24 h-24 bg-sky-500/20 blur-2xl rounded-full animate-pulse" />
+          <div className="absolute w-16 h-16 bg-sky-500/15 blur-xl rounded-full animate-pulse" />
         )}
-
+ 
         <svg 
           width={robotWidth} 
           height={robotHeight} 
           viewBox="0 0 120 120" 
           fill="none" 
           xmlns="http://www.w3.org/2000/svg"
-          className="drop-shadow-[0_0_12px_rgba(56,189,248,0.7)]"
+          className="drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]"
         >
           {/* Head Antenna */}
           <path d="M60 45V30" stroke="#38BDF8" strokeWidth="4" strokeLinecap="round"/>
@@ -65,7 +69,7 @@ export default function SmartBusinessLogo({ size = "md", showContact = false }: 
           {/* Arms */}
           <path d="M30 94 Q22 102 30 114" stroke="#38BDF8" strokeWidth="3.5" strokeLinecap="round" fill="none" />
           <path d="M90 94 Q98 102 90 114" stroke="#38BDF8" strokeWidth="3.5" strokeLinecap="round" fill="none" />
-
+ 
           {/* AI Text on Chest */}
           <text 
             x="60" 
@@ -81,18 +85,18 @@ export default function SmartBusinessLogo({ size = "md", showContact = false }: 
           </text>
         </svg>
       </motion.div>
-
+ 
       {/* Brand Text Header "עסק חכם" with Cyan/Neon Glow */}
-      <h2 className={`font-sans font-black text-center text-[#38BDF8] tracking-wide select-none drop-shadow-[0_0_8px_rgba(56,189,248,0.5)] ${
-        size === "sm" ? "text-sm mt-1" : size === "md" ? "text-xl mt-2" : "text-3xl mt-5"
+      <h2 className={`font-sans font-black text-center text-[#38BDF8] tracking-wide select-none drop-shadow-[0_0_6px_rgba(56,189,248,0.4)] ${
+        size === "sm" ? "text-xs mt-1" : size === "md" ? "text-lg mt-1.5" : "text-2xl mt-3"
       }`}>
         עסק חכם
       </h2>
-
+ 
       {/* Sub-label for large card display or manual activation */}
       {(showContact || size === "lg") && (
-        <div className="flex flex-col items-center gap-1 mt-3">
-          <div className="flex items-center gap-1.5 text-xs text-sky-400 font-bold tracking-wider">
+        <div className="flex flex-col items-center gap-1 mt-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 font-extrabold tracking-wider">
             <span>✦</span>
             <span>חיים בר - מנהל המערכת</span>
             <span>✦</span>

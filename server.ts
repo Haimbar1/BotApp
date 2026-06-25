@@ -325,6 +325,7 @@ async function startServer() {
 
       let isAllowed = allowedCollection.includes(email);
 
+      let isNewUser = false;
       const { isSignUp } = req.body;
       if (!isAllowed && isSignUp) {
         // Automatically add the user's email to the allowed list (registration)
@@ -332,7 +333,47 @@ async function startServer() {
         currentSettings.allowedEmails.push(email);
         saveSettings(currentSettings);
         isAllowed = true;
+        isNewUser = true;
         console.log(`[SERVER] Auto-registered and authorized new trial user: ${email}`);
+      }
+
+      // Notify n8n Webhook about new user registration or sign-up attempt
+      if (isNewUser || isSignUp) {
+        const webhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+        const trialStartDate = new Date();
+        const trialEndDate = new Date();
+        trialEndDate.setDate(trialEndDate.getDate() + 30);
+
+        const payload = {
+          event: isNewUser ? "signup" : "login_signup_attempt",
+          email,
+          name,
+          picture,
+          isNewUser,
+          trial_started_at: trialStartDate.toISOString(),
+          trial_ends_at: trialEndDate.toISOString(),
+          registered_at: trialStartDate.toISOString()
+        };
+
+        console.log(`[SERVER] Triggering signup webhook to n8n for user: ${email} (isNewUser: ${isNewUser})`);
+        
+        // Asynchronous fire-and-forget notification
+        fetch(webhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }).then(async (response) => {
+          if (!response.ok) {
+            const errText = await response.text();
+            console.error(`[SERVER] n8n signup Webhook returned error status ${response.status}:`, errText);
+          } else {
+            console.log(`[SERVER] n8n signup Webhook successfully notified for user: ${email}`);
+          }
+        }).catch((err) => {
+          console.error(`[SERVER] Failed to send n8n signup Webhook for user ${email}:`, err);
+        });
       }
 
       if (!isAllowed) {
