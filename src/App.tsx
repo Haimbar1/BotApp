@@ -1484,6 +1484,32 @@ export default function App() {
     }
   };
 
+  const clearFormFields = () => {
+    setOwnerName("");
+    setBusinessName("");
+    setOwnerPhone("");
+    setBotId("");
+    setWhatsappInstance("");
+    setKey("");
+    setLeadFollowUpDays("3");
+    setAgentEmail("");
+    setStatus("Not Active");
+    setName("");
+    setAgentType("sales");
+    setBotIdentity("");
+    setCoursesInfo("");
+    setKidsCourses("");
+    setConversationFlow("");
+    setWritingStyle("");
+    setFaqAnswers("");
+    setWhatNotToDo("");
+    setSyllabusLinks("");
+    setHumanEscalation("");
+    setImagesInfo("");
+    setVideosInfo("");
+    setBusinessPrompt("");
+  };
+
   // Fetch agents array saved on the server
   const fetchAgentsFromServer = async (token: string, emailUserOverride?: string) => {
     try {
@@ -1492,9 +1518,11 @@ export default function App() {
           "Authorization": `Bearer ${token}`
         }
       });
+      const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
+      const isAdmin = activeEmail === "haim.bar@gmail.com";
+
       if (res.ok) {
         const data = await res.json();
-        const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
         
         if (data.success && data.data && data.data.length > 0) {
           setAgents(data.data);
@@ -1505,7 +1533,7 @@ export default function App() {
           loadAgentToForm(targetAgent);
           
           // For administrator login, we always fetch & restore all live projects/agents directly from the n8n webhook
-          if (activeEmail === "haim.bar@gmail.com") {
+          if (isAdmin) {
             console.log("[CLIENT] Admin logged in/initialized, automatically fetching all live projects from n8n webhook...");
             setTimeout(() => {
               handlePullAllAgentsFromN8n(token);
@@ -1517,22 +1545,40 @@ export default function App() {
             // Placeholder fallback
           }
         } else {
-          // No cloud records stored yet, load local storage or create new preset
-          loadFromLocalOldPresetOrCreate(token);
-          
-          if (activeEmail === "haim.bar@gmail.com") {
+          // No cloud records stored yet
+          if (isAdmin) {
+            loadFromLocalOldPresetOrCreate(token);
             console.log("[CLIENT] Admin empty cloud list detected, pulling all configs from webhook...");
             setTimeout(() => {
               handlePullAllAgentsFromN8n(token);
             }, 800);
+          } else {
+            // For non-admin, let them enter the system with an empty agents list (no auto-creation)
+            setAgents([]);
+            setActiveId("");
+            clearFormFields();
           }
         }
       } else {
-        loadFromLocalOldPresetOrCreate(token);
+        if (isAdmin) {
+          loadFromLocalOldPresetOrCreate(token);
+        } else {
+          setAgents([]);
+          setActiveId("");
+          clearFormFields();
+        }
       }
     } catch (e) {
       console.error("Error loading server-saved agents, falling back to local:", e);
-      loadFromLocalOldPresetOrCreate(token);
+      const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
+      const isAdmin = activeEmail === "haim.bar@gmail.com";
+      if (isAdmin) {
+        loadFromLocalOldPresetOrCreate(token);
+      } else {
+        setAgents([]);
+        setActiveId("");
+        clearFormFields();
+      }
     }
   };
 
@@ -2063,8 +2109,8 @@ ${videos || "(לא הוגדר)"}
 
   // Add a new agent profile
   const createNewAgent = () => {
-    if (sessionUser?.email !== "haim.bar@gmail.com") {
-      alert("פעולה זו מורשית למנהל המערכת הראשי בלבד (super user).");
+    if (sessionUser?.email !== "haim.bar@gmail.com" && agents.length >= 1) {
+      alert("פעולה זו מורשית למנהל המערכת הראשי בלבד (super user), או לבעל עסק שטרם יצר סוכן ראשון (מוגבל לסוכן אחד בלבד).");
       return;
     }
     const newId = "agent_" + Date.now();
@@ -4066,7 +4112,7 @@ ${videos || "(לא הוגדר)"}
                 {t("savedAgents")} ({agents.length})
               </h2>
               
-              {sessionUser?.email === "haim.bar@gmail.com" && (
+              {(sessionUser?.email === "haim.bar@gmail.com" || (sessionUser?.email && agents.length === 0)) && (
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
@@ -4288,8 +4334,71 @@ ${videos || "(לא הוגדר)"}
         {/* Middle Main Working Workspace */}
         <section className="flex-1 flex flex-col gap-6">
           
-          {/* Main Configuration Card Form */}
-          <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-6 flex flex-col gap-5">
+          {agents.length === 0 ? (
+            <div className="bg-[#0C0D12] rounded-xl border border-slate-800 p-8 flex flex-col items-center justify-center text-center gap-6 min-h-[450px]">
+              <div className="p-4 bg-sky-500/10 rounded-full border border-sky-500/20 text-sky-400">
+                <Bot className="w-10 h-10 animate-bounce" />
+              </div>
+              <div className="max-w-md flex flex-col gap-2">
+                <h2 className="text-lg font-black text-white" dir="rtl">ברוך הבא למערכת הסוכנים של SmartEsek! 🚀</h2>
+                <p className="text-xs text-slate-400 leading-relaxed font-semibold" dir="rtl">
+                  כעת אין לך סוכנים פעילים במערכת. באפשרותך להקים סוכן חדש אחד על מנת להתחיל.
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWizardStep(1);
+                    setWizardBusinessName("");
+                    setWizardOwnerName("");
+                    setWizardBotId("bot_" + Math.floor(1000 + Math.random() * 9000));
+                    setWizardOwnerPhone("");
+                    setWizardAgentEmail(sessionUser?.email || "");
+                    setWizardWebsiteUrl("");
+                    setWizardPastedText("");
+                    setScrapedText("");
+                    setExplorerAnalysis("");
+                    setGeneratedPrompts(null);
+                    setShowWizardModal(true);
+                  }}
+                  className="p-5 bg-[#0e1017] hover:bg-[#121520] border border-slate-800 hover:border-indigo-500/40 rounded-2xl flex flex-col items-center gap-3 transition duration-200 hover:shadow-lg hover:shadow-indigo-500/5 cursor-pointer text-right group"
+                  dir="rtl"
+                >
+                  <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400 group-hover:scale-110 transition duration-200">
+                    <Sparkles className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-slate-200">מחולל סוכנים (AI Magic) ✨</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 font-semibold leading-relaxed">
+                      הקמת הסוכן באמצעות אשף בינה מלאכותית חכם שינתח את העסק שלך וייצור הנחיות מדויקות.
+                    </p>
+                  </div>
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={createNewAgent}
+                  className="p-5 bg-[#0e1017] hover:bg-[#121520] border border-slate-800 hover:border-sky-500/30 rounded-2xl flex flex-col items-center gap-3 transition duration-200 hover:shadow-lg hover:shadow-sky-500/5 cursor-pointer text-right group"
+                  dir="rtl"
+                >
+                  <div className="p-3 bg-sky-500/10 rounded-xl border border-sky-500/20 text-sky-400 group-hover:scale-110 transition duration-200">
+                    <Plus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-slate-200">הקמה ידנית מהירה ✍️</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 font-semibold leading-relaxed">
+                      יצירת פרופיל סוכן ריק והזנת הפרטים והנחיות השיחה בצורה עצמאית וידנית.
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Main Configuration Card Form */}
+              <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-6 flex flex-col gap-5">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-4">
               <div className="flex items-center gap-2.5">
                 <FileText className="w-5 h-5 text-sky-400" />
@@ -5002,8 +5111,9 @@ ${videos || "(לא הוגדר)"}
               </div>
             )}
           </div>
-
-        </section>
+        </>
+      )}
+    </section>
 
           {/* Sync & Webhook Administration Control Center (Hidden) */}
           <div className="hidden">

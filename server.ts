@@ -700,11 +700,15 @@ async function startServer() {
       // Guard check: normal users are not allowed to add new agents
       const containsNewAgents = agents.some((agent: any) => !existingUserAgentIds.has(agent.id));
       if (containsNewAgents) {
-        return res.status(403).json({ 
-          success: false, 
-          error: "forbidden", 
-          message: "אינך מורשה להוסיף סוכנים חדשים. פעולה זו שמורה למנהל המערכת בלבד." 
-        });
+        // If they currently have 0 agents, and the new array has exactly 1 agent whose email matches their email, let them create it!
+        const isCreatingFirstAgent = existingUserAgents.length === 0 && agents.length === 1 && (agents[0].agentEmail || "").toLowerCase().trim() === userEmail;
+        if (!isCreatingFirstAgent) {
+          return res.status(403).json({ 
+            success: false, 
+            error: "forbidden", 
+            message: "אינך מורשה להוסיף סוכנים חדשים. פעולה זו שמורה למנהל המערכת בלבד או כאשר אין לך סוכנים וברצונך ליצור את הסוכן הראשון שלך (מוגבל ל-1)." 
+          });
+        }
       }
 
       // Separate agents belonging to other users
@@ -715,10 +719,27 @@ async function startServer() {
 
       // Map user's proposed agents to update only allowed fields on the existing agent from DB
       // Allowed fields to change: agentEmail, ownerPhone, businessName, ownerName, leadFollowUpDays, status
-      // Everything else must remain unchanged
+      // Everything else must remain unchanged (except for the first newly created agent)
       const userProposedAgents = agents.map((proposed: any) => {
         const existing = existingUserAgents.find((a: any) => a.id === proposed.id);
-        if (!existing) return proposed; // Fallback for safety (though guard check prevents new IDs)
+        if (!existing) {
+          // New agent creation (only allowed for the first agent)
+          return {
+            id: proposed.id || "agent_" + Date.now(),
+            ownerName: proposed.ownerName || "בעל העסק",
+            businessName: proposed.businessName || "סוכן חדש",
+            ownerPhone: proposed.ownerPhone || "050-1234567",
+            botId: proposed.botId || "bot_" + Math.floor(Math.random() * 90000 + 10000),
+            whatsappInstance: proposed.whatsappInstance || "Smarti",
+            businessPrompt: proposed.businessPrompt || `# הנחיות לסוכן מכירות ושירות לקוחות`,
+            key: proposed.key || "demo-key",
+            leadFollowUpDays: proposed.leadFollowUpDays || "3",
+            agentEmail: userEmail, // Force to logged-in user email
+            status: proposed.status || "Not Active",
+            name: proposed.name || `${proposed.businessName || "סוכן חדש"} _ מכירות`,
+            agentType: proposed.agentType || "sales"
+          };
+        }
         return {
           ...existing, // Keep everything else unchanged
           agentEmail: proposed.agentEmail !== undefined ? proposed.agentEmail : existing.agentEmail,
