@@ -1615,7 +1615,7 @@ export default function App() {
         .replace(/{OwnerName}/g, "בעל העסק")
         .replace(/{OwnerPhone}/g, "050-1234567")
         .replace(/{BotId}/g, "bot_demo"),
-      key: "",
+      key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
       leadFollowUpDays: "3",
       status: "Not Active",
     };
@@ -2126,7 +2126,7 @@ ${videos || "(לא הוגדר)"}
         .replace(/{OwnerName}/g, "בעל העסק")
         .replace(/{OwnerPhone}/g, "050-1234567")
         .replace(/{BotId}/g, "bot_demo"),
-      key: "",
+      key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
       leadFollowUpDays: "3",
       agentEmail: sessionUser?.email || "haim.bar@gmail.com",
       status: "Not Active",
