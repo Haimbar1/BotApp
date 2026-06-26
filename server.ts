@@ -819,7 +819,7 @@ async function startServer() {
           // New agent creation (only allowed for the first agent)
           return {
             id: proposed.id || "agent_" + Date.now(),
-            ownerName: proposed.ownerName || "בעל העסק",
+            ownerName: proposed.ownerName || "בעל העסק ",
             businessName: proposed.businessName || "סוכן חדש",
             ownerPhone: proposed.ownerPhone || "050-1234567",
             botId: proposed.botId || "bot_" + Math.floor(Math.random() * 90000 + 10000),
