@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { 
   Bot, 
   Send, 
@@ -557,11 +557,17 @@ export default function App() {
 
   // Fetch chats for the currently active bot
   useEffect(() => {
+    let active = true;
+
     const fetchChats = async () => {
-      // Use the live state botId (what you are currently looking at on the screen!)
-      const targetBotId = botId;
+      // Synchronously retrieve the active agent's botId to bypass state-update delay race conditions
+      const currentAgent = agents.find(a => a.id === activeId);
+      const targetBotId = currentAgent?.botId || botId;
+
       if (!targetBotId) {
-        setChats([]);
+        if (active) {
+          setChats([]);
+        }
         return;
       }
 
@@ -574,25 +580,37 @@ export default function App() {
           }
         });
         const result = await response.json();
-        if (result.success) {
-          setChats(result.data || []);
-        } else {
-          console.error("[CHATS] Failed to fetch chats:", result.message);
+        if (active) {
+          if (result.success) {
+            setChats(result.data || []);
+          } else {
+            console.error("[CHATS] Failed to fetch chats:", result.message);
+            setChats([]);
+          }
         }
       } catch (err) {
         console.error("[CHATS] Error fetching chats:", err);
+        if (active) {
+          setChats([]);
+        }
       } finally {
-        setIsChatsLoading(false);
+        if (active) {
+          setIsChatsLoading(false);
+        }
       }
     };
 
     if (isAuthenticated && (activeId || botId)) {
       fetchChats();
     }
-  }, [activeId, botId, chatsRefreshTrigger, isAuthenticated, sessionToken]);
+
+    return () => {
+      active = false;
+    };
+  }, [activeId, botId, agents, chatsRefreshTrigger, isAuthenticated, sessionToken]);
 
   // Group fetched chats by sessionId for lists and filters
-  const chatSessions = (() => {
+  const chatSessions = useMemo(() => {
     const sessionsMap: Record<string, {
       sessionId: string;
       phone: string;
@@ -656,7 +674,22 @@ export default function App() {
 
     list.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
     return list;
-  })();
+  }, [chats]);
+
+  // Automatically select the appropriate session
+  useEffect(() => {
+    if (chatSessions.length > 0) {
+      const hasSelectedValidSession = chatSessions.some(s => s.sessionId === selectedSessionId);
+      if (!selectedSessionId || !hasSelectedValidSession) {
+        // Select the latest one (since chatSessions list is sorted descending by lastTimestamp, index 0 is the newest/latest)
+        setSelectedSessionId(chatSessions[0].sessionId);
+      }
+    } else {
+      if (selectedSessionId !== "") {
+        setSelectedSessionId("");
+      }
+    }
+  }, [chatSessions, selectedSessionId]);
 
   const handleClearSessionChats = async (sessionId: string) => {
     if (!window.confirm("האם אתה בטוח שברצונך למחוק את היסטוריית השיחה של טלפון זה? פעולה זו אינה הפיכה.")) {
