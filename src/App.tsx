@@ -172,17 +172,17 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
   coursesInfo: [
     { label: "🎓 לימודים וקורסים", emojis: ["📖", "🎓", "💻", "📚", "🏫", "📝", "🧠", "💡", "🧪", "🎨"] },
     { label: "💰 הצעות ומחירון", emojis: ["🏷️", "💰", "💵", "💳", "📈", "🎁", "🔥", "🥇", "💎"] }
-  ],
+  ],   
   kidsCourses: [
     { label: "🧸 קהל יעד צעיר", emojis: ["👥", "👶", "👦", "👧", "🧒", "🧸", "🎮", "👾", "🧩", "🦄"] },
     { label: "👨‍👩‍👧‍👦 הורים ומשפחה", emojis: ["👨‍👩‍👧‍👦", "🎒", "🏫", "🏡", "🥛", "🍎", "🎈"] }
-  ],
+  ], 
   conversationFlow: [
     { label: "👋 פתיחה וברכה שכיחה (שאלת פתיחה)", emojis: ["👋", "✨", "🌟", "🆕", "🎁", "💌", "🌸", "🤍", "😇"] },
     { label: "💬 זרימה ושלבי שיחה", emojis: ["💬", "🗺️", "🧭", "📍", "🏁", "🎯", "📥", "📤", "🚀", "📞", "🤝"] }
   ],
   writingStyle: [
-    { label: "✍️ עימוד וניסוח", emojis: ["✍️", "📏", "✂️", "📌", "⚡", "🎯", "🔥", "👌", "🤩", "📢", "💬", "📱"] }
+    { label: "✍️ עימוד  וניסוח", emojis: ["✍️", "📏", "✂️", "📌", "⚡", "🎯", "🔥", "👌", "🤩", "📢", "💬", "📱"] }
   ],
   faqAnswers: [
     { label: "❓ שאלות ותשובות", emojis: ["❓", "❔", "💡", "📑", "🧐", "📌", "🔍", "✅", "❌", "💬", "🤝", "💁"] }
@@ -239,7 +239,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string>("");
   const [apiLogs, setApiLogs] = useState<string[]>([]);
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
-  const [isSignUp, setIsSignUp] = useState<boolean>(false);
+  const [isSignUp, setIsSignUp] = useState<boolean>(false) ;
   const isSignUpRef = useRef<boolean>(false);
 
   useEffect(() => {
