@@ -1164,7 +1164,7 @@ export default function App() {
         businessName: finalBusinessName,
         ownerPhone: finalOwnerPhone,
         botId: finalBotId,
-        whatsappInstance: "Smarti",
+        whatsappInstance: "Generic Bot",
         businessPrompt: compiledBusinessPrompt,
         key: "demo-key",
         leadFollowUpDays: leadFollowUpDays || "3",
@@ -1609,7 +1609,7 @@ export default function App() {
       businessName: "סוכן חדש 1",
       ownerPhone: "",
       botId: "bot_" + Math.floor(Math.random() * 90000 + 10000),
-      whatsappInstance: "Smarti",
+      whatsappInstance: "Generic Bot",
       businessPrompt: promptTemplates[0].content
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
@@ -2120,7 +2120,7 @@ ${videos || "(לא הוגדר)"}
       businessName: "סוכן חדש " + (agents.length + 1),
       ownerPhone: "",
       botId: "bot_" + Math.floor(Math.random() * 90000 + 10000),
-      whatsappInstance: "Smarti",
+      whatsappInstance: "Generic Bot",
       businessPrompt: promptTemplates[0].content
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
@@ -3571,7 +3571,7 @@ ${videos || "(לא הוגדר)"}
                       "🔍 סורק ומחלץ את המידע האמיתי מאתר האינטרנט של העסק...",
                       "🧠 מנתח את מוצרי העסק, יתרונותיו האמיתיים וקהל היעד באמצעות AI...",
                       "✍️ כותב ומלטש פרוมפט מכירות מושלם ומנוסח בעברית (חוסם הפניות לקורסים לא קשורים)...",
-                      "🛡️ מגדיר את הערכים הגנריים: bot_generic_XYZ, סוכן Smarti ומקצה מפתח VIP...",
+                      "🛡️ מגדיר את הערכים הגנריים: bot_generic_XYZ, סוכן Generic Bot ומקצה מפתח VIP...",
                       "🚀 מפיץ את הבוט החדש לעולם החופשי"
                     ].map((stepText, idx) => {
                       const isPast = idx < demoStep;
@@ -3917,6 +3917,62 @@ ${videos || "(לא הוגדר)"}
 
                 {/* Google GSI Sign In Button Mounting Point */}
                 <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
+              </div>
+
+              {/* Collapsible Passcode Login section for custom domains */}
+              <div className="w-full mt-1 border-t border-slate-800/20 dark:border-slate-800/40 pt-4 flex flex-col gap-3">
+                {showPasscodeField ? (
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[11px] font-extrabold ${isLt ? 'text-slate-600' : 'text-slate-400'}`}>כניסה מהירה עם מפתח מעקף או אימייל:</span>
+                      <button 
+                        type="button"
+                        onClick={() => setShowPasscodeField(false)}
+                        className="text-[10px] text-slate-500 hover:underline cursor-pointer"
+                      >
+                        הסתר ×
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        placeholder="הזן מפתח גישה, אימייל או קוד מעקף..."
+                        value={bypassPasscode}
+                        onChange={(e) => setBypassPasscode(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handlePasscodeLoginBypass();
+                          }
+                        }}
+                        className={`flex-1 px-3 py-2 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition font-mono ${
+                          isLt 
+                            ? "bg-slate-50 border-slate-200 text-slate-800" 
+                            : "bg-[#161821] border-slate-800 text-white placeholder-slate-600"
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handlePasscodeLoginBypass}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        כניסה
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed text-right font-medium">
+                      💡 <strong>טיפ לדומיין מותאם:</strong> אם התחברות גוגל אינה מגיבה בדומיין שלך, הקלד את כתובת האימייל המורשית שלך או קוד קיצור (למשל: <code className="font-mono bg-slate-900/60 px-1 py-0.5 rounded text-indigo-400">smartesek</code>) וכנס מיידית!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => setShowPasscodeField(true)}
+                      className="text-xs text-indigo-500 hover:text-indigo-600 font-bold hover:underline cursor-pointer transition"
+                    >
+                      התחברות חלופית באמצעות קוד / אימייל (מעקף דומיין)
+                    </button>
+                  </div>
+                )}
               </div>
 
 

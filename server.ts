@@ -378,7 +378,7 @@ async function startServer() {
             businessName: "בוט גנרי",
             ownerPhone: "050-1234567",
             botId: newBotId,
-            whatsappInstance: "Smarti",
+            whatsappInstance: "Generic Bot",
             businessPrompt: `# הנחיות לסוכן מכירות ושירות לקוחות - בוט גנרי
 
 ## תפקיד הסוכן
@@ -521,6 +521,17 @@ async function startServer() {
           name: "חיים בר (מנהל)",
           email: "haim.bar@gmail.com",
           passcode: "HaimBarAdmin2026!"
+        };
+      } else if (
+        lowerPasscode === "smartesek@gmail.com" ||
+        lowerPasscode === "smartesek" ||
+        lowerPasscode === "smart" ||
+        lowerPasscode === "smartesek_admin"
+      ) {
+        matchingUser = {
+          name: "סמארט עסק (סוכן)",
+          email: "smartesek@gmail.com",
+          passcode: "smartesek@gmail.com"
         };
       }
 
@@ -730,7 +741,7 @@ async function startServer() {
             businessName: proposed.businessName || "סוכן חדש",
             ownerPhone: proposed.ownerPhone || "050-1234567",
             botId: proposed.botId || "bot_" + Math.floor(Math.random() * 90000 + 10000),
-            whatsappInstance: proposed.whatsappInstance || "Smarti",
+            whatsappInstance: proposed.whatsappInstance || "Generic Bot",
             businessPrompt: proposed.businessPrompt || `# הנחיות לסוכן מכירות ושירות לקוחות`,
             key: proposed.key || "demo-key",
             leadFollowUpDays: proposed.leadFollowUpDays || "3",
@@ -1663,7 +1674,7 @@ async function startServer() {
         businessName: businessName,
         ownerPhone: ownerPhone,
         botId: dynamicBotId,
-        whatsappInstance: "Smarti",
+        whatsappInstance: "Generic Bot",
         businessPrompt: businessPrompt,
         key: "169711FA6EAA-41DA-8DF7-F12280FBA711",
         leadFollowUpDays: "3",
@@ -1696,7 +1707,7 @@ async function startServer() {
         "שם העסק": businessName,
         "טלפון בעל העסק": ownerPhone,
         "Bot ID": dynamicBotId,
-        "שם ואטסאפ instance": "Smarti",
+        "שם ואטסאפ instance": "Generic Bot",
         "פרומפט עיסקי": businessPrompt,
         "Key": "169711FA6EAA-41DA-8DF7-F12280FBA711",
         "זמן למעקב אחרי ליד בימים": "3",
