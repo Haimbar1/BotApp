@@ -506,46 +506,128 @@ async function startServer() {
       const usersList = currentSettings.bypassUsers || defaultSettings.bypassUsers;
 
       // Search for user by passcode
-      let matchingUser = usersList.find((u: any) => String(u.passcode).trim() === passcode.trim());
+      let matchingUser = usersList.find((u: any) => String(u.passcode).trim() === passcode.trim() || String(u.email).toLowerCase().trim() === passcode.toLowerCase().trim());
 
       // Special super ease shortcut for the administrator in the sandbox environment
       const lowerPasscode = passcode.trim().toLowerCase();
-      if (
-        lowerPasscode === "haim.bar@gmail.com" || 
-        lowerPasscode === "haim.bar" || 
-        lowerPasscode === "haimbar" || 
-        lowerPasscode === "haim" ||
-        lowerPasscode === "haimbaradmin2026!"
-      ) {
-        matchingUser = {
-          name: "חיים בר (מנהל)",
-          email: "haim.bar@gmail.com",
-          passcode: "HaimBarAdmin2026!"
-        };
-      } else if (
-        lowerPasscode === "smartesek@gmail.com" ||
-        lowerPasscode === "smartesek" ||
-        lowerPasscode === "smart" ||
-        lowerPasscode === "smartesek_admin"
-      ) {
-        matchingUser = {
-          name: "סמארט עסק (סוכן)",
-          email: "smartesek@gmail.com",
-          passcode: "smartesek@gmail.com"
-        };
+      if (!matchingUser) {
+        if (
+          lowerPasscode === "haim.bar@gmail.com" || 
+          lowerPasscode === "haim.bar" || 
+          lowerPasscode === "haimbar" || 
+          lowerPasscode === "haim" ||
+          lowerPasscode === "haimbaradmin2026!"
+        ) {
+          matchingUser = {
+            name: "חיים בר (מנהל)",
+            email: "haim.bar@gmail.com",
+            passcode: "HaimBarAdmin2026!"
+          };
+        } else if (
+          lowerPasscode === "smartesek@gmail.com" ||
+          lowerPasscode === "smartesek" ||
+          lowerPasscode === "smart" ||
+          lowerPasscode === "smartesek_admin"
+        ) {
+          matchingUser = {
+            name: "סמארט עסק (סוכן)",
+            email: "smartesek@gmail.com",
+            passcode: "smartesek@gmail.com"
+          };
+        }
       }
 
-      // Helper fallback: if not found in explicitly declared bypass keys list, but is found directly in allowed emails / allowed users list
+      // If still not found, let's auto-register them!
       if (!matchingUser) {
-        const isAllowedDirectly = (currentSettings.allowedEmails || []).some((emailOrPhone: string) => 
-          emailOrPhone.trim().toLowerCase() === passcode.trim().toLowerCase()
-        );
-        if (isAllowedDirectly) {
-          matchingUser = {
-            name: passcode.trim().includes("@") ? passcode.trim().split("@")[0] : `מורשה כניסה (${passcode.trim()})`,
-            email: passcode.trim().includes("@") ? passcode.trim() : `${passcode.trim()}@authorized-bypass.com`,
-            passcode: passcode.trim()
+        let regEmail = "";
+        let regName = "";
+        const regPass = passcode.trim();
+
+        if (lowerPasscode.includes("@")) {
+          regEmail = lowerPasscode;
+          regName = passcode.trim().split("@")[0];
+        } else {
+          regEmail = `${lowerPasscode}@smartesek.com`;
+          regName = passcode.trim();
+        }
+
+        matchingUser = {
+          name: regName,
+          email: regEmail,
+          passcode: regPass
+        };
+
+        // Add to settings.allowedEmails
+        const allowedEmails = currentSettings.allowedEmails || [];
+        if (!allowedEmails.map((e: string) => e.toLowerCase().trim()).includes(regEmail)) {
+          allowedEmails.push(regEmail);
+        }
+        currentSettings.allowedEmails = allowedEmails;
+
+        // Add to settings.bypassUsers
+        const bypassUsers = currentSettings.bypassUsers || [];
+        if (!bypassUsers.some((u: any) => String(u.passcode).trim() === regPass || String(u.email).toLowerCase().trim() === regEmail)) {
+          bypassUsers.push(matchingUser);
+        }
+        currentSettings.bypassUsers = bypassUsers;
+
+        saveSettings(currentSettings);
+        console.log(`[SERVER] Auto-registered bypass user on login: Name: ${regName}, Email: ${regEmail}, Passcode: ${regPass}`);
+      }
+
+      // Check if they have a bot, if not, create one!
+      if (matchingUser) {
+        const userEmail = (matchingUser.email || "").toLowerCase().trim();
+        const agentsList = readAgents();
+        const hasAgent = agentsList.some((agent: any) => (agent.agentEmail || "").toLowerCase().trim() === userEmail);
+        if (!hasAgent) {
+          const newBotId = "bot_" + Math.floor(Math.random() * 90000 + 10000);
+          const newAgent = {
+            id: "agent_" + Date.now(),
+            ownerName: matchingUser.name || "בעל העסק",
+            businessName: "בוט גנרי",
+            ownerPhone: "050-1234567",
+            botId: newBotId,
+            whatsappInstance: "Generic Bot",
+            businessPrompt: `# הנחיות לסוכן מכירות ושירות לקוחות - בוט גנרי
+ 
+ ## תפקיד הסוכן
+ אתה סוכן מכירות דיגיטלי חכם וידידותי של העסק **"בוט גנרי"**. בעל העסק הוא **${matchingUser.name || "בעל העסק"}**.
+ מטרתך היא לתת ללקוחות מענה מהיר, אדיב ומקצועי, להציג את השירותים/מוצרים, ולעזור להם להתקדם לרכישה או השארת פרטים.
+ 
+ ---
+ 
+ ## ערכי המותג וטון הדיבור
+ - **שירותיות ואדיבות:** פנה תמיד בנימוס ובגובה העיניים.
+ - **מקצועיות:** תשובות מדויקות, קצרות וברורות.
+ - **הנעה לפעולה:** תמיד לסיים בשאלה מקדמת שמושכת את הלקוח להמשיך את השיחה.
+ - **שפה:** עברית רהוטה ותקינה, שימוש באימוג'ים מתאימים במידה מתונה 🌸.
+ 
+ ---
+ 
+ ## מידע על העסק ושירותים מרכזיים
+ 1. **שעות פעילות:** א'-ה' בין 09:00 ל-18:00, ימי שישי וערבי חג סגור.
+ 
+ ---
+ 
+ ## תסריט שיחה בסיסי והנחיות מענה
+ 1. **פתיח:** כאשר לקוח פונה לראשונה: "שלום! ברוך הבא לבוט גנרי 🌸 שמח שפנית אלינו. איך אוכל לעזור לך היום?"
+ 2. **בירור צרכים:** שאל שאלות ממוקדות כדי להבין מה הלקוח מחפש.
+ 3. **סגירה ואיסוף לידים:** ברגע שיש עניין, בקש בנימוס לאשר את מספר הטלפון או להשאיר פרטים נחוצים כדי שנציג אנושי יחזור אליהם.
+ 
+ ---
+ 
+ ## מגבלות סוכן ה-AI (חשוב מאוד!)
+ - **לעולם אל תמציא פרטים:** אם נשאלת שאלה שאין לך עליה תשובה, אמור בעדינות: *"שאלה מצוינת, אני אגלגל את זה לצוות שלנו והם יחזרו אליך בהקדם האפשרי עם תשובה מדויקת!"*
+ - **הגבלת פלט:** אל תעבור את ה-3 משפטים להודעה בודדת בווטסאפ.`,
+            key: "demo-key",
+            leadFollowUpDays: "3",
+            agentEmail: userEmail,
+            status: "Not Active"
           };
+          agentsList.push(newAgent);
+          saveAgents(agentsList);
+          console.log(`[SERVER] Automatically created default generic bot for new bypass-login user: ${userEmail}`);
         }
       }
 
@@ -1676,7 +1758,7 @@ async function startServer() {
         botId: dynamicBotId,
         whatsappInstance: "Generic Bot",
         businessPrompt: businessPrompt,
-        key: "169711FA6EAA-41DA-8DF7-F12280FBA711",
+        key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
         leadFollowUpDays: "3",
         agentEmail: "haim.bar@gmail.com",
         name: defaultBotName,
@@ -1709,7 +1791,7 @@ async function startServer() {
         "Bot ID": dynamicBotId,
         "שם ואטסאפ instance": "Generic Bot",
         "פרומפט עיסקי": businessPrompt,
-        "Key": "169711FA6EAA-41DA-8DF7-F12280FBA711",
+        "Key": "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
         "זמן למעקב אחרי ליד בימים": "3",
         "אימייל משויך לסוכן": "haim.bar@gmail.com",
 
