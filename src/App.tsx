@@ -87,8 +87,7 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
     addGlobalLog(`DECISION: host="${currentHost}" isLocal=${isLocal} isSandbox=${isSandbox} -> shouldRedirect=${shouldRedirect}`);
 
     if (shouldRedirect) {
-     // const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
-      const backendProdUrl = `https://app.smartesek.com${urlString}`;
+      const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
       addGlobalLog(`INTERCEPTOR: Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
       
       const updatedInit = {
