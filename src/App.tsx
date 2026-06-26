@@ -1166,7 +1166,7 @@ export default function App() {
         botId: finalBotId,
         whatsappInstance: "Generic Bot",
         businessPrompt: compiledBusinessPrompt,
-        key: "demo-key",
+        key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
         leadFollowUpDays: leadFollowUpDays || "3",
         agentEmail: wizardAgentEmail.trim() || sessionUser?.email || "haim.bar@gmail.com",
         status: "Not Active",
