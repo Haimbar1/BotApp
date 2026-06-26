@@ -378,7 +378,7 @@ async function startServer() {
             businessName: "בוט גנרי",
             ownerPhone: "050-1234567",
             botId: newBotId,
-            whatsappInstance: "Smarti",
+            whatsappInstance: "Generic Bot",
             businessPrompt: `# הנחיות לסוכן מכירות ושירות לקוחות - בוט גנרי
 
 ## תפקיד הסוכן
@@ -410,7 +410,7 @@ async function startServer() {
 ## מגבלות סוכן ה-AI (חשוב מאוד!)
 - **לעולם אל תמציא פרטים:** אם נשאלת שאלה שאין לך עליה תשובה, אמור בעדינות: *"שאלה מצוינת, אני אגלגל את זה לצוות שלנו והם יחזרו אליך בהקדם האפשרי עם תשובה מדויקת!"*
 - **הגבלת פלט:** אל תעבור את ה-3 משפטים להודעה בודדת בווטסאפ.`,
-            key: "demo-key",
+            key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
             leadFollowUpDays: "3",
             agentEmail: email,
             status: "Not Active"
@@ -732,7 +732,7 @@ async function startServer() {
             botId: proposed.botId || "bot_" + Math.floor(Math.random() * 90000 + 10000),
             whatsappInstance: proposed.whatsappInstance || "Smarti",
             businessPrompt: proposed.businessPrompt || `# הנחיות לסוכן מכירות ושירות לקוחות`,
-            key: proposed.key || "demo-key",
+            key: proposed.key || "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
             leadFollowUpDays: proposed.leadFollowUpDays || "3",
             agentEmail: userEmail, // Force to logged-in user email
             status: proposed.status || "Not Active",

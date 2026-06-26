@@ -1166,7 +1166,7 @@ export default function App() {
         botId: finalBotId,
         whatsappInstance: "Generic Bot",
         businessPrompt: compiledBusinessPrompt,
-        key: "demo-key",
+        key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
         leadFollowUpDays: leadFollowUpDays || "3",
         agentEmail: wizardAgentEmail.trim() || sessionUser?.email || "haim.bar@gmail.com",
         status: "Not Active",
@@ -1614,8 +1614,8 @@ export default function App() {
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
         .replace(/{OwnerPhone}/g, "050-1234567")
-        .replace(/{BotId}/g, "bot_demo"),
-      key: "",
+        .replace(/{BotId}/g, "Generic Bot"),
+      key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
       leadFollowUpDays: "3",
       status: "Not Active",
     };
@@ -2125,8 +2125,8 @@ ${videos || "(לא הוגדר)"}
         .replace(/{BusinessName}/g, "העסק שלי")
         .replace(/{OwnerName}/g, "בעל העסק")
         .replace(/{OwnerPhone}/g, "050-1234567")
-        .replace(/{BotId}/g, "bot_demo"),
-      key: "",
+        .replace(/{BotId}/g, "Generic"),
+      key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
       leadFollowUpDays: "3",
       agentEmail: sessionUser?.email || "haim.bar@gmail.com",
       status: "Not Active",
