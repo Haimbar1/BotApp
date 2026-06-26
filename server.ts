@@ -1656,7 +1656,8 @@ async function startServer() {
       const defaultWebhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
       
       const defaultBotName = `${businessName} _ ${activeAgentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
-
+console.log("[DEBUG] KEY VALUE:", "B96B5776A5E4-4754-B7DC-1F1AF8A74940");
+console.log("[DEBUG] INSTANCE VALUE:", "Generic Bot");
       const payload = {
         // Direct core fields requested by Haim Bar
         ownerName: finalAgentName,
@@ -1722,6 +1723,10 @@ async function startServer() {
         IsNewBot: true,
         "בוט חדש": true
       };
+
+
+console.log("[DEBUG] PAYLOAD KEY:", payload.key);
+console.log("[DEBUG] PAYLOAD INSTANCE:", payload.whatsappInstance);
 
       // 5. Fire event to n8n Webhook
       console.log(`[PUBLIC DEMO] Syncing new agent to n8n Webhook directly: ${defaultWebhookUrl}`);
