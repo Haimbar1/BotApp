@@ -194,6 +194,37 @@ async function startServer() {
     }
   }
 
+  // Chats persistent store
+  const CHATS_FILE = path.join(DATA_DIR, "chats.json");
+  if (!fs.existsSync(CHATS_FILE)) {
+    try {
+      fs.writeFileSync(CHATS_FILE, JSON.stringify([], null, 2), "utf8");
+    } catch (e) {
+      console.error("[SERVER] Error creating default chats file:", e);
+    }
+  }
+
+  function readChats(): any[] {
+    try {
+      if (fs.existsSync(CHATS_FILE)) {
+        return JSON.parse(fs.readFileSync(CHATS_FILE, "utf8"));
+      }
+    } catch (e) {
+      console.error("[SERVER] Error reading chats file:", e);
+    }
+    return [];
+  }
+
+  function saveChats(chatsList: any[]): boolean {
+    try {
+      fs.writeFileSync(CHATS_FILE, JSON.stringify(chatsList, null, 2), "utf8");
+      return true;
+    } catch (e) {
+      console.error("[SERVER] Error saving chats file:", e);
+      return false;
+    }
+  }
+
   // Active Sessions persistent store
   interface SessionInfo {
     email: string;
@@ -276,6 +307,7 @@ async function startServer() {
     try {
       const credential = req.body?.credential || req.body?.id_token;
       const accessToken = req.body?.accessToken || req.body?.access_token;
+      const isSignUp = !!req.body?.isSignUp;
       
       let email = "";
       let name = "";
@@ -326,8 +358,7 @@ async function startServer() {
       let isAllowed = allowedCollection.includes(email);
 
       let isNewUser = false;
-      const { isSignUp } = req.body;
-      if (!isAllowed && isSignUp) {
+      if (!isAllowed) {
         // Automatically add the user's email to the allowed list (registration)
         currentSettings.allowedEmails = currentSettings.allowedEmails || [];
         currentSettings.allowedEmails.push(email);
@@ -335,6 +366,59 @@ async function startServer() {
         isAllowed = true;
         isNewUser = true;
         console.log(`[SERVER] Auto-registered and authorized new trial user: ${email}`);
+
+        // Create a default generic bot for the new user
+        const agentsList = readAgents();
+        const hasAgent = agentsList.some((agent: any) => (agent.agentEmail || "").toLowerCase().trim() === email);
+        if (!hasAgent) {
+          const newBotId = "bot_" + Math.floor(Math.random() * 90000 + 10000);
+          const newAgent = {
+            id: "agent_" + Date.now(),
+            ownerName: "בעל העסק",
+            businessName: "בוט גנרי",
+            ownerPhone: "050-1234567",
+            botId: newBotId,
+            whatsappInstance: "Smarti",
+            businessPrompt: `# הנחיות לסוכן מכירות ושירות לקוחות - בוט גנרי
+
+## תפקיד הסוכן
+אתה סוכן מכירות דיגיטלי חכם וידידותי של העסק **"בוט גנרי"**. בעל העסק הוא **בעל העסק**.
+מטרתך היא לתת ללקוחות מענה מהיר, אדיב ומקצועי, להציג את השירותים/מוצרים, ולעזור להם להתקדם לרכישה או השארת פרטים.
+
+---
+
+## ערכי המותג וטון הדיבור
+- **שירותיות ואדיבות:** פנה תמיד בנימוס ובגובה העיניים.
+- **מקצועיות:** תשובות מדויקות, קצרות וברורות.
+- **הנעה לפעולה:** תמיד לסיים בשאלה מקדמת שמושכת את הלקוח להמשיך את השיחה.
+- **שפה:** עברית רהוטה ותקינה, שימוש באימוג'ים מתאימים במידה מתונה 🌸.
+
+---
+
+## מידע על העסק ושירותים מרכזיים
+1. **שעות פעילות:** א'-ה' בין 09:00 ל-18:00, ימי שישי וערבי חג סגור.
+
+---
+
+## תסריט שיחה בסיסי והנחיות מענה
+1. **פתיח:** כאשר לקוח פונה לראשונה: "שלום! ברוך הבא לבוט גנרי 🌸 שמח שפנית אלינו. איך אוכל לעזור לך היום?"
+2. **בירור צרכים:** שאל שאלות ממוקדות כדי להבין מה הלקוח מחפש.
+3. **סגירה ואיסוף לידים:** ברגע שיש עניין, בקש בנימוס לאשר את מספר הטלפון או להשאיר פרטים נחוצים כדי שנציג אנושי יחזור אליהם.
+
+---
+
+## מגבלות סוכן ה-AI (חשוב מאוד!)
+- **לעולם אל תמציא פרטים:** אם נשאלת שאלה שאין לך עליה תשובה, אמור בעדינות: *"שאלה מצוינת, אני אגלגל את זה לצוות שלנו והם יחזרו אליך בהקדם האפשרי עם תשובה מדויקת!"*
+- **הגבלת פלט:** אל תעבור את ה-3 משפטים להודעה בודדת בווטסאפ.`,
+            key: "demo-key",
+            leadFollowUpDays: "3",
+            agentEmail: email,
+            status: "Not Active"
+          };
+          agentsList.push(newAgent);
+          saveAgents(agentsList);
+          console.log(`[SERVER] Automatically created default generic bot for new user: ${email}`);
+        }
       }
 
       // Notify n8n Webhook about new user registration or sign-up attempt
@@ -629,11 +713,22 @@ async function startServer() {
         return agentEmail !== userEmail;
       });
 
-      // Force the agentEmail of user proposed agents to be the user's email (for safety and security integrity)
-      const userProposedAgents = agents.map((agent: any) => ({
-        ...agent,
-        agentEmail: userEmail
-      }));
+      // Map user's proposed agents to update only allowed fields on the existing agent from DB
+      // Allowed fields to change: agentEmail, ownerPhone, businessName, ownerName, leadFollowUpDays, status
+      // Everything else must remain unchanged
+      const userProposedAgents = agents.map((proposed: any) => {
+        const existing = existingUserAgents.find((a: any) => a.id === proposed.id);
+        if (!existing) return proposed; // Fallback for safety (though guard check prevents new IDs)
+        return {
+          ...existing, // Keep everything else unchanged
+          agentEmail: proposed.agentEmail !== undefined ? proposed.agentEmail : existing.agentEmail,
+          ownerPhone: proposed.ownerPhone !== undefined ? proposed.ownerPhone : existing.ownerPhone,
+          businessName: proposed.businessName !== undefined ? proposed.businessName : existing.businessName,
+          ownerName: proposed.ownerName !== undefined ? proposed.ownerName : existing.ownerName,
+          leadFollowUpDays: proposed.leadFollowUpDays !== undefined ? proposed.leadFollowUpDays : existing.leadFollowUpDays,
+          status: proposed.status !== undefined ? proposed.status : existing.status
+        };
+      });
 
       // Merge and save
       const mergedList = [...otherAgents, ...userProposedAgents];
@@ -643,6 +738,363 @@ async function startServer() {
       } else {
         return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת קובץ הסוכנים בשרת" });
       }
+    }
+  });
+
+  // ---------------- CHATS / CONVERSATIONS API ROUTES ----------------
+
+  // Fetch chats matching filter
+  app.get("/api/chats", requireAuth, async (req: any, res: any) => {
+    // Robust function to return raw stringified JSON or plain text for client parsing
+    function cleanContent(rawContent: any): string {
+      if (!rawContent) return "";
+      
+      // If it is an object or array, serialize it to JSON string for frontend client parsing
+      if (typeof rawContent === "object") {
+        try {
+          return JSON.stringify(rawContent);
+        } catch (e) {
+          return String(rawContent);
+        }
+      }
+
+      if (typeof rawContent === "string") {
+        const trimmed = rawContent.trim();
+        // If it's a valid JSON string, preserve it so the frontend can parse rich metadata (name, chatInput, etc.)
+        if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+          try {
+            JSON.parse(trimmed);
+            return trimmed;
+          } catch (e) {
+            // Not valid JSON, treat as plain text
+          }
+        }
+        return rawContent;
+      }
+
+      return String(rawContent);
+    }
+
+    try {
+      const { sessionId, botId, phone } = req.query;
+      console.log(`[SERVER] GET /api/chats - requested botId: "${botId}", sessionId: "${sessionId}", phone: "${phone}"`);
+      
+      let liveChats: any[] = [];
+      let fetchSuccess = false;
+
+      // If we have a botId and are connected to N8N, fetch the live database records via N8N Webhook!
+      if (botId) {
+        const primaryWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
+        const testWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook-test/932a697d-8cc7-4141-9a00-973c72020584";
+        
+        const urlsToTry = [
+          { url: primaryWebhook, method: "POST" },
+          { url: primaryWebhook, method: "GET" },
+          { url: testWebhook, method: "POST" },
+          { url: testWebhook, method: "GET" }
+        ];
+
+        let rawData: any = null;
+        let responseOk = false;
+        let finalMethod = "";
+        let finalUrl = "";
+
+        for (const item of urlsToTry) {
+          try {
+            console.log(`[SERVER] Trying to fetch chats from N8N: ${item.method} -> ${item.url} for botId: "${botId}"`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout per attempt
+
+            let fetchPromise;
+            if (item.method === "POST") {
+              console.log(`[SERVER] Sending POST to N8N: ${item.url} with body { botId: "${botId}" }`);
+              fetchPromise = fetch(item.url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ botId }),
+                signal: controller.signal
+              });
+            } else {
+              const getUrl = `${item.url}?botId=${encodeURIComponent(botId)}`;
+              console.log(`[SERVER] Sending GET to N8N: ${getUrl}`);
+              fetchPromise = fetch(getUrl, {
+                method: "GET",
+                headers: {
+                  "Accept": "application/json"
+                },
+                signal: controller.signal
+              });
+            }
+
+            const response = await fetchPromise;
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+              rawData = await response.json();
+              responseOk = true;
+              finalMethod = item.method;
+              finalUrl = item.url;
+              console.log(`[SERVER] Success! N8N webhook call succeeded using ${item.method} on ${item.url}`);
+              break; // exit loop on first success!
+            } else {
+              console.warn(`[SERVER] N8N returned status ${response.status} for ${item.method} on ${item.url}`);
+            }
+          } catch (err: any) {
+            console.warn(`[SERVER] Fetch failed for ${item.method} on ${item.url}:`, err?.message || err);
+          }
+        }
+
+        if (responseOk && rawData) {
+          try {
+            // Extract the list of records. N8N might return a flat array, or wrap it in { data: [...] }, etc.
+            let records = [];
+            if (Array.isArray(rawData)) {
+              records = rawData;
+            } else if (rawData && Array.isArray(rawData.data)) {
+              records = rawData.data;
+            } else if (rawData && typeof rawData === "object") {
+              // Try to find any array inside the object
+              const arrayKey = Object.keys(rawData).find(key => Array.isArray(rawData[key]));
+              if (arrayKey) {
+                records = rawData[arrayKey];
+              } else if (rawData.chats && Array.isArray(rawData.chats)) {
+                records = rawData.chats;
+              } else if (rawData.rows && Array.isArray(rawData.rows)) {
+                records = rawData.rows;
+              } else {
+                // If it's a single object, wrap in an array
+                records = [rawData];
+              }
+            }
+
+            // Map and normalize records to our standard chat message format
+            liveChats = records.map((item: any, idx: number) => {
+              if (!item) return null;
+              const sId = item.session_id || item.sessionId || item.SessionId || "";
+              
+              // Parse phone and botId from sessionId if needed
+              let itemPhone = item.phone || "";
+              let itemBotId = item.botId || item.bot_id || "";
+              if (sId && (!itemPhone || !itemBotId)) {
+                const underscoreIdx = sId.indexOf("_");
+                if (underscoreIdx !== -1) {
+                  if (!itemPhone) itemPhone = sId.substring(0, underscoreIdx);
+                  if (!itemBotId) itemBotId = sId.substring(underscoreIdx + 1);
+                } else {
+                  if (!itemBotId) itemBotId = sId;
+                }
+              }
+
+              // Parse message contents (can be JSON string or parsed object)
+              let messageContent = item.message;
+              let finalType: "human" | "ai" = "human";
+              let finalContent = "";
+
+              if (messageContent) {
+                if (typeof messageContent === "string") {
+                  try {
+                    const parsedMsg = JSON.parse(messageContent);
+                    finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
+                    const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
+                    finalContent = cleanContent(innerContent);
+                  } catch (e) {
+                    finalContent = cleanContent(messageContent);
+                  }
+                } else if (typeof messageContent === "object") {
+                  finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
+                  const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
+                  finalContent = cleanContent(innerContent);
+                }
+              } else {
+                // Try fallback fields directly on item
+                const contentVal = item.content || item.text || item.message_text || "";
+                const typeVal = item.type || item.message_type || item.sender || "human";
+                finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
+                finalContent = cleanContent(contentVal);
+              }
+
+              return {
+                id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
+                sessionId: sId,
+                botId: itemBotId || botId,
+                phone: itemPhone,
+                message: {
+                  type: finalType,
+                  content: finalContent
+                },
+                timestamp: item.created_at || item.timestamp || item.time || new Date().toISOString()
+              };
+            }).filter(Boolean);
+
+            fetchSuccess = true;
+            console.log(`[SERVER] Successfully parsed ${liveChats.length} live chat messages from N8N`);
+          } catch (parseErr: any) {
+            console.error("[SERVER] Error parsing N8N payload response:", parseErr);
+          }
+        } else {
+          console.warn(`[SERVER] All N8N Webhook endpoints failed or returned no data`);
+        }
+      }
+
+      // Fallback: Read from local chats.json if N8N failed or had no messages
+      let finalChats = liveChats;
+      if (!fetchSuccess || finalChats.length === 0) {
+        console.log("[SERVER] Using local chats.json store as fallback/secondary storage");
+        const localChats = readChats();
+        
+        // Merge or replace depending on whether we want to display both
+        const localFiltered = localChats.filter((chat: any) => {
+          if (sessionId && chat.sessionId !== sessionId) return false;
+          if (botId && chat.botId !== botId) return false;
+          if (phone && chat.phone !== phone) return false;
+          return true;
+        });
+
+        // Combine them if there are any live chats, otherwise use local filtered
+        if (finalChats.length === 0) {
+          finalChats = localFiltered;
+        }
+      } else {
+        // If we succeeded with live chats, we can filter them by sessionId/phone if requested
+        if (sessionId) {
+          finalChats = finalChats.filter((chat: any) => chat.sessionId === sessionId);
+        }
+        if (phone) {
+          finalChats = finalChats.filter((chat: any) => chat.phone === phone);
+        }
+      }
+
+      // Sort chronologically
+      finalChats.sort((a: any, b: any) => {
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        return timeA - timeB;
+      });
+
+      return res.json({ success: true, data: finalChats, source: fetchSuccess ? "n8n_live" : "local_cache" });
+    } catch (err: any) {
+      console.error("[SERVER] Error getting chats:", err);
+      return res.status(500).json({ success: false, message: "שגיאה באחזור השיחות מהשרת", error: err?.message });
+    }
+  });
+
+  // Save new chats (accessible without browser auth, so n8n can easily post logs)
+  app.post("/api/chats", (req: any, res: any) => {
+    try {
+      const payload = req.body;
+      if (!payload) {
+        return res.status(400).json({ success: false, message: "הבקשה ריקה" });
+      }
+
+      const chats = readChats();
+      const nowStr = new Date().toISOString();
+
+      const processItem = (item: any) => {
+        // Handle variations of sessionId
+        const sessionId = item.sessionId || item.session_id || item.SessionId || item.Session_ID || "";
+        if (!sessionId) return null;
+
+        // Parse phone and botId
+        const firstUnderscore = sessionId.indexOf("_");
+        const phone = firstUnderscore !== -1 ? sessionId.substring(0, firstUnderscore) : "";
+        const botId = firstUnderscore !== -1 ? sessionId.substring(firstUnderscore + 1) : sessionId;
+
+        // Handle variations of message content
+        let msgType = "human";
+        let msgContent = "";
+
+        // Check if there is an explicit message object or fields
+        const messageObj = item.message || item.msg || null;
+        if (messageObj) {
+          msgType = messageObj.type || messageObj.message_type || messageObj.sender || "human";
+          msgContent = messageObj.content || messageObj.text || "";
+        } else {
+          msgType = item.type || item.message_type || item.sender || item.role || "human";
+          msgContent = item.content || item.text || item.message || "";
+        }
+
+        // Standardize types to 'human' or 'ai'
+        const lowerType = String(msgType).toLowerCase();
+        let finalType: "human" | "ai" = "human";
+        if (lowerType === "ai" || lowerType === "assistant" || lowerType === "bot" || lowerType === "agent") {
+          finalType = "ai";
+        }
+
+        return {
+          id: item.id || "msg_" + Math.random().toString(36).substring(2) + Date.now().toString(36),
+          sessionId,
+          botId,
+          phone,
+          message: {
+            type: finalType,
+            content: typeof msgContent === "object" ? JSON.stringify(msgContent) : msgContent
+          },
+          timestamp: item.timestamp || item.created_at || nowStr
+        };
+      };
+
+      let addedCount = 0;
+      if (Array.isArray(payload)) {
+        for (const item of payload) {
+          const processed = processItem(item);
+          if (processed) {
+            chats.push(processed);
+            addedCount++;
+          }
+        }
+      } else {
+        const processed = processItem(payload);
+        if (processed) {
+          chats.push(processed);
+          addedCount++;
+        }
+      }
+
+      if (addedCount > 0) {
+        // Enforce max storage limit to avoid large files (keep last 5000 messages)
+        if (chats.length > 5000) {
+          chats.splice(0, chats.length - 5000);
+        }
+        saveChats(chats);
+        return res.json({ success: true, message: `שמרו ${addedCount} הודעות בהצלחה` });
+      } else {
+        return res.status(400).json({ 
+          success: false, 
+          message: "מבנה נתונים לא תקין. חובה לשלוח session_id או sessionId יחד עם פרטי ההודעה" 
+        });
+      }
+    } catch (err: any) {
+      console.error("[SERVER] Error saving chats:", err);
+      return res.status(500).json({ success: false, message: "שגיאה פנימית בשמירת השיחה", error: err?.message });
+    }
+  });
+
+  // Delete/Clear chats for testing
+  app.delete("/api/chats", requireAuth, (req: any, res: any) => {
+    try {
+      const { sessionId, botId } = req.query;
+      if (!sessionId && !botId) {
+        return res.status(400).json({ success: false, message: "חובה לציין sessionId או botId למחיקה" });
+      }
+
+      let chats = readChats();
+      const initialCount = chats.length;
+
+      chats = chats.filter((chat: any) => {
+        if (sessionId && chat.sessionId === sessionId) return false;
+        if (botId && chat.botId === botId) return false;
+        return true;
+      });
+
+      saveChats(chats);
+      const deletedCount = initialCount - chats.length;
+
+      return res.json({ success: true, message: `נמחקו ${deletedCount} הודעות` });
+    } catch (err: any) {
+      console.error("[SERVER] Error clearing chats:", err);
+      return res.status(500).json({ success: false, message: "שגיאה במחיקת השיחות", error: err?.message });
     }
   });
 

@@ -3,6 +3,7 @@ import {
   Bot, 
   Send, 
   Check, 
+  MessageSquare, 
   AlertCircle, 
   Plus, 
   Trash2, 
@@ -499,6 +500,190 @@ export default function App() {
     }
   }, [theme]);
 
+  // Chats Dashboard States
+  const [chats, setChats] = useState<any[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [isChatsLoading, setIsChatsLoading] = useState<boolean>(false);
+  const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
+  const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
+  const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
+
+  // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
+  const parseChatMessageContent = (content: string, type: "human" | "ai") => {
+    if (!content) return { text: "", raw: null, summary: "", action: "", details: {} };
+
+    let cleaned = content.trim();
+    
+    // Strip markdown JSON fence if present
+    if (cleaned.startsWith("```json")) {
+      cleaned = cleaned.substring(7);
+    }
+    if (cleaned.endsWith("```")) {
+      cleaned = cleaned.substring(0, cleaned.length - 3);
+    }
+    cleaned = cleaned.trim();
+
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (type === "human") {
+        return {
+          text: parsed.chatInput || parsed.content || cleaned,
+          raw: parsed,
+          summary: "",
+          action: "",
+          details: parsed
+        };
+      } else {
+        // AI type
+        return {
+          text: parsed.reply || parsed.text || parsed.content || cleaned,
+          raw: parsed,
+          summary: parsed.summary || "",
+          action: parsed.action || parsed.Action || "",
+          details: parsed
+        };
+      }
+    } catch (e) {
+      // Return as plain text if JSON parse fails
+      return {
+        text: content,
+        raw: null,
+        summary: "",
+        action: "",
+        details: {}
+      };
+    }
+  };
+
+  // Fetch chats for the currently active bot
+  useEffect(() => {
+    const fetchChats = async () => {
+      // Use the live state botId (what you are currently looking at on the screen!)
+      const targetBotId = botId;
+      if (!targetBotId) {
+        setChats([]);
+        return;
+      }
+
+      setIsChatsLoading(true);
+      try {
+        console.log(`[CLIENT] Fetching chats for active Bot ID: "${targetBotId}"`);
+        const response = await fetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
+          headers: {
+            "Authorization": `Bearer ${sessionToken}`
+          }
+        });
+        const result = await response.json();
+        if (result.success) {
+          setChats(result.data || []);
+        } else {
+          console.error("[CHATS] Failed to fetch chats:", result.message);
+        }
+      } catch (err) {
+        console.error("[CHATS] Error fetching chats:", err);
+      } finally {
+        setIsChatsLoading(false);
+      }
+    };
+
+    if (isAuthenticated && (activeId || botId)) {
+      fetchChats();
+    }
+  }, [activeId, botId, chatsRefreshTrigger, isAuthenticated, sessionToken]);
+
+  // Group fetched chats by sessionId for lists and filters
+  const chatSessions = (() => {
+    const sessionsMap: Record<string, {
+      sessionId: string;
+      phone: string;
+      botId: string;
+      messages: any[];
+      lastMessage: any;
+      lastTimestamp: string;
+      name: string;
+    }> = {};
+
+    for (const msg of chats) {
+      const sId = msg.sessionId;
+      if (!sId) continue;
+
+      if (!sessionsMap[sId]) {
+        // Extract phone number for user-friendly name
+        const firstUnderscore = sId.indexOf("_");
+        const phone = firstUnderscore !== -1 ? sId.substring(0, firstUnderscore) : sId;
+        const botId = firstUnderscore !== -1 ? sId.substring(firstUnderscore + 1) : sId;
+
+        sessionsMap[sId] = {
+          sessionId: sId,
+          phone,
+          botId,
+          messages: [],
+          lastMessage: null,
+          lastTimestamp: "",
+          name: phone
+        };
+      }
+
+      sessionsMap[sId].messages.push(msg);
+    }
+
+    const list = Object.values(sessionsMap).map(session => {
+      session.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
+      const lastMsg = session.messages[session.messages.length - 1];
+      session.lastMessage = lastMsg;
+      session.lastTimestamp = lastMsg ? lastMsg.timestamp : "";
+
+      // Look for a user's name in the conversation
+      for (const msg of session.messages) {
+        if (msg.message?.type === "human") {
+          const parsed = parseChatMessageContent(msg.message?.content || "", "human");
+          if (parsed.raw && parsed.raw.name) {
+            session.name = parsed.raw.name;
+            break;
+          }
+        } else if (msg.message?.type === "ai") {
+          const parsed = parseChatMessageContent(msg.message?.content || "", "ai");
+          if (parsed.raw && (parsed.raw.Human || parsed.raw.human)) {
+            session.name = parsed.raw.Human || parsed.raw.human;
+            break;
+          }
+        }
+      }
+
+      return session;
+    });
+
+    list.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime());
+    return list;
+  })();
+
+  const handleClearSessionChats = async (sessionId: string) => {
+    if (!window.confirm("האם אתה בטוח שברצונך למחוק את היסטוריית השיחה של טלפון זה? פעולה זו אינה הפיכה.")) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${sessionToken}`
+        }
+      });
+      const result = await response.json();
+      if (result.success) {
+        setChatsRefreshTrigger(prev => prev + 1);
+        if (selectedSessionId === sessionId) {
+          setSelectedSessionId("");
+        }
+      } else {
+        alert("שגיאה במחיקת השיחה: " + result.message);
+      }
+    } catch (err) {
+      console.error("[CHATS] Error deleting chats:", err);
+      alert("שגיאה בחיבור לשרת למחיקת השיחה");
+    }
+  };
+
   // Handle file uploads for individual prompt parts (like brochures / syllabusLinks)
   const handlePartFileSelect = async (file: File, partKey: keyof AgentConfig) => {
     if (!file) return;
@@ -646,6 +831,7 @@ export default function App() {
   const [wizardBusinessName, setWizardBusinessName] = useState<string>("");
   const [wizardOwnerPhone, setWizardOwnerPhone] = useState<string>("");
   const [wizardOwnerPhoneError, setWizardOwnerPhoneError] = useState<string>("");
+  const [wizardAgentEmail, setWizardAgentEmail] = useState<string>("");
 
   // --- Landing page demo action ---
   const handleNextLandingStep = () => {
@@ -949,7 +1135,7 @@ export default function App() {
         businessPrompt: compiledBusinessPrompt,
         key: "demo-key",
         leadFollowUpDays: leadFollowUpDays || "3",
-        agentEmail: sessionUser?.email || "haim.bar@gmail.com",
+        agentEmail: wizardAgentEmail.trim() || sessionUser?.email || "haim.bar@gmail.com",
         status: "Not Active",
         
         // 11 parts generated
@@ -1827,6 +2013,7 @@ ${videos || "(לא הוגדר)"}
 
     setAgents(updatedList);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+    saveAgentsToServer(updatedList, sessionToken, true); // Debounced auto-save so user never loses progress!
 
     const finalTarget = updatedList.find(a => a.id === activeId);
 
@@ -2325,6 +2512,11 @@ ${videos || "(לא הוגדר)"}
 
     // 2. Trigger the webhook synchronization
     await handleSyncToWebhook();
+
+    // Refetch fresh agents from server so we have the official database state!
+    if (sessionUser?.email) {
+      await fetchAgentsFromServer(sessionToken, sessionUser.email);
+    }
 
     // 3. Show toast and optionally close
     setShowSaveToast(true);
@@ -3851,6 +4043,7 @@ ${videos || "(לא הוגדר)"}
                       setWizardOwnerName(ownerName || "");
                       setWizardBotId(botId || "bot_" + Math.floor(1000 + Math.random() * 9000));
                       setWizardOwnerPhone(ownerPhone || "");
+                      setWizardAgentEmail(agentEmail || sessionUser?.email || "");
                       setWizardWebsiteUrl("");
                       setWizardPastedText("");
                       setScrapedText("");
@@ -4080,6 +4273,30 @@ ${videos || "(לא הוגדר)"}
                   <p className="text-[11px] text-slate-400 font-medium font-sans mt-0.5">מלא את הפרטים ליצירת התאמה דינמית בפרומפטים ובחיבור הנתונים</p>
                 </div>
               </div>
+
+              {/* Highly visible save button on the Main Configuration Form */}
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={async () => {
+                    // Save immediately to server-side JSON database
+                    await saveAgentsToServer(agents, sessionToken, false);
+                    // Trigger webhook synchronization
+                    await handleSyncToWebhook();
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition duration-200 cursor-pointer flex items-center gap-2 border shadow-lg w-full sm:w-auto justify-center select-none ${
+                    dirtyAgents[activeId]
+                      ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse shadow-emerald-500/15"
+                      : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
+                  }`}
+                >
+                  <Save className={`w-3.5 h-3.5 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
+                  <span>
+                    {isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור שינויים 💾" : "השינויים שמורים ✓"}
+                  </span>
+                </button>
+              </div>
             </div>
 
             {/* Sync Feedback messages panel */}
@@ -4133,7 +4350,12 @@ ${videos || "(לא הוגדר)"}
                       handleFieldChange("name", e.target.value);
                       setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
                     }}
-                    className="w-full px-3.5 py-2 bg-[#161821] border border-sky-900/30 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white transition placeholder-slate-600 pl-24"
+                    disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                    className={`w-full px-3.5 py-2 border rounded-lg text-xs font-bold focus:outline-none transition placeholder-slate-600 pl-24 ${
+                      sessionUser?.email === "haim.bar@gmail.com"
+                        ? "bg-[#161821] border-sky-900/30 text-white focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                        : "bg-[#1C1D29] border-slate-900 text-slate-400 cursor-not-allowed"
+                    }`}
                     required
                   />
                   {!name && (
@@ -4156,13 +4378,19 @@ ${videos || "(לא הוגדר)"}
                   <button
                     type="button"
                     onClick={() => {
+                      if (sessionUser?.email !== "haim.bar@gmail.com") return;
                       handleFieldChange("agentType", "sales");
                       setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
                     }}
-                    className={`p-4 rounded-2xl border text-right transition-all duration-200 cursor-pointer flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
-                      agentType === "sales"
-                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10"
-                        : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300"
+                    disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                    className={`p-4 rounded-2xl border text-right transition-all duration-200 flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
+                      sessionUser?.email !== "haim.bar@gmail.com"
+                        ? agentType === "sales"
+                          ? "bg-indigo-950/20 border-indigo-900/40 text-indigo-400 opacity-60 cursor-not-allowed"
+                          : "bg-slate-950/20 border-slate-900 text-slate-500 opacity-40 cursor-not-allowed"
+                        : agentType === "sales"
+                          ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10 cursor-pointer"
+                          : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300 cursor-pointer"
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
@@ -4178,13 +4406,19 @@ ${videos || "(לא הוגדר)"}
                   <button
                     type="button"
                     onClick={() => {
+                      if (sessionUser?.email !== "haim.bar@gmail.com") return;
                       handleFieldChange("agentType", "support");
                       setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
                     }}
-                    className={`p-4 rounded-2xl border text-right transition-all duration-200 cursor-pointer flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
-                      agentType === "support"
-                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10"
-                        : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300"
+                    disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                    className={`p-4 rounded-2xl border text-right transition-all duration-200 flex flex-col gap-1.5 select-none active:scale-[0.98] outline-none ${
+                      sessionUser?.email !== "haim.bar@gmail.com"
+                        ? agentType === "support"
+                          ? "bg-indigo-950/20 border-indigo-900/40 text-indigo-400 opacity-60 cursor-not-allowed"
+                          : "bg-slate-950/20 border-slate-900 text-slate-500 opacity-40 cursor-not-allowed"
+                        : agentType === "support"
+                          ? "bg-indigo-600/10 border-indigo-500 text-indigo-300 font-bold shadow-lg shadow-indigo-600/5 ring-1 ring-indigo-500/10 cursor-pointer"
+                          : "bg-[#13141f]/40 border-slate-800 text-slate-400 hover:bg-[#181a29]/60 hover:text-slate-300 cursor-pointer"
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
@@ -4246,18 +4480,11 @@ ${videos || "(לא הוגדר)"}
                   placeholder="לדוגמה: agent@gmail.com"
                   value={agentEmail}
                   onChange={(e) => handleFieldChange("agentEmail", e.target.value)}
-                  disabled={sessionUser?.email !== "haim.bar@gmail.com"}
-                  className={`w-full px-3.5 py-2 border rounded-lg text-xs font-bold focus:outline-none transition placeholder-slate-600 ${
-                    sessionUser?.email === "haim.bar@gmail.com"
-                      ? "bg-[#161821] border-slate-800 focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white font-mono"
-                      : "bg-[#1C1D29] border-slate-900 text-slate-400 cursor-not-allowed font-mono"
-                  }`}
+                  className="w-full px-3.5 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white transition placeholder-slate-600 font-mono"
                   required
                 />
                 <span className="text-[10px] text-slate-400 leading-normal">
-                  {sessionUser?.email === "haim.bar@gmail.com"
-                    ? "מאפשר לקבוע איזה משתמש יוכל לגשת ולערוך את סוכן ה-AI הזה. מנהל המערכת מורשה לשנות שיוך זה."
-                    : "כתובת האימייל המורשית לערוך ולצפות בסוכן זה (ניתן לשינוי על ידי מנהל המערכת בלבד)."}
+                  מאפשר לקבוע איזה משתמש יוכל לגשת ולערוך את סוכן ה-AI הזה.
                 </span>
               </div>
 
@@ -4290,7 +4517,12 @@ ${videos || "(לא הוגדר)"}
                     placeholder="לדוגמה: bot_98432"
                     value={botId}
                     onChange={(e) => handleFieldChange("botId", e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-mono text-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition"
+                    disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                    className={`w-full pl-9 pr-3.5 py-2 border rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition ${
+                      sessionUser?.email === "haim.bar@gmail.com"
+                        ? "bg-[#161821] border-slate-800 text-sky-400"
+                        : "bg-[#1C1D29] border-slate-900 text-slate-500 cursor-not-allowed"
+                    }`}
                     required
                   />
                   <button
@@ -4316,7 +4548,12 @@ ${videos || "(לא הוגדר)"}
                   placeholder="לדוגמה: marketing_whatsapp"
                   value={whatsappInstance}
                   onChange={(e) => handleFieldChange("whatsappInstance", e.target.value)}
-                  className="w-full px-3.5 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white transition placeholder-slate-650"
+                  disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                  className={`w-full px-3.5 py-2 border rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition placeholder-slate-650 ${
+                    sessionUser?.email === "haim.bar@gmail.com"
+                      ? "bg-[#161821] border-slate-800 text-white"
+                      : "bg-[#1C1D29] border-slate-900 text-slate-500 cursor-not-allowed"
+                  }`}
                 />
               </div>
 
@@ -4332,7 +4569,12 @@ ${videos || "(לא הוגדר)"}
                     placeholder="הקש קוד או מפתח..."
                     value={key}
                     onChange={(e) => handleFieldChange("key", e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-2 bg-[#161821] border border-slate-800 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-white transition"
+                    disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                    className={`w-full pl-9 pr-3.5 py-2 border rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition ${
+                      sessionUser?.email === "haim.bar@gmail.com"
+                        ? "bg-[#161821] border-slate-800 text-white"
+                        : "bg-[#1C1D29] border-slate-900 text-slate-550 cursor-not-allowed"
+                    }`}
                   />
                   <button
                     type="button"
@@ -4439,6 +4681,293 @@ ${videos || "(לא הוגדר)"}
               </button>
             </div>
 
+          </div>
+
+          {/* LIVE CHATS VIEW PANEL */}
+          <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-6 flex flex-col gap-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-sky-500/10 rounded-lg border border-sky-500/20">
+                  <MessageSquare className="w-5 h-5 text-sky-400" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white flex items-center gap-1.5">
+                    <span>צופה שיחות ואינטראקציות בזמן אמת</span>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">פעיל 🟢</span>
+                  </h2>
+                  <p className="text-[11px] text-slate-400 mt-0.5 font-medium">עקוב אחר השיחות של הבוט עם הלקוחות, פתח פרטים טכניים ונהל היסטוריה</p>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setChatsRefreshTrigger(prev => prev + 1)}
+                  className="px-3 py-1.5 bg-[#161821] hover:bg-[#1C1F2B] border border-slate-800 text-slate-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  title="רענן רשימת שיחות והודעות"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isChatsLoading ? "animate-spin text-sky-400" : "text-slate-400"}`} />
+                  <span>רענן הודעות</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Layout for Chats */}
+            {isChatsLoading && chats.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3 text-slate-400">
+                <svg className="animate-spin h-6 w-6 text-sky-400" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="text-xs font-bold font-sans">טוען היסטוריית שיחות מהשרת...</span>
+              </div>
+            ) : chatSessions.length === 0 ? (
+              <div className="bg-[#10121a]/50 rounded-xl p-8 border border-dashed border-slate-800 flex flex-col items-center text-center gap-4">
+                <div className="p-4 bg-slate-900/50 rounded-full border border-slate-800 text-slate-500">
+                  <MessageSquare className="w-8 h-8" />
+                </div>
+                <div className="max-w-md">
+                  <h3 className="text-sm font-extrabold text-slate-200">אין שיחות שמורות בבוט זה עדיין</h3>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                    כאשר הבוט יתכתב עם לקוחות ב-WhatsApp (או דרך n8n), השיחות יישמרו כאן אוטומטית. 
+                    ניתן לדחוף שיחות חדשות ב-POST Endpoint:
+                  </p>
+                  <div className="mt-4 p-3 bg-slate-950/80 rounded-lg border border-slate-800 font-mono text-[10px] text-sky-300 text-left select-all overflow-x-auto whitespace-pre">
+{`POST /api/chats
+{
+  "sessionId": "972547866119_${agents.find(a => a.id === activeId)?.botId || "bot_id"}",
+  "type": "human",
+  "content": "שלום בוט"
+}`}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 border border-slate-850 rounded-xl overflow-hidden min-h-[500px] max-h-[650px] bg-[#07080c]">
+                
+                {/* Conversations Sidebar (1/3 width) */}
+                <div className="border-l border-slate-850 bg-[#090a0f] flex flex-col h-full overflow-hidden">
+                  
+                  {/* Search and metadata */}
+                  <div className="p-3 border-b border-slate-850 flex flex-col gap-2">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="חפש טלפון או שם..."
+                        value={chatsSearchTerm}
+                        onChange={(e) => setChatsSearchTerm(e.target.value)}
+                        className="w-full pr-8 pl-3 py-1.5 bg-[#12141c] border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500 transition"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute right-2.5 top-2.5" />
+                      {chatsSearchTerm && (
+                        <button
+                          onClick={() => setChatsSearchTerm("")}
+                          className="absolute left-2.5 top-2.5 text-slate-500 hover:text-slate-300"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-550 font-bold flex items-center justify-between px-1 font-sans">
+                      <span>{chatSessions.length} שיחות בסה"כ</span>
+                      {chatsRefreshTrigger > 0 && <span>רענון אחרון: {new Date().toLocaleTimeString()}</span>}
+                    </div>
+                  </div>
+
+                  {/* Sessions List */}
+                  <div className="flex-1 overflow-y-auto divide-y divide-slate-900 custom-scrollbar">
+                    {chatSessions
+                      .filter(session => {
+                        const term = chatsSearchTerm.trim();
+                        if (!term) return true;
+                        return session.phone.includes(term) || session.name.toLowerCase().includes(term.toLowerCase());
+                      })
+                      .map(session => {
+                        const isActive = selectedSessionId === session.sessionId;
+                        const parsedLast = session.lastMessage 
+                          ? parseChatMessageContent(session.lastMessage.message?.content || "", session.lastMessage.message?.type)
+                          : { text: "אין הודעות" };
+
+                        return (
+                          <div
+                            key={session.sessionId}
+                            onClick={() => setSelectedSessionId(session.sessionId)}
+                            className={`p-3 transition-all cursor-pointer flex flex-col gap-1 text-right select-none ${
+                              isActive 
+                                ? "bg-sky-500/10 border-r-4 border-r-sky-500 text-sky-200 font-bold" 
+                                : "hover:bg-[#131622]/50 text-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-black truncate max-w-[130px]" title={session.name}>
+                                {session.name || session.phone}
+                              </span>
+                              <span className="text-[9px] text-slate-500 font-mono">
+                                {session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] text-slate-400 truncate flex-1 text-right leading-normal">
+                                {parsedLast.text}
+                              </p>
+                              
+                              {/* Delete conversation button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleClearSessionChats(session.sessionId);
+                                }}
+                                className="p-1 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 rounded transition cursor-pointer shrink-0"
+                                title="מחק שיחה זו"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {session.name !== session.phone && (
+                              <span className="text-[9px] text-slate-500 font-mono text-right truncate">
+                                📞 {session.phone}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* Main Thread Content Area (2/3 width) */}
+                <div className="col-span-2 bg-[#06070a] flex flex-col h-full overflow-hidden">
+                  {selectedSessionId ? (
+                    (() => {
+                      const activeSession = chatSessions.find(s => s.sessionId === selectedSessionId);
+                      if (!activeSession) return null;
+
+                      return (
+                        <div className="flex flex-col h-full overflow-hidden">
+                          
+                          {/* Thread Header */}
+                          <div className="p-3 border-b border-slate-850 bg-[#090a0f] flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500/20 to-indigo-500/20 flex items-center justify-center text-xs font-black border border-sky-500/20">
+                                {activeSession.name ? activeSession.name.substring(0, 2) : "📞"}
+                              </div>
+                              <div className="text-right">
+                                <h4 className="text-xs font-black text-slate-100">{activeSession.name}</h4>
+                                <p className="text-[10px] text-slate-500 font-mono">טלפון: {activeSession.phone}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleClearSessionChats(activeSession.sessionId)}
+                                className="px-2.5 py-1 text-[10px] bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 rounded-lg transition-all cursor-pointer flex items-center gap-1 font-bold"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>נקה שיחה זו</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Message List */}
+                          <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3.5 custom-scrollbar bg-[#07080d]/40">
+                            {activeSession.messages.map((msg: any) => {
+                              const isAI = msg.message?.type === "ai";
+                              const parsed = parseChatMessageContent(msg.message?.content || "", msg.message?.type);
+                              const isRawOpen = showRawMessageId === msg.id;
+
+                              return (
+                                <div
+                                  key={msg.id}
+                                  className={`flex flex-col gap-1 w-full max-w-[85%] ${
+                                    isAI ? "self-start text-left items-start" : "self-end text-right items-end"
+                                  }`}
+                                >
+                                  {/* Sender / Name indicator */}
+                                  <span className="text-[9px] text-slate-500 font-mono px-1">
+                                    {isAI ? "🤖 סוכן AI" : `👤 ${activeSession.name || "לקוח"}`} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </span>
+
+                                  {/* Speech Bubble */}
+                                  <div
+                                    className={`px-4 py-2.5 rounded-2xl shadow-sm text-xs leading-relaxed transition duration-150 relative border ${
+                                      isAI
+                                        ? "bg-[#111422] border-sky-500/15 text-sky-100 rounded-tl-none"
+                                        : "bg-[#1d2235]/60 border-slate-700/30 text-slate-100 rounded-tr-none"
+                                    }`}
+                                  >
+                                    <p className="whitespace-pre-wrap select-text break-words text-right leading-relaxed" dir="rtl">
+                                      {parsed.text}
+                                    </p>
+
+                                    {/* Behind the scenes for AI response */}
+                                    {isAI && (parsed.action || parsed.summary || parsed.raw) && (
+                                      <div className="mt-2.5 pt-2 border-t border-sky-500/10 flex flex-col gap-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          {parsed.action && (
+                                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
+                                              parsed.action === "סיום" 
+                                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" 
+                                                : parsed.action === "הפניה לנציג" || parsed.action === "הפניה"
+                                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                            }`}>
+                                              פעולה: {parsed.action}
+                                            </span>
+                                          )}
+                                          
+                                          <button
+                                            type="button"
+                                            onClick={() => setShowRawMessageId(isRawOpen ? null : msg.id)}
+                                            className="text-[9px] text-sky-400 hover:underline flex items-center gap-0.5 cursor-pointer font-bold select-none"
+                                          >
+                                            <Terminal className="w-2.5 h-2.5" />
+                                            <span>{isRawOpen ? "הסתר נתונים" : "הצג JSON מלא"}</span>
+                                          </button>
+                                        </div>
+
+                                        {parsed.summary && (
+                                          <p className="text-[10px] text-slate-400 text-right leading-normal bg-slate-950/40 p-1.5 rounded border border-slate-900" dir="rtl">
+                                            <strong className="text-[9px] text-slate-500 block font-bold mb-0.5">תקציר השיחה הנוכחי:</strong>
+                                            {parsed.summary}
+                                          </p>
+                                        )}
+
+                                        {isRawOpen && (
+                                          <pre className="text-[9px] font-mono text-emerald-300 bg-[#090a0f] p-2 rounded border border-slate-850 max-h-[150px] overflow-y-auto text-left select-all whitespace-pre-wrap">
+                                            {JSON.stringify(parsed.raw || msg.message, null, 2)}
+                                          </pre>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 gap-3 select-none">
+                      <div className="p-4 bg-slate-900/40 rounded-full border border-slate-850 text-slate-600 shadow-inner">
+                        <MessageSquare className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-300">לא נבחרה שיחה</h4>
+                        <p className="text-[11px] text-slate-500 mt-1 max-w-xs leading-relaxed">
+                          אנא בחר את אחד ממספרי הטלפון ברשימה הימנית כדי לצפות בהיסטוריית הצ'אט המלאה עם הבוט.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
           </div>
 
         </section>
@@ -4906,6 +5435,7 @@ ${videos || "(לא הוגדר)"}
                       setWizardOwnerName(ownerName || "");
                       setWizardBotId(botId || "bot_" + Math.floor(1000 + Math.random() * 9000));
                       setWizardOwnerPhone(ownerPhone || "");
+                      setWizardAgentEmail(agentEmail || sessionUser?.email || "");
                       setWizardWebsiteUrl("");
                       setWizardPastedText("");
                       setScrapedText("");
@@ -4951,6 +5481,14 @@ ${videos || "(לא הוגדר)"}
                 </div>
 
               </div>
+
+              {/* Normal User Restricted View Alert banner */}
+              {sessionUser?.email !== "haim.bar@gmail.com" && (
+                <div className="bg-amber-950/20 border-b border-amber-900/40 px-6 py-2.5 flex items-center gap-3 text-right text-amber-300 text-xs font-black select-none" dir="rtl">
+                  <span>⚠️</span>
+                  <span><strong>מצב עריכה מוגבל:</strong> מורשה לערוך ולשנות הגדרות בסיס בלבד (שם העסק, אימייל, טלפון, זמן למעקב וסטטוס) — שינוי והתאמת טקסטים או חלקי הבוט מורשים למנהל המערכת בלבד.</span>
+                </div>
+              )}
 
               {/* Mobile/Tablet Workspace Tab Bar */}
               <div className="lg:hidden flex border-b border-slate-800/80 bg-[#090b11]/95 p-2 px-4 gap-2 select-none justify-center items-center">
@@ -5194,24 +5732,26 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
 
-                          <div className="flex-shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                // Resolve template keywords dynamically
-                                let resolvedStarter = sec.starter;
-                                resolvedStarter = resolvedStarter.replace(/{BusinessName}/g, businessName || "[שם העסק]");
-                                resolvedStarter = resolvedStarter.replace(/{OwnerPhone}/g, ownerPhone || "[טלפון בעל העסק]");
+                          {sessionUser?.email === "haim.bar@gmail.com" && (
+                            <div className="flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // Resolve template keywords dynamically
+                                  let resolvedStarter = sec.starter;
+                                  resolvedStarter = resolvedStarter.replace(/{BusinessName}/g, businessName || "[שם העסק]");
+                                  resolvedStarter = resolvedStarter.replace(/{OwnerPhone}/g, ownerPhone || "[טלפון בעל העסק]");
 
-                                if (confirm(`האם אתה בטוח שברצונך להחיל נקודת התחלה עבור "${sec.title}"? תוכן קיים בחלק זה יימחק ויוחלף בטקסט בסיס מקצועי.`)) {
-                                  handlePromptPartChange(sec.key as any, resolvedStarter);
-                                }
-                              }}
-                              className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-sky-500/25 to-indigo-500/25 hover:from-sky-500/35 hover:to-indigo-500/35 text-sky-300 hover:text-white border border-sky-400/25 hover:border-sky-400/50 rounded-xl transition duration-150 text-[10.5px] font-black cursor-pointer flex items-center justify-center gap-1.5 shadow"
-                            >
-                              <span>✨ טען ניסוח בסיס מומלץ (Auto AI)</span>
-                            </button>
-                          </div>
+                                  if (confirm(`האם אתה בטוח שברצונך להחיל נקודת התחלה עבור "${sec.title}"? תוכן קיים בחלק זה יימחק ויוחלף בטקסט בסיס מקצועי.`)) {
+                                    handlePromptPartChange(sec.key as any, resolvedStarter);
+                                  }
+                                }}
+                                className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-sky-500/25 to-indigo-500/25 hover:from-sky-500/35 hover:to-indigo-500/35 text-sky-300 hover:text-white border border-sky-400/25 hover:border-sky-400/50 rounded-xl transition duration-150 text-[10.5px] font-black cursor-pointer flex items-center justify-center gap-1.5 shadow"
+                              >
+                                <span>✨ טען ניסוח בסיס מומלץ (Auto AI)</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         {/* Format tools toolbar */}
@@ -5329,55 +5869,57 @@ ${videos || "(לא הוגדר)"}
                         })()}
 
                         {/* AI Improvement Input & Action Panel */}
-                        <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">✨</span>
-                              <span className="text-xs font-black text-sky-305 text-sky-300">שיפור ומשוב אישי בעזרת AI עבור "{sec.title}"</span>
+                        {sessionUser?.email === "haim.bar@gmail.com" && (
+                          <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm">✨</span>
+                                <span className="text-xs font-black text-sky-305 text-sky-300">שיפור ומשוב אישי בעזרת AI עבור "{sec.title}"</span>
+                              </div>
+                              <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-505/10 rounded-full font-black">מנוע AI חכם</span>
                             </div>
-                            <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-505/10 rounded-full font-black">מנוע AI חכם</span>
-                          </div>
 
-                          <div className="flex flex-col sm:flex-row gap-2 items-stretch">
-                            <input
-                              type="text"
-                              value={aiImproveInstruction}
-                              onChange={(e) => setAiImproveInstruction(e.target.value)}
-                              placeholder="רשום פה מה לשפר (למשל: 'הפוך את מטרות השיחה לממוקדות יותר', 'שפר את שאלת הפתיחה', או 'הוסף עוד אימוג׳ים מתאימים'...)"
-                              className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 block"
-                              dir="rtl"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && aiImproveInstruction.trim() && !isImprovingPart) {
-                                  e.preventDefault();
-                                  improvePromptPartWithAI(sec.key, sec.title, activeVal);
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              disabled={isImprovingPart}
-                              onClick={() => improvePromptPartWithAI(sec.key, sec.title, activeVal)}
-                              className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[120px] ${
-                                isImprovingPart
-                                  ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
-                                  : aiImproveInstruction.trim()
-                                    ? "bg-[#183a6f]/60 hover:bg-[#1f4a8d] text-sky-200 border-sky-505/20 hover:border-sky-500/45 cursor-pointer shadow"
-                                    : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
-                              }`}
-                            >
-                              {isImprovingPart ? (
-                                <>
-                                  <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-t-transparent border-sky-400 rounded-full shrink-0"></span>
-                                  <span>משפר...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span>✨ שפר בעזרת AI</span>
-                                </>
-                              )}
-                            </button>
+                            <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                              <input
+                                type="text"
+                                value={aiImproveInstruction}
+                                onChange={(e) => setAiImproveInstruction(e.target.value)}
+                                placeholder="רשום פה מה לשפר (למשל: 'הפוך את מטרות השיחה לממוקדות יותר', 'שפר את שאלת הפתיחה', או 'הוסף עוד אימוג׳ים מתאימים'...)"
+                                className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 block"
+                                dir="rtl"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && aiImproveInstruction.trim() && !isImprovingPart) {
+                                    e.preventDefault();
+                                    improvePromptPartWithAI(sec.key, sec.title, activeVal);
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={isImprovingPart}
+                                onClick={() => improvePromptPartWithAI(sec.key, sec.title, activeVal)}
+                                className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[120px] ${
+                                  isImprovingPart
+                                    ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
+                                    : aiImproveInstruction.trim()
+                                      ? "bg-[#183a6f]/60 hover:bg-[#1f4a8d] text-sky-200 border-sky-505/20 hover:border-sky-500/45 cursor-pointer shadow"
+                                      : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
+                                }`}
+                              >
+                                {isImprovingPart ? (
+                                  <>
+                                    <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-t-transparent border-sky-400 rounded-full shrink-0"></span>
+                                    <span>משפר...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>✨ שפר בעזרת AI</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Textarea - Giant Canvas */}
                         <div className="flex-1 flex flex-col min-h-[350px]">
@@ -5386,7 +5928,12 @@ ${videos || "(לא הוגדר)"}
                             placeholder={sec.placeholder}
                             value={activeVal}
                             onChange={(e) => handlePromptPartChange(sec.key as any, e.target.value)}
-                            className="w-full flex-1 p-5 bg-[#050608] border border-slate-800 rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 font-mono text-slate-100 leading-relaxed resize-none placeholder-slate-700 h-full scrollbar-thin"
+                            disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                            className={`w-full flex-1 p-5 border rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none font-mono leading-relaxed resize-none placeholder-slate-700 h-full scrollbar-thin ${
+                              sessionUser?.email === "haim.bar@gmail.com"
+                                ? "bg-[#050608] border-slate-800 text-slate-100 focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                                : "bg-[#0c0d12] border-slate-900 text-slate-400 cursor-not-allowed opacity-80"
+                            }`}
                              dir="rtl"
                            />
                          </div>
@@ -5613,6 +6160,21 @@ ${videos || "(לא הוגדר)"}
                           setWizardOwnerPhoneError(error);
                         }}
                         placeholder="רשום טלפון ללא קידומת (למשל: 054-7866119)"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-black text-slate-300">
+                        אימייל משויך לסוכן <span className="text-red-500 font-bold">*</span> ✉️
+                      </label>
+                      <input
+                        type="email"
+                        value={wizardAgentEmail}
+                        onChange={(e) => setWizardAgentEmail(e.target.value)}
+                        placeholder="לדוגמה: business@gmail.com"
+                        className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500 font-bold"
+                        dir="ltr"
+                        required
                       />
                     </div>
 
@@ -5849,6 +6411,9 @@ ${videos || "(לא הוגדר)"}
                       onClick={() => {
                         if (!wizardBusinessName.trim()) return alert("אנא הזן את שם העסק להתקדמות");
                         if (!wizardBotId.trim()) return alert("אנא הגדר מזהה Bot ID תקין");
+                        if (!wizardOwnerPhone.trim()) return alert("אנא הזן מספר טלפון ליצירת קשר");
+                        if (!wizardAgentEmail.trim()) return alert("אנא הזן כתובת אימייל משויכת לסוכן");
+                        if (!wizardAgentEmail.includes("@")) return alert("אנא הזן כתובת אימייל תקינה (חייב להכיל @)");
                         setWizardStep(2);
                       }}
                       className="px-6 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow transition"
