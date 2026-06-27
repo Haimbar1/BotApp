@@ -80,8 +80,8 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
   addGlobalLog(`CALL: "${urlString}" from host: "${currentHost}"`);
 
   if (urlString.startsWith("/api/")) {
-    const isLocal = currentHost.includes("localhost") || currentHost.includes("127.0.0.1");
-    const isSandbox = currentHost.includes("run.app");
+    const isLocal = !currentHost || currentHost.includes("localhost") || currentHost.includes("127.0.0.1") || currentHost.includes("0.0.0.0");
+    const isSandbox = currentHost.includes("run.app") || currentHost.includes("googleusercontent.com") || currentHost.includes("google.com") || currentHost.includes("aistudio");
     const isProdDomain = currentHost.includes("smartesek.com") || currentHost.includes("smartesek.co.il");
     const shouldRedirect = !isLocal && !isSandbox && !isProdDomain;
 
@@ -4058,6 +4058,53 @@ ${videos || "(לא הוגדר)"}
                     </button>
                   </div>
                 </div>
+
+                {/* Auto Developer/Admin Login shortcut when in development or sandbox container */}
+                {(() => {
+                  const host = typeof window !== "undefined" ? window.location.hostname : "";
+                  const isDevOrSandbox = !host || 
+                                         host.includes("localhost") || 
+                                         host.includes("127.0.0.1") || 
+                                         host.includes("run.app") || 
+                                         host.includes("googleusercontent.com") || 
+                                         host.includes("google.com") ||
+                                         host.includes("aistudio");
+                  if (!isDevOrSandbox) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setBypassPasscode("haim");
+                        try {
+                          const res = await apiFetch("/api/auth/bypass-login", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({ passcode: "haim" })
+                          });
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            localStorage.removeItem("has_logged_out");
+                            localStorage.setItem("cyber_session_token", data.token);
+                            setSessionToken(data.token);
+                            setSessionUser(data.user);
+                            setIsAuthenticated(true);
+                            fetchAgentsFromServer(data.token, data.user?.email);
+                            fetchFullSettingsFromServer(data.token);
+                          } else {
+                            setAuthError(data.message || "מפתח מעקף שגוי.");
+                          }
+                        } catch (err) {
+                          setAuthError("שגיאת התחברות מהירה.");
+                        }
+                      }}
+                      className="w-full mt-2 py-2 px-3 border border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-400 rounded-xl text-[10px] font-bold cursor-pointer transition flex items-center justify-center gap-1.5"
+                    >
+                      <span>🔑 כניסת מנהל מהירה (סביבת פיתוח וסנדבוקס)</span>
+                    </button>
+                  );
+                })()}
               </div>
 
 
