@@ -828,17 +828,17 @@ async function startServer() {
 
             let fetchPromise;
             if (item.method === "POST") {
-              console.log(`[SERVER] Sending POST to N8N: ${item.url} with body { botId: "${botId}" }`);
+              console.log(`[SERVER] Sending POST to N8N: ${item.url} with body { botId: "${botId}", botID: "${botId}" }`);
               fetchPromise = fetch(item.url, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json"
                 },
-                body: JSON.stringify({ botId }),
+                body: JSON.stringify({ botId, botID: botId }),
                 signal: controller.signal
               });
             } else {
-              const getUrl = `${item.url}?botId=${encodeURIComponent(botId)}`;
+              const getUrl = `${item.url}?botId=${encodeURIComponent(botId)}&botID=${encodeURIComponent(botId)}`;
               console.log(`[SERVER] Sending GET to N8N: ${getUrl}`);
               fetchPromise = fetch(getUrl, {
                 method: "GET",
