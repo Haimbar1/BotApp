@@ -574,7 +574,7 @@ export default function App() {
       setIsChatsLoading(true);
       try {
         console.log(`[CLIENT] Fetching chats for active Bot ID: "${targetBotId}"`);
-        const response = await fetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
+        const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
           headers: {
             "Authorization": `Bearer ${sessionToken}`
           }
@@ -696,7 +696,7 @@ export default function App() {
       return;
     }
     try {
-      const response = await fetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`, {
+      const response = await apiFetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${sessionToken}`
