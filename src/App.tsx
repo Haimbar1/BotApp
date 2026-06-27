@@ -574,25 +574,145 @@ export default function App() {
 
       setIsChatsLoading(true);
       try {
-        console.log(`[CLIENT] Fetching chats for active Bot ID: "${targetBotId}"`);
-        const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
+        const webhookChatsUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
+        const proxyUrl = `/api/fetch-config?url=${encodeURIComponent(webhookChatsUrl)}&botId=${encodeURIComponent(targetBotId)}`;
+        console.log(`[CLIENT] Fetching chats for active Bot ID: "${targetBotId}" via fetch-config proxy: "${proxyUrl}"`);
+        
+        const response = await apiFetch(proxyUrl, {
           headers: {
             "Authorization": `Bearer ${sessionToken}`
           }
         });
+        
         const result = await response.json();
+        
         if (active) {
-          if (result.success) {
-            setChats(result.data || []);
+          if (result.success && result.data) {
+            const rawData = result.data;
+            let records: any[] = [];
+            if (Array.isArray(rawData)) {
+              records = rawData;
+            } else if (rawData && Array.isArray(rawData.data)) {
+              records = rawData.data;
+            } else if (rawData && typeof rawData === "object") {
+              const arrayKey = Object.keys(rawData).find((key) => Array.isArray((rawData as any)[key]));
+              if (arrayKey) {
+                records = (rawData as any)[arrayKey];
+              } else if (rawData.chats && Array.isArray(rawData.chats)) {
+                records = rawData.chats;
+              } else if (rawData.rows && Array.isArray(rawData.rows)) {
+                records = rawData.rows;
+              } else {
+                records = [rawData];
+              }
+            }
+
+            const cleanContent = (rawContent: any): string => {
+              if (!rawContent) return "";
+              if (typeof rawContent === "object") {
+                try {
+                  return JSON.stringify(rawContent);
+                } catch (e) {
+                  return String(rawContent);
+                }
+              }
+              if (typeof rawContent === "string") {
+                const trimmed = rawContent.trim();
+                if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+                  try {
+                    JSON.parse(trimmed);
+                    return trimmed;
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+                return rawContent;
+              }
+              return String(rawContent);
+            };
+
+            const liveChats = records.map((item: any, idx: number) => {
+              if (!item) return null;
+              const sId = item.session_id || item.sessionId || item.SessionId || "";
+              
+              let itemPhone = item.phone || "";
+              let itemBotId = item.botId || item.bot_id || "";
+              if (sId && (!itemPhone || !itemBotId)) {
+                const underscoreIdx = sId.indexOf("_");
+                if (underscoreIdx !== -1) {
+                  if (!itemPhone) itemPhone = sId.substring(0, underscoreIdx);
+                  if (!itemBotId) itemBotId = sId.substring(underscoreIdx + 1);
+                } else {
+                  if (!itemBotId) itemBotId = sId;
+                }
+              }
+
+              let messageContent = item.message;
+              let finalType: "human" | "ai" = "human";
+              let finalContent = "";
+
+              if (messageContent) {
+                if (typeof messageContent === "string") {
+                  try {
+                    const parsedMsg = JSON.parse(messageContent);
+                    finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
+                    const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
+                    finalContent = cleanContent(innerContent);
+                  } catch (e) {
+                    finalContent = cleanContent(messageContent);
+                  }
+                } else if (typeof messageContent === "object") {
+                  finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
+                  const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
+                  finalContent = cleanContent(innerContent);
+                }
+              } else {
+                const contentVal = item.content || item.text || item.message_text || "";
+                const typeVal = item.type || item.message_type || item.sender || "human";
+                finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
+                finalContent = cleanContent(contentVal);
+              }
+
+              return {
+                id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
+                sessionId: sId,
+                botId: itemBotId || targetBotId,
+                phone: itemPhone,
+                message: {
+                  type: finalType,
+                  content: finalContent
+                },
+                timestamp: item.created_at || item.timestamp || item.time || new Date().toISOString()
+              };
+            }).filter(Boolean);
+
+            setChats(liveChats);
           } else {
-            console.error("[CHATS] Failed to fetch chats:", result.message);
-            setChats([]);
+            console.error("[CHATS] Failed to fetch chats through fetch-config proxy:", result.message);
+            throw new Error("Proxy call failed");
           }
         }
       } catch (err) {
-        console.error("[CHATS] Error fetching chats:", err);
-        if (active) {
-          setChats([]);
+        console.warn("[CHATS] Proxy fetch failed, attempting direct /api/chats fallback...", err);
+        try {
+          const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
+            headers: {
+              "Authorization": `Bearer ${sessionToken}`
+            }
+          });
+          const result = await response.json();
+          if (active) {
+            if (result.success) {
+              setChats(result.data || []);
+            } else {
+              setChats([]);
+            }
+          }
+        } catch (fallbackErr) {
+          console.error("[CHATS] Direct fallback failed too:", fallbackErr);
+          if (active) {
+            setChats([]);
+          }
         }
       } finally {
         if (active) {
@@ -1297,20 +1417,8 @@ export default function App() {
           }
         }
 
-        // If no token or token is stale, check if we should auto-authenticate as the system administrator
-        if (!hasLoggedOut) {
-          const defaultToken = "session_dev_bypass_haim_auto_2026";
-          localStorage.setItem("cyber_session_token", defaultToken);
-          setSessionToken(defaultToken);
-          setSessionUser({
-            email: "haim.bar@gmail.com",
-            name: "חיים בר (מנהל)",
-            picture: "https://lh3.googleusercontent.com/a/default-user=s96-c"
-          });
-          setIsAuthenticated(true);
-          fetchAgentsFromServer(defaultToken, "haim.bar@gmail.com");
-          fetchFullSettingsFromServer(defaultToken);
-        }
+        // If no token or token is stale, we do not auto-authenticate by default to ensure normal customers land on the bot builder landing page.
+        // The administrator can easily log in using Google Auth or the quick admin passcode bypass.
       } catch (err) {
         console.error("App initialization failure:", err);
       } finally {
@@ -3918,6 +4026,38 @@ ${videos || "(לא הוגדר)"}
 
                 {/* Google GSI Sign In Button Mounting Point */}
                 <div id="google-signin-btn-container" className="flex items-center justify-center min-h-[44px] hidden"></div>
+
+                {/* Developer / Admin Passcode Bypass Field */}
+                <div className="w-full flex flex-col gap-1.5 border-t border-dashed border-slate-700/30 pt-3.5 mt-1">
+                  <label className={`text-[10px] font-bold text-right ${isLt ? "text-slate-600" : "text-slate-400"}`}>
+                    כניסה מהירה עם מפתח מנהל / קוד מעקף 🔑:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      placeholder="הזן קוד (למשל haim)"
+                      value={bypassPasscode}
+                      onChange={(e) => setBypassPasscode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          handlePasscodeLoginBypass();
+                        }
+                      }}
+                      className={`flex-1 px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition text-right ${
+                        isLt 
+                          ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                          : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePasscodeLoginBypass}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold cursor-pointer transition shadow-sm"
+                    >
+                      כניסה
+                    </button>
+                  </div>
+                </div>
               </div>
 
 
