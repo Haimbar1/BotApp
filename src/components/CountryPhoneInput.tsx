@@ -245,7 +245,7 @@ export default function CountryPhoneInput({
 
   return (
     <div className="w-full relative flex flex-col gap-1" id={`phone-wrapper-${id}`}>
-      <div className="flex gap-2 relative">
+      <div className="flex gap-2 relative" dir="ltr">
         {/* Country Code Dropdown Button */}
         <div className="relative" ref={dropdownRef}>
           <button
@@ -268,7 +268,7 @@ export default function CountryPhoneInput({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 5 }}
                 transition={{ duration: 0.15 }}
-                className="absolute z-50 mt-1 right-0 w-64 bg-white dark:bg-[#11121d] border border-slate-200 dark:border-slate-850 rounded-xl shadow-2xl overflow-hidden focus:outline-none"
+                className="absolute z-50 mt-1 left-0 w-64 bg-white dark:bg-[#11121d] border border-slate-200 dark:border-slate-850 rounded-xl shadow-2xl overflow-hidden focus:outline-none"
                 id={`country-dropdown-${id}`}
               >
                 {/* Search country box */}

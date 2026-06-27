@@ -251,7 +251,7 @@ export default function App() {
   const [landingUrl, setLandingUrl] = useState<string>("");
   const [landingPhone, setLandingPhone] = useState<string>("");
   const [landingPhoneError, setLandingPhoneError] = useState<string>("");
-  const [landingAgentName, setLandingAgentName] = useState<string>("חיים בר");
+  const [landingAgentName, setLandingAgentName] = useState<string>("");
   const [landingAgentType, setLandingAgentType] = useState<"sales" | "support" | "leads">("sales");
   const [landingWizardStep, setLandingWizardStep] = useState<number>(1);
   const [landingAdditionalContext, setLandingAdditionalContext] = useState<string>("");
@@ -1105,7 +1105,10 @@ export default function App() {
 
   // Function to analyze external enterprise website or product catalog via Server Scraper proxy
   const handleExploreWebsiteURL = async () => {
-    if (!wizardWebsiteUrl.trim()) return alert("אנא הזן כתובת אתר אינטרנט תקינה");
+    const targetUrl = wizardWebsiteUrl.trim();
+    if (!targetUrl || !targetUrl.includes(".") || targetUrl.length < 4) {
+      return alert("אנא הזן כתובת אתר מלאה ותקינה (למשל business.ai, subdomain.site.dev, או co.il)");
+    }
     setIsExploringUrl(true);
     setExplorerAnalysis("");
     setScrapedText("");
@@ -3511,7 +3514,7 @@ ${videos || "(לא הוגדר)"}
                             </label>
                             <input
                               type="text"
-                              placeholder="לדוגמה: www.mybusiness.co.il"
+                              placeholder="לדוגמה: mybusiness.dev, app.shop.ai, או business.co.il"
                               value={landingUrl}
                               onChange={(e) => setLandingUrl(e.target.value)}
                               className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-mono text-left ${
@@ -3522,7 +3525,7 @@ ${videos || "(לא הוגדר)"}
                               dir="ltr"
                               disabled={isCreatingDemo}
                             />
-                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>האתר שממנו ה-AI יסרוק וישאב את מוצרי המכירות שלך</span>
+                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>האתר שממנו ה-AI יסרוק וישלוף את המידע. תומך בכל סוגי הדומיינים (כמו .co.il, .com, .dev, .ai, ותתי-דומיינים)</span>
                           </div>
 
                           <div 
@@ -5357,7 +5360,7 @@ ${videos || "(לא הוגדר)"}
                 </button>
 
                 <input
-                  type="url"
+                  type="text"
                   placeholder="הקלד כתובת Webhook אליה ייחשף המידע ב-POST..."
                   value={webhookUrl}
                   onChange={(e) => handleSaveWebhookUrl(e.target.value)}
@@ -6568,8 +6571,8 @@ ${videos || "(לא הוגדר)"}
 
                       <div className="flex gap-2">
                         <input
-                          type="url"
-                          placeholder="הזן כתובת אתר (לדוגמה: https://mybusiness.co.il)..."
+                          type="text"
+                          placeholder="הזן כתובת אתר (לדוגמה: sub.domain.dev, shop.ai, bareket.co.il)..."
                           value={wizardWebsiteUrl}
                           onChange={(e) => setWizardWebsiteUrl(e.target.value)}
                           className="flex-1 px-3 py-2 bg-slate-950 border border-slate-850 rounded-xl text-xs font-mono text-left focus:outline-none focus:border-sky-500 text-slate-205"
@@ -6593,7 +6596,7 @@ ${videos || "(לא הוגדר)"}
                         {isExploringUrl ? (
                           <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
                             <span className="animate-spin inline-block w-6 h-6 border-2 border-t-transparent border-sky-400 rounded-full shrink-0"></span>
-                            <span className="text-[11px] font-black text-sky-450 mt-2 block">סורק ומנתח את האתר, אנא המתן...</span>
+                            <span className="text-[11px] font-black text-sky-455 mt-2 block">סורק ומנתח את האתר, אנא המתן...</span>
                           </div>
                         ) : explorerAnalysis ? (
                           <div className="space-y-2 whitespace-pre-wrap leading-relaxed text-slate-300 font-semibold font-sans text-right" dir="rtl">
@@ -6603,7 +6606,7 @@ ${videos || "(לא הוגדר)"}
                         ) : (
                           <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-600 font-bold p-2 text-right">
                             <span>טרם בוצע ניתוח אתר.</span>
-                            <span className="text-[9px] mt-1 text-slate-500">הזן כתובת אתר ולחץ 'סרוק' כדי לקבל חומרי למידה אותנטיים.</span>
+                            <span className="text-[9px] mt-1 text-slate-500">תומך בכל סוגי הדומיינים (תת-דומיין, .dev, .ai, .co.il, ועוד). לחץ 'סרוק'.</span>
                           </div>
                         )}
                       </div>
