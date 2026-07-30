@@ -97,13 +97,20 @@ async function startServer() {
 
   // Directories & Files Paths
   const DATA_DIR = path.join(process.cwd(), "data");
+  const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
   const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
   const AGENTS_FILE = path.join(DATA_DIR, "agents.json");
 
-  // Ensure data folder and files exist
+  // Ensure data and uploads folders exist
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+
+  // Serve uploaded files statically at /uploads
+  app.use("/uploads", express.static(UPLOADS_DIR));
 
   // Default Settings (Includes Haim Bar's email as authorized administrator)
   const defaultSettings = {
@@ -646,6 +653,39 @@ async function startServer() {
       return res.json({ success: true });
     } else {
       return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת ההגדרות בשרת" });
+    }
+  });
+
+  // ---------------- PUBLIC FILE UPLOAD ROUTE ----------------
+  app.post("/api/upload", (req: any, res: any) => {
+    try {
+      const { filename, base64 } = req.body;
+      if (!base64) {
+        return res.status(400).json({ success: false, message: "חסר תוכן הקובץ ב-base64" });
+      }
+
+      const sanitizedName = (filename || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+      const uniqueName = `${Date.now()}_${sanitizedName}`;
+      const filePath = path.join(UPLOADS_DIR, uniqueName);
+
+      const base64Data = base64.replace(/^data:.*?;base64,/, "");
+      const buffer = Buffer.from(base64Data, "base64");
+      fs.writeFileSync(filePath, buffer);
+
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.get("host");
+      const publicUrl = `${protocol}://${host}/uploads/${uniqueName}`;
+
+      console.log(`[SERVER] File uploaded successfully: ${publicUrl} (${buffer.length} bytes)`);
+      return res.json({
+        success: true,
+        url: publicUrl,
+        filename: uniqueName,
+        size: buffer.length
+      });
+    } catch (err: any) {
+      console.error("[SERVER] File upload failed:", err);
+      return res.status(500).json({ success: false, message: "שגיאה בשמירת הקובץ בשרת", error: err?.message });
     }
   });
 

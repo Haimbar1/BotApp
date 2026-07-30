@@ -426,14 +426,14 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
     updateItemsAndParent(updated);
   };
 
-  // Upload single file to Firebase Storage with progress fallback
+  // Upload single file to Firebase Storage with server upload fallback
   const processFileUpload = (file: File) => {
     const itemId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const isVideo = file.type.startsWith("video/") || file.name.match(/\.(mp4|webm|mov)$/i);
     const fileType: "image" | "video" = isVideo ? "video" : "image";
     const fileNameClean = file.name.replace(/\.[^/.]+$/, "");
 
-    // Prepare immediate object URL fallback
+    // Prepare immediate object URL fallback if all uploads fail
     const localObjectUrl = URL.createObjectURL(file);
 
     const newItem: MediaItem = {
@@ -453,7 +453,7 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
       const isBlob = finalUrl.startsWith("blob:");
       const status = isBlob ? ("error" as const) : ("success" as const);
       const defaultErr = isBlob
-        ? "⚠️ קישור מקומי (blob) אינו ציבורי ואינו נשלח ל-WhatsApp. להעלאה ציבורית יש להגדיר מפתחות Firebase Storage או להזין קישור ישיר (https://)."
+        ? "⚠️ קישור מקומי (blob) אינו ציבורי. להעלאה ציבורית הגדר מפתחות Firebase Storage או העלה שוב."
         : errorText;
 
       setItems(prev => {
@@ -475,10 +475,41 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
       });
     };
 
+    // Helper: Upload file directly to server's public /api/upload endpoint
+    const uploadViaServer = (fileObj: File) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64Str = reader.result as string;
+          const resp = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: fileObj.name,
+              base64: base64Str
+            })
+          });
+          const data = await resp.json();
+          if (data.success && data.url) {
+            console.log("[MEDIA UPLOADER] Server upload succeeded with public URL:", data.url);
+            finishWithResult(data.url);
+            return;
+          }
+        } catch (e) {
+          console.error("[MEDIA UPLOADER] Server upload fetch error:", e);
+        }
+        finishWithResult(localObjectUrl, "⚠️ שגיאה בהעלאה לשרת.");
+      };
+      reader.onerror = () => {
+        finishWithResult(localObjectUrl, "⚠️ שגיאה בקריאת הקובץ.");
+      };
+      reader.readAsDataURL(fileObj);
+    };
+
     const storage = getFirebaseStorageInstance(fbConfig);
 
     if (storage) {
-      // Real Firebase Upload Path with safety fallback
+      // Real Firebase Upload Path with safety fallback to server upload
       let isCompletedOrHandled = false;
       const folderName = fileType === "image" ? "images" : "videos";
       const sanitizedFilename = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
@@ -488,15 +519,15 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
         contentType: file.type
       });
 
-      // Safety timeout: If after 4 seconds progress is still 0%, Firebase upload is blocked or unconfigured
+      // Safety timeout: If after 3.5 seconds progress is still unhandled, switch to server upload
       const safetyTimer = setTimeout(() => {
         if (!isCompletedOrHandled) {
           isCompletedOrHandled = true;
           try { uploadTask.cancel(); } catch (_) {}
-          console.warn("Firebase upload timeout. Falling back to local preview notification.");
-          finishWithResult(localObjectUrl, "⚠️ חיבור ה-Firebase לא הגיב. הגדר מפתחות Firebase בהגדרות המערכת.");
+          console.warn("[MEDIA UPLOADER] Firebase timeout. Uploading via server fallback.");
+          uploadViaServer(file);
         }
-      }, 4000);
+      }, 3500);
 
       uploadTask.on(
         "state_changed",
@@ -514,8 +545,8 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
           if (isCompletedOrHandled) return;
           isCompletedOrHandled = true;
           clearTimeout(safetyTimer);
-          console.error("Firebase Storage Upload Error:", error);
-          finishWithResult(localObjectUrl, `⚠️ שגיאת חיבור ל-Firebase: ${error.message || "נכשל בהעלאת הקובץ"}`);
+          console.warn("[MEDIA UPLOADER] Firebase upload error, switching to server fallback:", error);
+          uploadViaServer(file);
         },
         async () => {
           if (isCompletedOrHandled) return;
@@ -525,27 +556,13 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
             const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
             finishWithResult(downloadUrl);
           } catch (err: any) {
-            finishWithResult(localObjectUrl, "⚠️ נכשל בחילוץ Direct URL מ-Firebase.");
+            uploadViaServer(file);
           }
         }
       );
     } else {
-      // Local preview fallback when Firebase credentials are not set
-      let currentProgress = 30;
-      const interval = setInterval(() => {
-        currentProgress += 35;
-        if (currentProgress >= 100) {
-          clearInterval(interval);
-          finishWithResult(localObjectUrl);
-        } else {
-          setItems(prev => prev.map(item => {
-            if (item.id === itemId) {
-              return { ...item, progress: currentProgress };
-            }
-            return item;
-          }));
-        }
-      }, 100);
+      // Direct server upload when Firebase Storage credentials are not configured
+      uploadViaServer(file);
     }
   };
 

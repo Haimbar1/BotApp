@@ -5900,11 +5900,11 @@ ${videos || "(לא הוגדר)"}
 
                           <div className="flex items-center gap-1.5 flex-shrink-0 mr-2">
                             {charCount > 0 ? (
-                              <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-1.5 py-0.5 rounded-full font-bold">
+                              <span className="text-[9.5px] bg-[#07130e] text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-lg font-mono font-bold shadow-sm">
                                 {charCount} תווים
                               </span>
                             ) : (
-                              <span className="text-[9px] bg-red-500/10 text-red-450 border border-red-500/10 px-1.5 py-0.5 rounded-full font-bold">
+                              <span className="text-[9.5px] bg-[#16080a] text-rose-300 border border-rose-500/40 px-2 py-0.5 rounded-lg font-mono font-bold shadow-sm">
                                 ריק
                               </span>
                             )}
