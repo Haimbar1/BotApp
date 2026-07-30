@@ -423,7 +423,7 @@ async function startServer() {
 
       // Notify n8n Webhook about new user registration or sign-up attempt
       if (isNewUser || isSignUp) {
-        const webhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+        const webhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
         const trialStartDate = new Date();
         const trialEndDate = new Date();
         trialEndDate.setDate(trialEndDate.getDate() + 30);
@@ -737,7 +737,8 @@ async function startServer() {
             agentEmail: userEmail, // Force to logged-in user email
             status: proposed.status || "Not Active",
             name: proposed.name || `${proposed.businessName || "סוכן חדש"} _ מכירות`,
-            agentType: proposed.agentType || "sales"
+            agentType: proposed.agentType || "sales",
+            whatsappConfig: proposed.whatsappConfig || existing?.whatsappConfig || {}
           };
         }
         return {
@@ -747,7 +748,8 @@ async function startServer() {
           businessName: proposed.businessName !== undefined ? proposed.businessName : existing.businessName,
           ownerName: proposed.ownerName !== undefined ? proposed.ownerName : existing.ownerName,
           leadFollowUpDays: proposed.leadFollowUpDays !== undefined ? proposed.leadFollowUpDays : existing.leadFollowUpDays,
-          status: proposed.status !== undefined ? proposed.status : existing.status
+          status: proposed.status !== undefined ? proposed.status : existing.status,
+          whatsappConfig: proposed.whatsappConfig !== undefined ? proposed.whatsappConfig : existing.whatsappConfig
         };
       });
 
@@ -759,6 +761,697 @@ async function startServer() {
       } else {
         return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת קובץ הסוכנים בשרת" });
       }
+    }
+  });
+
+  // ---------------- WHATSAPP BUSINESS & N8N API ROUTES ----------------
+
+  // Get WhatsApp Business Config for current user/agent
+  app.get("/api/whatsapp/config", requireAuth, (req: any, res: any) => {
+    const userEmail = (req.user?.email || "").toLowerCase().trim();
+    const botId = (req.query?.botId || "").trim();
+    const allAgents = readAgents();
+    
+    let targetAgent = null;
+    if (botId) {
+      targetAgent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+    }
+    if (!targetAgent) {
+      targetAgent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === userEmail);
+    }
+    if (!targetAgent && allAgents.length > 0 && userEmail === "haim.bar@gmail.com") {
+      targetAgent = allAgents[0];
+    }
+
+    const config = targetAgent?.whatsappConfig || {
+      phoneNumberId: "",
+      systemUserAccessToken: "",
+      wabaId: "",
+      phoneNumber: targetAgent?.ownerPhone || "",
+      code: "",
+      appId: "",
+      status: "Not Connected"
+    };
+
+    return res.json({
+      success: true,
+      botId: targetAgent?.botId || "",
+      agentName: targetAgent?.businessName || "",
+      config
+    });
+  });
+
+  // Save WhatsApp Business Config
+  app.post("/api/whatsapp/config", requireAuth, (req: any, res: any) => {
+    const userEmail = (req.user?.email || "").toLowerCase().trim();
+    const { botId, phoneNumberId, systemUserAccessToken, wabaId, phoneNumber, code, appId, status } = req.body;
+
+    const allAgents = readAgents();
+    let targetIndex = -1;
+
+    if (botId) {
+      targetIndex = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+    }
+    if (targetIndex === -1) {
+      targetIndex = allAgents.findIndex((a: any) => (a.agentEmail || "").toLowerCase().trim() === userEmail);
+    }
+    if (targetIndex === -1 && userEmail === "haim.bar@gmail.com" && allAgents.length > 0) {
+      targetIndex = 0;
+    }
+
+    if (targetIndex === -1) {
+      return res.status(404).json({ success: false, error: "not_found", message: "לא נמצא סוכן מותאם לחשבון זה" });
+    }
+
+    const currentConfig = allAgents[targetIndex].whatsappConfig || {};
+    const updatedConfig = {
+      phoneNumberId: phoneNumberId !== undefined ? String(phoneNumberId).trim() : (currentConfig.phoneNumberId || ""),
+      systemUserAccessToken: systemUserAccessToken !== undefined ? String(systemUserAccessToken).trim() : (currentConfig.systemUserAccessToken || ""),
+      wabaId: wabaId !== undefined ? String(wabaId).trim() : (currentConfig.wabaId || ""),
+      phoneNumber: phoneNumber !== undefined ? String(phoneNumber).trim() : (currentConfig.phoneNumber || allAgents[targetIndex].ownerPhone || ""),
+      code: code !== undefined ? String(code).trim() : (currentConfig.code || ""),
+      appId: appId !== undefined ? String(appId).trim() : (currentConfig.appId || ""),
+      status: status || ((phoneNumberId && systemUserAccessToken && wabaId) ? "Connected" : "Partially Configured"),
+      updatedAt: new Date().toISOString()
+    };
+
+    allAgents[targetIndex].whatsappConfig = updatedConfig;
+    if (phoneNumber) {
+      allAgents[targetIndex].ownerPhone = phoneNumber.trim();
+    }
+
+    const saved = saveAgents(allAgents);
+    if (saved) {
+      console.log(`[SERVER] Saved WhatsApp Business Config for bot "${allAgents[targetIndex].botId}"`);
+      return res.json({
+        success: true,
+        message: "הגדרות WhatsApp Business נשמרו בהצלחה",
+        config: updatedConfig
+      });
+    } else {
+      return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת ההגדרות בשרת" });
+    }
+  });
+
+  // Export N8N Credentials Endpoint
+  app.get("/api/whatsapp/n8n-credentials", (req: any, res: any) => {
+    const botId = (req.query?.botId || "").trim();
+    const token = (req.query?.token || "").trim();
+    const allAgents = readAgents();
+
+    let agent = null;
+    if (botId) {
+      agent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+    }
+    if (!agent && token) {
+      const session = getSession(token);
+      if (session) {
+        agent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === session.email.toLowerCase().trim());
+      }
+    }
+    if (!agent && allAgents.length > 0) {
+      agent = allAgents[0];
+    }
+
+    const config = agent?.whatsappConfig || {};
+
+    return res.json({
+      botId: agent?.botId || "N/A",
+      businessName: agent?.businessName || "N/A",
+      phoneNumberId: config.phoneNumberId || "",
+      systemUserAccessToken: config.systemUserAccessToken || "",
+      wabaId: config.wabaId || "",
+      phoneNumber: config.phoneNumber || agent?.ownerPhone || "",
+      code: config.code || "",
+      appId: config.appId || "",
+      connectionType: config.connectionType || "official_meta",
+      evolutionInstanceName: config.evolutionInstanceName || "",
+      webhookUrl: "https://service-1078804201809.us-west1.run.app/api/webhook/whatsapp",
+      status: config.status || "Not Connected",
+      lastUpdated: config.updatedAt || new Date().toISOString()
+    });
+  });
+
+  // ---------------- EVOLUTION API (UNOFFICIAL WHATSAPP QR CODE) ROUTES ----------------
+
+  // Helper to get Evolution API configuration (supports custom URL & Key from agent config or request)
+  function getEvolutionConfig(req: any, botId?: string) {
+    const allAgents = readAgents();
+    const agent = botId ? allAgents.find((a: any) => a.botId === botId || a.id === botId) : null;
+    const config = agent?.whatsappConfig || {};
+
+    const apiUrl = (req.body?.apiUrl || req.query?.apiUrl || config.evolutionApiUrl || process.env.EVOLUTION_API_URL || "http://72.61.185.147:60486").trim().replace(/\/+$/, "");
+    const globalKey = (req.body?.globalKey || req.query?.globalKey || config.evolutionGlobalKey || process.env.EVOLUTION_GLOBAL_KEY || "l66VrCvMBNoLSUEc1IUoQ7lDPmoCMibV").trim();
+
+    return { apiUrl, globalKey };
+  }
+
+  // Helper for headers matching Evolution API key standard
+  function getEvolutionHeaders(globalKey: string) {
+    return {
+      "apikey": globalKey,
+      "Content-Type": "application/json"
+    };
+  }
+
+  // Helper to sanitize instance name for Evolution API using user email or botId
+  function getEvolutionInstanceName(botId: string, userEmail?: string, counterOverride?: number): string {
+    const allAgents = readAgents();
+    const agent = botId ? allAgents.find((a: any) => a.botId === botId || a.id === botId) : null;
+    const config = agent?.whatsappConfig || {};
+    const counter = counterOverride ?? config.evolutionInstanceCounter ?? 1;
+
+    const userPrefix = userEmail ? userEmail.split("@")[0].replace(/[^a-zA-Z0-9_-]/g, "_") : "";
+    const cleanId = String(botId || "default").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const baseName = userPrefix ? `client_${userPrefix}_${cleanId}` : `client_${cleanId}`;
+    
+    return counter > 1 ? `${baseName}_${counter}` : baseName;
+  }
+
+  // 1. Create Instance in Evolution API
+  app.post("/api/evolution/create-instance", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.body?.botId || "").trim();
+      if (!botId) {
+        return res.status(400).json({ success: false, error: "missing_bot_id", message: "חסר מזהה בוט" });
+      }
+
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      const instanceName = getEvolutionInstanceName(botId, req.user?.email);
+      const uniqueToken = `tok_${botId}_${Date.now()}`;
+      
+      const webhookUrl = `${req.protocol}://${req.get("host")}/api/webhooks/evolution`;
+
+      console.log(`[EVOLUTION API] Creating instance "${instanceName}" at ${apiUrl} with key length ${globalKey.length}`);
+
+      const createResponse = await fetch(`${apiUrl}/instance/create`, {
+        method: "POST",
+        headers: getEvolutionHeaders(globalKey),
+        body: JSON.stringify({
+          instanceName: instanceName,
+          token: uniqueToken,
+          qrcode: true,
+          integration: "WHATSAPP-BAILEYS",
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: [
+              "CONNECTION_UPDATE",
+              "MESSAGES_UPSERT"
+            ]
+          }
+        })
+      });
+
+      const data: any = await createResponse.json().catch(() => ({}));
+      console.log(`[EVOLUTION API] Create instance response status: ${createResponse.status}`, data);
+
+      // Save instance metadata in agent's config
+      const allAgents = readAgents();
+      const targetIndex = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+      if (targetIndex !== -1) {
+        const currentConfig = allAgents[targetIndex].whatsappConfig || {};
+        allAgents[targetIndex].whatsappConfig = {
+          ...currentConfig,
+          evolutionInstanceName: instanceName,
+          evolutionToken: uniqueToken,
+          evolutionApiUrl: apiUrl,
+          evolutionGlobalKey: globalKey,
+          connectionType: "unofficial_qr",
+          updatedAt: new Date().toISOString()
+        };
+        saveAgents(allAgents);
+      }
+
+      if (createResponse.status === 401 || data?.message === "Unauthorized" || data?.error === "Unauthorized") {
+        return res.status(401).json({
+          success: false,
+          instanceName,
+          error: "unauthorized",
+          message: `שגיאת הרשאה (401 Unauthorized) מול שרת Evolution API (${apiUrl}). אנא ודא שמפתח ה-Global Key תואם להגדרות השרת.`
+        });
+      }
+
+      let qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.qrcode || null;
+      let rawCode = data?.code || data?.qrcode?.code || data?.pairingCode || null;
+
+      return res.json({
+        success: createResponse.ok || !!data?.instance || !!data?.name || data?.status === "SUCCESS",
+        instanceName,
+        userEmail: req.user?.email || "N/A",
+        evolutionStatus: createResponse.status,
+        base64: qrBase64,
+        rawCode,
+        data,
+        message: data?.response?.message || data?.message || (createResponse.ok ? `אינסטנס ${instanceName} נוצר בהצלחה ב-Evolution API!` : `תגובת Evolution: ${JSON.stringify(data)}`)
+      });
+    } catch (error: any) {
+      console.error("[EVOLUTION API] Create instance failed:", error);
+      return res.status(500).json({
+        success: false,
+        error: "evolution_create_failed",
+        message: error?.message || "נכשל בחיבור ל-Evolution API"
+      });
+    }
+  });
+
+  // Recreate / Rotate Instance Endpoint (Anti-Ban Measure)
+  app.post("/api/evolution/recreate-instance", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.body?.botId || req.query?.botId || "").trim();
+      if (!botId) {
+        return res.status(400).json({ success: false, error: "missing_bot_id", message: "חסר מזהה בוט" });
+      }
+
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      
+      const allAgents = readAgents();
+      const targetIndex = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+      let currentCounter = 1;
+      let oldInstanceName = "";
+
+      if (targetIndex !== -1) {
+        const config = allAgents[targetIndex].whatsappConfig || {};
+        currentCounter = config.evolutionInstanceCounter || 1;
+        oldInstanceName = config.evolutionInstanceName || getEvolutionInstanceName(botId, req.user?.email, currentCounter);
+      } else {
+        oldInstanceName = getEvolutionInstanceName(botId, req.user?.email, 1);
+      }
+
+      console.log(`[EVOLUTION API] Anti-Ban Rotation: Deleting old instance "${oldInstanceName}"...`);
+
+      // 1. Delete old instance completely from Evolution API
+      if (oldInstanceName) {
+        await fetch(`${apiUrl}/instance/logout/${oldInstanceName}`, {
+          method: "DELETE",
+          headers: getEvolutionHeaders(globalKey)
+        }).catch(() => null);
+
+        await fetch(`${apiUrl}/instance/delete/${oldInstanceName}`, {
+          method: "DELETE",
+          headers: getEvolutionHeaders(globalKey)
+        }).catch(() => null);
+      }
+
+      // 2. Increment instance counter for clean rotation
+      const newCounter = currentCounter + 1;
+      const newInstanceName = getEvolutionInstanceName(botId, req.user?.email, newCounter);
+      const uniqueToken = `tok_${botId}_${Date.now()}`;
+      const webhookUrl = `${req.protocol}://${req.get("host")}/api/webhooks/evolution`;
+
+      console.log(`[EVOLUTION API] Anti-Ban Rotation: Creating clean instance "${newInstanceName}" (Counter: ${newCounter})`);
+
+      // 3. Create fresh new instance
+      const createResponse = await fetch(`${apiUrl}/instance/create`, {
+        method: "POST",
+        headers: getEvolutionHeaders(globalKey),
+        body: JSON.stringify({
+          instanceName: newInstanceName,
+          token: uniqueToken,
+          qrcode: true,
+          integration: "WHATSAPP-BAILEYS",
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: ["CONNECTION_UPDATE", "MESSAGES_UPSERT"]
+          }
+        })
+      });
+
+      const data: any = await createResponse.json().catch(() => ({}));
+
+      // 4. Update agent configuration
+      if (targetIndex !== -1) {
+        const currentConfig = allAgents[targetIndex].whatsappConfig || {};
+        allAgents[targetIndex].whatsappConfig = {
+          ...currentConfig,
+          evolutionInstanceName: newInstanceName,
+          evolutionInstanceCounter: newCounter,
+          evolutionToken: uniqueToken,
+          evolutionApiUrl: apiUrl,
+          evolutionGlobalKey: globalKey,
+          connectionType: "unofficial_qr",
+          updatedAt: new Date().toISOString()
+        };
+        saveAgents(allAgents);
+      }
+
+      let qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.qrcode || null;
+      let rawCode = data?.code || data?.qrcode?.code || data?.pairingCode || null;
+
+      // If missing QR directly from create, request connect
+      if (!qrBase64 && !rawCode) {
+        const connRes = await fetch(`${apiUrl}/instance/connect/${newInstanceName}`, {
+          method: "GET",
+          headers: getEvolutionHeaders(globalKey)
+        }).catch(() => null);
+        const connData: any = connRes ? await connRes.json().catch(() => ({})) : {};
+        qrBase64 = connData?.base64 || connData?.qrcode?.base64 || connData?.qrcode || null;
+        rawCode = connData?.code || connData?.qrcode?.code || connData?.pairingCode || null;
+      }
+
+      let qrUrl = null;
+      if (qrBase64) {
+        qrUrl = qrBase64.startsWith("data:") ? qrBase64 : `data:image/png;base64,${qrBase64}`;
+      } else if (rawCode) {
+        qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(rawCode)}`;
+      }
+
+      return res.json({
+        success: createResponse.ok || !!qrBase64 || !!rawCode,
+        instanceName: newInstanceName,
+        counter: newCounter,
+        base64: qrBase64,
+        rawCode,
+        qrUrl,
+        message: `אינסטנס נקי נוצר בהצלחה למניעת חסימה: ${newInstanceName}`
+      });
+    } catch (error: any) {
+      console.error("[EVOLUTION API] Recreate instance failed:", error);
+      return res.status(500).json({
+        success: false,
+        error: "recreate_failed",
+        message: error?.message || "נכשל ביצירת אינסטנס נקי מחדש"
+      });
+    }
+  });
+
+  // 2. Fetch QR Code from Evolution API
+  app.get("/api/evolution/connect-qr", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.query?.botId || "").trim();
+      if (!botId) {
+        return res.status(400).json({ success: false, error: "missing_bot_id", message: "חסר מזהה בוט" });
+      }
+
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      const instanceName = getEvolutionInstanceName(botId, req.user?.email);
+      console.log(`[EVOLUTION API] Fetching QR for "${instanceName}" at ${apiUrl}`);
+
+      // First attempt: Connect
+      let response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
+        method: "GET",
+        headers: getEvolutionHeaders(globalKey)
+      }).catch(() => null);
+
+      let data: any = response ? await response.json().catch(() => ({})) : {};
+
+      if (response?.status === 401 || data?.message === "Unauthorized") {
+        return res.status(401).json({
+          success: false,
+          instanceName,
+          error: "unauthorized",
+          message: "שגיאת הרשאה (401 Unauthorized) מול שרת Evolution API. בדוק את מפתח ה-Global Key."
+        });
+      }
+
+      let qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.qrcode || null;
+      let rawCode = data?.code || data?.qrcode?.code || data?.pairingCode || data?.qrcode?.pairingCode || null;
+
+      // If instance does not exist or missing QR, try creating instance
+      if (!qrBase64 && !rawCode) {
+        console.log(`[EVOLUTION API] QR not found directly on connect, attempting instance create for "${instanceName}"`);
+        const webhookUrl = `${req.protocol}://${req.get("host")}/api/webhooks/evolution`;
+        const createRes = await fetch(`${apiUrl}/instance/create`, {
+          method: "POST",
+          headers: getEvolutionHeaders(globalKey),
+          body: JSON.stringify({
+            instanceName: instanceName,
+            token: `tok_${botId}_${Date.now()}`,
+            qrcode: true,
+            integration: "WHATSAPP-BAILEYS",
+            webhook: {
+              url: webhookUrl,
+              byEvents: false,
+              base64: false,
+              events: ["CONNECTION_UPDATE", "MESSAGES_UPSERT"]
+            }
+          })
+        }).catch(() => null);
+
+        const createData: any = createRes ? await createRes.json().catch(() => ({})) : {};
+        console.log(`[EVOLUTION API] Create response:`, createData);
+
+        qrBase64 = createData?.base64 || createData?.qrcode?.base64 || createData?.qrcode || null;
+        rawCode = createData?.code || createData?.qrcode?.code || createData?.pairingCode || null;
+
+        // Try connect once more
+        if (!qrBase64 && !rawCode) {
+          response = await fetch(`${apiUrl}/instance/connect/${instanceName}`, {
+            method: "GET",
+            headers: getEvolutionHeaders(globalKey)
+          }).catch(() => null);
+          data = response ? await response.json().catch(() => ({})) : {};
+          qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.qrcode || null;
+          rawCode = data?.code || data?.qrcode?.code || data?.pairingCode || null;
+        }
+      }
+
+      let qrUrl = null;
+      if (qrBase64) {
+        qrUrl = qrBase64.startsWith("data:") ? qrBase64 : `data:image/png;base64,${qrBase64}`;
+      } else if (rawCode) {
+        qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(rawCode)}`;
+      }
+
+      return res.json({
+        success: true,
+        instanceName,
+        userEmail: req.user?.email || "N/A",
+        base64: qrBase64,
+        rawCode,
+        qrUrl,
+        pairingCode: data?.pairingCode || null,
+        raw: data
+      });
+    } catch (error: any) {
+      console.error("[EVOLUTION API] Fetch QR failed:", error);
+      return res.status(500).json({
+        success: false,
+        error: "evolution_qr_failed",
+        message: error?.message || "נכשל בשליפת קוד QR מ-Evolution API"
+      });
+    }
+  });
+
+  // 3. Get Connection State
+  app.get("/api/evolution/connection-state", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.query?.botId || "").trim();
+      if (!botId) {
+        return res.status(400).json({ success: false, error: "missing_bot_id", message: "חסר מזהה בוט" });
+      }
+
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      const instanceName = getEvolutionInstanceName(botId, req.user?.email);
+      const response = await fetch(`${apiUrl}/instance/connectionState/${instanceName}`, {
+        method: "GET",
+        headers: getEvolutionHeaders(globalKey)
+      }).catch(() => null);
+
+      const data: any = response ? await response.json().catch(() => ({})) : {};
+      const state = data?.instance?.state || data?.state || "connecting";
+
+      // If state is "open", mark agent as Connected
+      if (state === "open") {
+        const allAgents = readAgents();
+        const targetIndex = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+        if (targetIndex !== -1) {
+          const currentConfig = allAgents[targetIndex].whatsappConfig || {};
+          allAgents[targetIndex].whatsappConfig = {
+            ...currentConfig,
+            status: "Connected",
+            connectionType: "unofficial_qr",
+            evolutionInstanceName: instanceName,
+            updatedAt: new Date().toISOString()
+          };
+          saveAgents(allAgents);
+        }
+      }
+
+      return res.json({
+        success: true,
+        instanceName,
+        userEmail: req.user?.email || "N/A",
+        state,
+        isConnected: state === "open",
+        raw: data
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: "evolution_state_failed",
+        message: error?.message || "נכשל בבדיקת סטטוס חיבור"
+      });
+    }
+  });
+
+  // 4. Debug Evolution API Connection & Key Auth
+  app.get("/api/evolution/debug", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.query?.botId || "").trim();
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      const instanceName = getEvolutionInstanceName(botId || "test", req.user?.email);
+
+      const tests: any[] = [];
+
+      // Test 1: Root GET
+      try {
+        const r1 = await fetch(`${apiUrl}/`, {
+          headers: getEvolutionHeaders(globalKey)
+        });
+        const t1Data = await r1.json().catch(() => r1.statusText);
+        tests.push({ name: "1. GET / (Root)", status: r1.status, ok: r1.ok, data: t1Data });
+      } catch (e: any) {
+        tests.push({ name: "1. GET / (Root)", error: e.message });
+      }
+
+      // Test 2: fetchInstances with apikey header
+      try {
+        const r2 = await fetch(`${apiUrl}/instance/fetchInstances`, {
+          headers: { "apikey": globalKey, "Content-Type": "application/json" }
+        });
+        const t2Data = await r2.json().catch(() => r2.statusText);
+        tests.push({ name: "2. GET /instance/fetchInstances (Header apikey)", status: r2.status, ok: r2.ok, data: t2Data });
+      } catch (e: any) {
+        tests.push({ name: "2. GET /instance/fetchInstances (Header apikey)", error: e.message });
+      }
+
+      // Test 3: fetchInstances with apiKey header
+      try {
+        const r3 = await fetch(`${apiUrl}/instance/fetchInstances`, {
+          headers: { "apiKey": globalKey, "Content-Type": "application/json" }
+        });
+        const t3Data = await r3.json().catch(() => r3.statusText);
+        tests.push({ name: "3. GET /instance/fetchInstances (Header apiKey)", status: r3.status, ok: r3.ok, data: t3Data });
+      } catch (e: any) {
+        tests.push({ name: "3. GET /instance/fetchInstances (Header apiKey)", error: e.message });
+      }
+
+      // Test 4: fetchInstances with Bearer token
+      try {
+        const r4 = await fetch(`${apiUrl}/instance/fetchInstances`, {
+          headers: { "Authorization": `Bearer ${globalKey}`, "Content-Type": "application/json" }
+        });
+        const t4Data = await r4.json().catch(() => r4.statusText);
+        tests.push({ name: "4. GET /instance/fetchInstances (Header Authorization Bearer)", status: r4.status, ok: r4.ok, data: t4Data });
+      } catch (e: any) {
+        tests.push({ name: "4. GET /instance/fetchInstances (Header Authorization Bearer)", error: e.message });
+      }
+
+      // Test 5: fetchInstances with query string
+      try {
+        const r5 = await fetch(`${apiUrl}/instance/fetchInstances?apikey=${encodeURIComponent(globalKey)}`);
+        const t5Data = await r5.json().catch(() => r5.statusText);
+        tests.push({ name: "5. GET /instance/fetchInstances (Query ?apikey=)", status: r5.status, ok: r5.ok, data: t5Data });
+      } catch (e: any) {
+        tests.push({ name: "5. GET /instance/fetchInstances (Query ?apikey=)", error: e.message });
+      }
+
+      // Test 6: POST /instance/create with test instance
+      try {
+        const r6 = await fetch(`${apiUrl}/instance/create`, {
+          method: "POST",
+          headers: getEvolutionHeaders(globalKey),
+          body: JSON.stringify({
+            instanceName: instanceName,
+            qrcode: true,
+            integration: "WHATSAPP-BAILEYS"
+          })
+        });
+        const t6Data = await r6.json().catch(() => r6.statusText);
+        tests.push({ name: `6. POST /instance/create (${instanceName})`, status: r6.status, ok: r6.ok, data: t6Data });
+      } catch (e: any) {
+        tests.push({ name: `6. POST /instance/create (${instanceName})`, error: e.message });
+      }
+
+      return res.json({
+        success: true,
+        apiUrl,
+        globalKey,
+        globalKeyLength: globalKey.length,
+        instanceName,
+        userEmail: req.user?.email || "N/A",
+        tests
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message
+      });
+    }
+  });
+
+  // 4. Logout / Delete Instance in Evolution
+  app.post("/api/evolution/logout", requireAuth, async (req: any, res: any) => {
+    try {
+      const botId = (req.body?.botId || "").trim();
+      const { apiUrl, globalKey } = getEvolutionConfig(req, botId);
+      const instanceName = getEvolutionInstanceName(botId, req.user?.email);
+
+      await fetch(`${apiUrl}/instance/logout/${instanceName}`, {
+        method: "DELETE",
+        headers: getEvolutionHeaders(globalKey)
+      }).catch(() => {});
+
+      const allAgents = readAgents();
+      const targetIndex = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+      if (targetIndex !== -1) {
+        const currentConfig = allAgents[targetIndex].whatsappConfig || {};
+        allAgents[targetIndex].whatsappConfig = {
+          ...currentConfig,
+          status: "Not Connected",
+          updatedAt: new Date().toISOString()
+        };
+        saveAgents(allAgents);
+      }
+
+      return res.json({ success: true, message: "התנתקת בהצלחה מ-Evolution API" });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: "logout_failed", message: err?.message });
+    }
+  });
+
+  // 5. Webhook Listener for Evolution CONNECTION_UPDATE
+  app.post("/api/webhooks/evolution", (req: any, res: any) => {
+    try {
+      const body = req.body || {};
+      console.log("[EVOLUTION WEBHOOK] Event received:", JSON.stringify(body));
+
+      const event = body.event || body.type;
+      const instance = body.instance;
+      const state = body.data?.state || body.data?.connection;
+
+      if ((event === "connection.update" || event === "CONNECTION_UPDATE") && instance && state === "open") {
+        console.log(`[EVOLUTION WEBHOOK] Instance "${instance}" is now OPEN (Connected)! Updating agent status...`);
+        const allAgents = readAgents();
+
+        // Match botId from instance name "client_<botId>"
+        const matchedIndex = allAgents.findIndex((a: any) => {
+          const instName = getEvolutionInstanceName(a.botId || a.id);
+          return instName === instance || a.botId === instance;
+        });
+
+        if (matchedIndex !== -1) {
+          const currentConfig = allAgents[matchedIndex].whatsappConfig || {};
+          allAgents[matchedIndex].whatsappConfig = {
+            ...currentConfig,
+            status: "Connected",
+            connectionType: "unofficial_qr",
+            evolutionInstanceName: instance,
+            updatedAt: new Date().toISOString()
+          };
+          saveAgents(allAgents);
+          console.log(`[EVOLUTION WEBHOOK] Agent "${allAgents[matchedIndex].botId}" status set to Connected!`);
+        }
+      }
+
+      return res.json({ status: "received" });
+    } catch (err: any) {
+      console.error("[EVOLUTION WEBHOOK] Error handling event:", err);
+      return res.status(200).json({ status: "error", error: err?.message });
     }
   });
 
@@ -1123,7 +1816,7 @@ async function startServer() {
   app.post("/api/sync", requireAuth, async (req, res) => {
     try {
       const payload = req.body;
-      const defaultUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+      const defaultUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
       let webhookUrl = payload.webhookUrl || defaultUrl;
 
       // Add botId as parameter as requested
@@ -1135,7 +1828,7 @@ async function startServer() {
 
       console.log("[SERVER] Syncing agent configuration to n8n webhook:", webhookUrl);
 
-      const response = await fetch(webhookUrl, {
+      let response = await fetch(webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1144,6 +1837,30 @@ async function startServer() {
         },
         body: JSON.stringify(payload),
       });
+
+      if (!response.ok && response.status === 404) {
+        let altUrl = "";
+        if (webhookUrl.includes("/webhook-test/")) {
+          altUrl = webhookUrl.replace("/webhook-test/", "/webhook/");
+        } else if (webhookUrl.includes("/webhook/")) {
+          altUrl = webhookUrl.replace("/webhook/", "/webhook-test/");
+        }
+        if (altUrl) {
+          console.log(`[SERVER] Primary webhook returned 404. Fallback attempt to alternate URL: ${altUrl}`);
+          const altRes = await fetch(altUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+            },
+            body: JSON.stringify(payload),
+          });
+          if (altRes.ok) {
+            response = altRes;
+          }
+        }
+      }
 
       const responseText = await response.text();
       let responseData;
@@ -1178,23 +1895,30 @@ async function startServer() {
     }
   });
 
-  // Fetch fields content FROM n8n (GET URL Webhook payload)
-  app.get("/api/fetch-config", requireAuth, async (req, res) => {
+  // Fetch fields content FROM n8n (GET/POST URL Webhook payload with POST fallback)
+  const handleFetchConfig = async (req: any, res: any) => {
     try {
-      const defaultUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
-      const webhookUrlFromQuery = req.query.url as string;
-      let webhookUrl = webhookUrlFromQuery || defaultUrl;
+      const defaultGetUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283";
+      const postWebhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
+      const webhookUrlFromQuery = (req.query.url || req.body?.url) as string;
+      let webhookUrl = webhookUrlFromQuery || defaultGetUrl;
 
-      // Append botId as query parameter if supplied, so the backend can fetch filtered configuration
-      const botId = req.query.botId as string;
-      if (botId) {
-        const hasQuery = webhookUrl.includes("?");
-        webhookUrl += `${hasQuery ? "&" : "?"}botId=${encodeURIComponent(botId)}`;
+      // If the URL passed for fetching is the POST update URL, swap it to the GET fetch URL
+      if (webhookUrl === postWebhookUrl) {
+        webhookUrl = defaultGetUrl;
       }
 
-      console.log("[SERVER] Fetching live config from webhook (GET):", webhookUrl);
+      // Append botId as query parameter if supplied, so the backend can fetch filtered configuration
+      const botId = (req.query.botId || req.body?.botId) as string;
+      let targetUrl = webhookUrl;
+      if (botId) {
+        const hasQuery = targetUrl.includes("?");
+        targetUrl += `${hasQuery ? "&" : "?"}botId=${encodeURIComponent(botId)}`;
+      }
 
-      const response = await fetch(webhookUrl, {
+      console.log("[SERVER] Fetching live config from webhook (GET):", targetUrl);
+
+      let response = await fetch(targetUrl, {
         method: "GET",
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1203,10 +1927,40 @@ async function startServer() {
         }
       });
 
-      const responseText = await response.text();
+      let responseText = await response.text();
+
+      // Fallback to POST if n8n webhook returns 404/405 or indicates it expects a POST request
+      if (!response.ok && (responseText.includes("POST request") || response.status === 404 || response.status === 405)) {
+        console.warn(`[SERVER] Webhook GET returned ${response.status}. Retrying with POST request fallback to: ${targetUrl}`);
+        const postResponse = await fetch(targetUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*"
+          },
+          body: JSON.stringify({
+            action: "fetch",
+            botId: botId || "*"
+          })
+        });
+
+        const postText = await postResponse.text();
+        if (postResponse.ok) {
+          console.log("[SERVER] Webhook POST fallback succeeded!");
+          response = postResponse;
+          responseText = postText;
+        } else {
+          console.error("[SERVER] Webhook POST fallback also failed:", postResponse.status, postText);
+          if (postResponse.status !== 404) {
+            response = postResponse;
+            responseText = postText;
+          }
+        }
+      }
 
       if (!response.ok) {
-        console.error("[SERVER] Webhook GET request failed:", response.status, responseText);
+        console.error("[SERVER] Webhook request failed:", response.status, responseText);
         return res.status(response.status).json({
           success: false,
           error: `ה-Webhook של n8n החזיר שגיאה קוד ${response.status} בקריאת הנתונים`,
@@ -1214,7 +1968,7 @@ async function startServer() {
         });
       }
 
-      console.log("[SERVER] Webhook GET parsed successful output range:", responseText.substring(0, 400));
+      console.log("[SERVER] Webhook parsed successful output range:", responseText.substring(0, 400));
       
       let parsedData;
       try {
@@ -1229,14 +1983,17 @@ async function startServer() {
       });
 
     } catch (err: any) {
-      console.error("[SERVER] Failed to request GET webhook config:", err);
+      console.error("[SERVER] Failed to request GET/POST webhook config:", err);
       return res.status(500).json({
         success: false,
-        error: "שגיאת תקשורת בקבלת נתונים מ-n8n (GET Hook)",
+        error: "שגיאת תקשורת בקבלת נתונים מ-n8n (Hook)",
         details: err?.message || String(err),
       });
     }
-  });
+  };
+
+  app.get("/api/fetch-config", requireAuth, handleFetchConfig);
+  app.post("/api/fetch-config", requireAuth, handleFetchConfig);
 
   // --- HTML SCRAPER / SANITIZATION HELPER ---
   function extractDocumentLinks(html: string, baseUrl: string): string[] {
@@ -1371,7 +2128,7 @@ async function startServer() {
 
       const activeAgentType = agentType === "support" ? "support" : "sales";
       const hasAdditionalContext = additionalContext && typeof additionalContext === "string" && additionalContext.trim().length > 0;
-      const finalAgentName = agentName && typeof agentName === "string" && agentName.trim().length > 0 ? agentName.trim() : "חיים בר";
+      const finalAgentName = agentName && typeof agentName === "string" && agentName.trim().length > 0 ? agentName.trim() : "נציג העסק";
 
       // 1. Clean and normalize phone number if provided
       let ownerPhone = "972547866119"; // Default value
@@ -1653,7 +2410,7 @@ async function startServer() {
       const randomDigits = Math.floor(100 + Math.random() * 900).toString();
       const dynamicBotId = `bot_generic_${randomDigits}`;
 
-      const defaultWebhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+      const defaultWebhookUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
       
       const defaultBotName = `${businessName} _ ${activeAgentType === "support" ? "תמיכה טכנית" : "מכירות"}`;
 console.log("[DEBUG] KEY VALUE:", "B96B5776A5E4-4754-B7DC-1F1AF8A74940");
@@ -1680,17 +2437,34 @@ console.log("[DEBUG] INSTANCE VALUE:", "Generic Bot");
         Status: "פעיל",
         status: "פעיל",
         "סטטוס": "פעיל",
+
+        // Event metadata
+        event: "create_bot",
+        eventType: "CREATE_BOT",
+        event_type: "CREATE_BOT",
+        action: "create_bot",
+        "אירוע": "יצירת בוט חדש",
+        "סוג אירוע": "CREATE_BOT",
         
-        // Separate 9 prompt parts
-        botIdentity: googleAiPromptResponse.botIdentity,
-        coursesInfo: googleAiPromptResponse.coursesInfo,
-        kidsCourses: googleAiPromptResponse.kidsCourses,
-        conversationFlow: googleAiPromptResponse.conversationFlow,
-        writingStyle: googleAiPromptResponse.writingStyle,
-        faqAnswers: googleAiPromptResponse.faqAnswers,
-        whatNotToDo: googleAiPromptResponse.whatNotToDo,
-        syllabusLinks: googleAiPromptResponse.syllabusLinks,
-        humanEscalation: googleAiPromptResponse.humanEscalation,
+        // Separate 9 prompt parts + requested field aliases
+        botIdentity: googleAiPromptResponse.botIdentity || "",
+        Services: googleAiPromptResponse.coursesInfo || "",
+        services: googleAiPromptResponse.coursesInfo || "",
+        coursesInfo: googleAiPromptResponse.coursesInfo || "",
+        Audiences: googleAiPromptResponse.kidsCourses || "",
+        audiences: googleAiPromptResponse.kidsCourses || "",
+        KidsCourses: googleAiPromptResponse.kidsCourses || "",
+        kidsCourses: googleAiPromptResponse.kidsCourses || "",
+        conversationFlow: googleAiPromptResponse.conversationFlow || "",
+        writingStyle: googleAiPromptResponse.writingStyle || "",
+        faqAnswers: googleAiPromptResponse.faqAnswers || "",
+        whatNotToDo: googleAiPromptResponse.whatNotToDo || "",
+        syllabusLinks: googleAiPromptResponse.syllabusLinks || "",
+        humanEscalation: googleAiPromptResponse.humanEscalation || "",
+        imagesInfo: req.body.imagesInfo || req.body.images || googleAiPromptResponse.imagesInfo || "",
+        images: req.body.imagesInfo || req.body.images || googleAiPromptResponse.imagesInfo || "",
+        videosInfo: req.body.videosInfo || req.body.videos || googleAiPromptResponse.videosInfo || "",
+        videos: req.body.videosInfo || req.body.videos || googleAiPromptResponse.videosInfo || "",
         
         // Hebrew mapping for database filter compatibility
         "שם בעל העסק": finalAgentName,
@@ -1731,7 +2505,7 @@ console.log("[DEBUG] PAYLOAD INSTANCE:", payload.whatsappInstance);
       // 5. Fire event to n8n Webhook
       console.log(`[PUBLIC DEMO] Syncing new agent to n8n Webhook directly: ${defaultWebhookUrl}`);
       
-      const response = await fetch(defaultWebhookUrl, {
+      let response = await fetch(defaultWebhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1739,6 +2513,24 @@ console.log("[DEBUG] PAYLOAD INSTANCE:", payload.whatsappInstance);
         },
         body: JSON.stringify(payload)
       });
+
+      if (!response.ok && response.status === 404) {
+        const altUrl = defaultWebhookUrl.includes("/webhook-test/")
+          ? defaultWebhookUrl.replace("/webhook-test/", "/webhook/")
+          : defaultWebhookUrl.replace("/webhook/", "/webhook-test/");
+        console.log(`[PUBLIC DEMO] Primary webhook returned 404, fallback to: ${altUrl}`);
+        const altRes = await fetch(altUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+          },
+          body: JSON.stringify(payload)
+        });
+        if (altRes.ok) {
+          response = altRes;
+        }
+      }
 
       const responseText = await response.text();
       let responseData;

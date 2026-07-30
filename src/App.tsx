@@ -48,6 +48,8 @@ import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
+import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
+import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
 
 // Global array for API fetch history logs
 const globalApiLogs: string[] = [];
@@ -160,9 +162,21 @@ interface AgentConfig {
   status?: string;
   name?: string;
   agentType?: "sales" | "support";
+  whatsappConfig?: {
+    phoneNumberId?: string;
+    systemUserAccessToken?: string;
+    wabaId?: string;
+    phoneNumber?: string;
+    code?: string;
+    appId?: string;
+    status?: string;
+    updatedAt?: string;
+  };
 }
 
-const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/fa5a6796-71e0-44c8-9623-d0dd4791a0bb";
+const DEFAULT_POST_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
+const DEFAULT_GET_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283";
+const DEFAULT_WEBHOOK_URL = DEFAULT_POST_WEBHOOK_URL;
 
 const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string[] }[]> = {
   botIdentity: [
@@ -252,6 +266,9 @@ export default function App() {
   const [landingPhone, setLandingPhone] = useState<string>("");
   const [landingPhoneError, setLandingPhoneError] = useState<string>("");
   const [landingAgentName, setLandingAgentName] = useState<string>("");
+  const [landingStep1Attempted, setLandingStep1Attempted] = useState<boolean>(false);
+  const [landingAgentNameTouched, setLandingAgentNameTouched] = useState<boolean>(false);
+  const [landingPhoneTouched, setLandingPhoneTouched] = useState<boolean>(false);
   const [landingAgentType, setLandingAgentType] = useState<"sales" | "support" | "leads">("sales");
   const [landingWizardStep, setLandingWizardStep] = useState<number>(1);
   const [landingAdditionalContext, setLandingAdditionalContext] = useState<string>("");
@@ -262,6 +279,7 @@ export default function App() {
   const [demoResult, setDemoResult] = useState<any>(null);
   const [demoSubmitError, setDemoSubmitError] = useState<string>("");
   const [showPremiumModal, setShowPremiumModal] = useState<boolean>(false);
+  const [showSystemFirebaseModal, setShowSystemFirebaseModal] = useState<boolean>(false);
   
   // Custom helper to parse PDF files client-side using pdf.js loaded dynamically from public CDN
   const extractTextFromPdf = async (file: File): Promise<string> => {
@@ -392,6 +410,7 @@ export default function App() {
   
   // Security Panel Modal Modal State
   const [showSecurityModal, setShowSecurityModal] = useState<boolean>(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState<boolean>(false);
   const [securityGoogleClientId, setSecurityGoogleClientId] = useState<string>("1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com");
   const [securityAllowedEmails, setSecurityAllowedEmails] = useState<string[]>([]);
   const [newAllowedEmailInput, setNewAllowedEmailInput] = useState<string>("");
@@ -492,9 +511,11 @@ export default function App() {
     if (theme === "light") {
       root.classList.add("theme-light");
       root.classList.remove("theme-dark");
+      root.classList.remove("dark");
       root.style.backgroundColor = "#faf9f6";
     } else {
       root.classList.add("theme-dark");
+      root.classList.add("dark");
       root.classList.remove("theme-light");
       root.style.backgroundColor = "#07070a";
     }
@@ -989,6 +1010,7 @@ export default function App() {
   // --- Landing page demo action ---
   const handleNextLandingStep = () => {
     setDemoSubmitError("");
+    setLandingStep1Attempted(true);
     if (landingWizardStep === 1) {
       if (!landingAgentName || !landingAgentName.trim()) {
         setDemoSubmitError("שם בעל העסק / הנציג הוא שדה חובה *");
@@ -1411,6 +1433,7 @@ export default function App() {
               setSessionToken(existingToken);
               setSessionUser(sessData.user);
               setIsAuthenticated(true);
+              setIsLandingPage(false);
               fetchAgentsFromServer(existingToken, sessData.user.email);
               fetchFullSettingsFromServer(existingToken);
               setIsAuthChecking(false);
@@ -1505,7 +1528,7 @@ export default function App() {
         googleObj.accounts.id.initialize({
           client_id: googleClientId,
           callback: handleGoogleSigninCredential,
-          auto_select: false,
+          auto_select: true,
           cancel_on_tap_outside: true,
         });
 
@@ -1519,6 +1542,9 @@ export default function App() {
             locale: "he",
           });
         }
+        
+        // Trigger One Tap / Auto-login if session is open on Google
+        googleObj.accounts.id.prompt();
       } else {
         // GSI script not parsed yet, retry shortly
         setTimeout(initGsi, 200);
@@ -1548,6 +1574,7 @@ export default function App() {
         setSessionToken(data.token);
         setSessionUser(data.user);
         setIsAuthenticated(true);
+        setIsLandingPage(false);
 
         // Fetch user context and agents
         fetchAgentsFromServer(data.token, data.user?.email);
@@ -1582,6 +1609,7 @@ export default function App() {
         setSessionToken(data.token);
         setSessionUser(data.user);
         setIsAuthenticated(true);
+        setIsLandingPage(false);
         
         // Load data
         fetchAgentsFromServer(data.token, data.user?.email);
@@ -2598,9 +2626,14 @@ ${videos || "(לא הוגדר)"}
       "מצב": currentStatus,
       "מצב בוט": currentStatus,
       
-      // Separate prompt parts
+      // Separate prompt parts & requested field mappings
       botIdentity: currentBotIdentity,
+      Services: currentCoursesInfo,
+      services: currentCoursesInfo,
       coursesInfo: currentCoursesInfo,
+      Audiences: currentKidsCourses,
+      audiences: currentKidsCourses,
+      KidsCourses: currentKidsCourses,
       kidsCourses: currentKidsCourses,
       conversationFlow: currentConversationFlow,
       writingStyle: currentWritingStyle,
@@ -2609,7 +2642,9 @@ ${videos || "(לא הוגדר)"}
       syllabusLinks: currentSyllabusLinks,
       humanEscalation: currentHumanEscalation,
       imagesInfo: currentImagesInfo,
+      images: currentImagesInfo,
       videosInfo: currentVideosInfo,
+      videos: currentVideosInfo,
       
       // Hebrew mapping for database filter compatibility
       "שם בעל העסק": currentOwnerName,
@@ -2636,7 +2671,13 @@ ${videos || "(לא הוגדר)"}
       "תמונות וגלריה": currentImagesInfo,
       "סרטוני וידאו": currentVideosInfo,
 
-      // Metadata properties
+      // Metadata properties & event parameters
+      event: resolvedIsNewBot ? "create_bot" : "update_bot",
+      eventType: resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
+      event_type: resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
+      action: resolvedIsNewBot ? "create_bot" : "update_bot",
+      "אירוע": resolvedIsNewBot ? "יצירת בוט חדש" : "עדכון בוט",
+      "סוג אירוע": resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
       timestamp: new Date().toISOString(),
       source: "עסק חכם - סוכנים דיגיטליים",
       systemId: "ais-agent-configurator",
@@ -2752,8 +2793,9 @@ ${videos || "(לא הוגדר)"}
     setSyncMessage("");
     
     try {
-      console.log("[CLIENT] Pulling live settings from n8n GET endpoint proxy with URL:", webhookUrl, "for Bot ID:", botId);
-      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(webhookUrl)}&botId=${encodeURIComponent(botId)}`, {
+      const fetchUrl = (webhookUrl && webhookUrl !== DEFAULT_POST_WEBHOOK_URL) ? webhookUrl : DEFAULT_GET_WEBHOOK_URL;
+      console.log("[CLIENT] Pulling live settings from n8n GET endpoint proxy with URL:", fetchUrl, "for Bot ID:", botId);
+      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(fetchUrl)}&botId=${encodeURIComponent(botId)}`, {
         headers: {
           "Authorization": `Bearer ${sessionToken}`
         }
@@ -2977,7 +3019,8 @@ ${videos || "(לא הוגדר)"}
   // Pull ALL configurations from n8n GET Webhook for the system administrator
   const handlePullAllAgentsFromN8n = async (customToken?: string, customWebhookUrl?: string) => {
     const tokenToUse = customToken || sessionToken;
-    const urlToUse = customWebhookUrl || webhookUrl || DEFAULT_WEBHOOK_URL;
+    const rawUrl = customWebhookUrl || webhookUrl;
+    const urlToUse = (rawUrl && rawUrl !== DEFAULT_POST_WEBHOOK_URL) ? rawUrl : DEFAULT_GET_WEBHOOK_URL;
     if (!tokenToUse) return;
 
     setIsPullingAll(true);
@@ -3348,7 +3391,7 @@ ${videos || "(לא הוגדר)"}
                 }`}
               >
                 <Lock className={`w-3 h-3 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
-                כניסת צוות ומנהלים
+                כניסה
               </button>
             </div>
           </div>
@@ -3377,14 +3420,14 @@ ${videos || "(לא הוגדר)"}
 
                     <h1 className={`text-2xl md:text-3xl font-black leading-tight tracking-tight ${isLt ? "text-slate-900" : "text-white"}`}>
                       ניצור לך בוט מכירות חכם{" "}
-                      <span className="bg-gradient-to-r from-indigo-505 from-indigo-500 to-sky-500 bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-r from-indigo-500 to-sky-500 bg-clip-text text-transparent">
                         בתוך דקה אחת בלבד! 🤖
                       </span>
                     </h1>
 
                     <p className={`text-[11px] md:text-xs leading-normal max-w-md md:max-w-xl ${isLt ? "text-slate-600" : "text-slate-400"}`}>
                       הקלט היחיד שנדרש הוא כתובת האתר שמכילה את המידע על העסק.
-                      ה-AI שלנו יסרוק את האתר, יחלץ את השירותים וייצור סוכן דיגיטלי מתוחכם ב-WhatsApp לעמידה ביעדי המכירות שלך – וברירת המחדל שלו תוגדר כבוט קיים!
+                      ה-AI שלנו יסרוק את האתר, יחלץ את השירותים וייצור סוכן דיגיטלי מתוחכם ב-WhatsApp לעמידה ביעדי המכירות שלך!
                     </p>
 
                     <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold ${isLt ? "bg-emerald-50 border-emerald-150 text-emerald-700" : "bg-green-500/5 border-green-500/25 text-green-400"}`}>
@@ -3395,265 +3438,260 @@ ${videos || "(לא הוגדר)"}
 
                   <form onSubmit={handleCreateDemoBot} className="flex flex-col gap-4 w-full">
                     {/* STEP 1: BUSINESS DETAILS */}
-                      {landingWizardStep === 1 && (
-                        <div className="flex flex-col gap-4 animate-fadeIn">
-                          <div className={`border rounded-xl p-4 flex items-start gap-3 transition-all duration-300 ${
-                            isLt 
-                              ? "bg-indigo-50/50 border-indigo-100" 
-                              : "bg-gradient-to-r from-indigo-500/10 to-sky-500/10 border-indigo-500/20"
-                          }`}>
-                            <Sparkles className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isLt ? "text-indigo-600" : "text-sky-400"}`} />
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-1">
-                                <p className={`text-xs font-bold ${isLt ? "text-indigo-900" : "text-sky-300"}`}>ברוך הבא לקוסם ה-AI של עסק חכם!</p>
-                                <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-black">שלב 1/2</span>
-                              </div>
-                              <p className={`text-[11px] font-semibold mt-0.5 ${isLt ? "text-slate-600" : "text-slate-400"}`}>הזן את פרטי העסק הבסיסיים כדי שנוכל לכייל עבורך את עוזר ה-AI בצורה אישית ומקצועית.</p>
+                    {landingWizardStep === 1 && (
+                      <div className="flex flex-col gap-4 animate-fadeIn">
+                        <div className={`border rounded-xl p-4 flex items-start gap-3 transition-all duration-300 ${
+                          isLt 
+                            ? "bg-indigo-50/50 border-indigo-100" 
+                            : "bg-gradient-to-r from-indigo-500/10 to-sky-500/10 border-indigo-500/20"
+                        }`}>
+                          <Sparkles className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isLt ? "text-indigo-600" : "text-sky-400"}`} />
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className={`text-xs font-bold ${isLt ? "text-indigo-900" : "text-sky-300"}`}>ברוך הבא לקוסם ה-AI של עסק חכם!</p>
+                              <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-black">שלב 1/2</span>
                             </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="flex flex-col gap-1.5">
-                              <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                                שם בעל העסק / הנציג 👤 <span className="text-red-500 font-bold">*</span>:
-                              </label>
-                              <input
-                                type="text"
-                                placeholder="לדוגמה: חיים בר"
-                                value={landingAgentName}
-                                onChange={(e) => setLandingAgentName(e.target.value)}
-                                className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 font-medium text-right ${
-                                  isLt 
-                                    ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
-                                    : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/80 focus:ring-indigo-500"
-                                }`}
-                                disabled={isCreatingDemo}
-                              />
-                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>שם הנציג שהבוט יציג ויפנה אליו לקוחות</span>
-                            </div>
-
-                            <div className="flex flex-col gap-1.5">
-                              <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                                <span className="flex items-center gap-1.5">
-                                  טלפון בעל העסק לקבלת סיכומים 📞 <span className="text-red-500 font-bold">*</span>:
-                                </span>
-                              </label>
-                              <CountryPhoneInput
-                                id="landingPhone"
-                                value={landingPhone}
-                                onChange={(val, isValid, error) => {
-                                  setLandingPhone(val);
-                                  setLandingPhoneError(error);
-                                }}
-                                disabled={isCreatingDemo}
-                                placeholder="רשום טלפון ללא קידומת"
-                              />
-                              {!landingPhoneError && (
-                                <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="space-y-2 mt-2">
-                            <label className={`block text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>תבנית בסיס / אופי הפעילות של הסוכן ⚙️</label>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              {[
-                                { id: "sales", title: "סוכן שיווק ומכירות 🚀", desc: "סוכן דינמי החותר להשארת פרטים ותזמון שיעורי התנסות/פגישות" },
-                                { id: "support", title: "סוכן תמיכה ושירות 🛠️", desc: "סוכן המסייע במענה לשאלות נפוצות, פתרון בעיות ומתן מידע" },
-                                { id: "leads", title: "יועץ לימודים ואופטימיזציה 🎓", desc: "סוכן עם מיקוד אקדמי המלווה בסבלנות קהלי יעד הורים וילדים" }
-                              ].map((tpl) => (
-                                <button
-                                  key={tpl.id}
-                                  type="button"
-                                  onClick={() => setLandingAgentType(tpl.id as any)}
-                                  className={`p-3 rounded-xl text-right border transition cursor-pointer flex flex-col gap-1 ${
-                                    landingAgentType === tpl.id
-                                      ? isLt
-                                        ? "bg-indigo-50 border-indigo-500 text-indigo-900 shadow-md ring-1 ring-indigo-550/20"
-                                        : "bg-sky-550/10 border-sky-500 text-white shadow-lg ring-1 ring-sky-500/20"
-                                      : isLt
-                                        ? "bg-slate-50 border-slate-205 border-slate-200 text-slate-500 hover:border-slate-350"
-                                        : "bg-slate-950/40 border-slate-850 text-slate-400 hover:border-slate-800"
-                                  }`}
-                                >
-                                  <span className="text-xs font-extrabold">{tpl.title}</span>
-                                  <span className={`text-[10px] opacity-75 leading-relaxed font-semibold ${
-                                    landingAgentType === tpl.id
-                                      ? isLt ? "text-indigo-800" : "text-white"
-                                      : isLt ? "text-slate-500" : "text-slate-400"
-                                  }`}>{tpl.desc}</span>
-                                </button>
-                              ))}
-                            </div>
+                            <p className={`text-[11px] font-semibold mt-0.5 ${isLt ? "text-slate-600" : "text-slate-400"}`}>הזן את פרטי העסק הבסיסיים כדי שנוכל לכייל עבורך את עוזר ה-AI בצורה אישית ומקצועית.</p>
                           </div>
                         </div>
-                      )}
 
-                      {/* STEP 2: KNOWLEDGE SOURCES */}
-                      {landingWizardStep === 2 && (
-                        <div className="flex flex-col gap-4 animate-fadeIn">
-                          <div className={`border rounded-xl p-4 flex items-start gap-3 transition-all duration-300 ${
-                            isLt 
-                              ? "bg-indigo-50/50 border-indigo-100" 
-                              : "bg-gradient-to-r from-amber-500/10 to-rose-500/10 border-amber-500/20"
-                          }`}>
-                            <Sparkles className={`w-5 h-5 mt-0.5 flex-shrink-0 ${isLt ? "text-indigo-600" : "text-amber-400"}`} />
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-1">
-                                <p className={`text-xs font-bold ${isLt ? "text-indigo-900" : "text-amber-300"}`}>הזן חומרי למידה ומקורות ידע 📚</p>
-                                <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-black">שלב 2/2</span>
-                              </div>
-                              <p className={`text-[11px] font-semibold mt-0.5 ${isLt ? "text-slate-600" : "text-slate-400"}`}>סרוק באופן אוטומטי את האתר העסקי שלך או הדבק חומרים ידניים (שיעורים, קטלוגים, מחירים).</p>
-                            </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                              שם הנציג / בעל העסק 👤 <span className="text-red-500 font-bold">*</span>:
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="שם הנציג שיקבל פניות (לדוגמה: מנהל המשתלם, אריאל מהנגרייה)"
+                              value={landingAgentName}
+                              onChange={(e) => setLandingAgentName(e.target.value)}
+                              onBlur={() => setLandingAgentNameTouched(true)}
+                              className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 font-medium text-right ${
+                                (landingAgentNameTouched || landingStep1Attempted) && !landingAgentName.trim()
+                                  ? "border-red-500 bg-red-500/5 dark:bg-red-950/10 focus:border-red-500 focus:ring-red-500/20 text-slate-800 dark:text-white"
+                                  : isLt 
+                                    ? "bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                                    : "bg-[#151720] border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500/80 focus:ring-indigo-500"
+                              }`}
+                              disabled={isCreatingDemo}
+                            />
+                            {(landingAgentNameTouched || landingStep1Attempted) && !landingAgentName.trim() ? (
+                              <span className="text-[10px] text-red-500 dark:text-red-400 font-bold">שם בעל העסק / הנציג הוא שדה חובה *</span>
+                            ) : (
+                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הזן את השם שאליו הבוט יציע ללקוחות להעביר את השיחה במקרה הצורך</span>
+                            )}
                           </div>
 
                           <div className="flex flex-col gap-1.5">
                             <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              <Globe className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
-                              כתובת אתר העסק (URL) <span className="text-red-400 font-bold">*</span>:
+                              כתובת אתר האינטרנט של העסק 🌐 <span className="text-red-500 font-bold">*</span>:
                             </label>
                             <input
                               type="text"
-                              placeholder="לדוגמה: mybusiness.dev, app.shop.ai, או business.co.il"
+                              placeholder="https://example.co.il או www.mysite.co.il"
                               value={landingUrl}
                               onChange={(e) => setLandingUrl(e.target.value)}
-                              className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 pl-8 font-mono text-left ${
-                                isLt 
-                                  ? "bg-slate-50 hover:bg-slate-100/30 focus:bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
-                                  : "bg-[#151720] border-slate-800 text-white focus:border-indigo-500/85 focus:ring-indigo-500/30"
-                              }`}
-                              dir="ltr"
-                              disabled={isCreatingDemo}
-                            />
-                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>האתר שממנו ה-AI יסרוק וישלוף את המידע. תומך בכל סוגי הדומיינים (כמו .co.il, .com, .dev, .ai, ותתי-דומיינים)</span>
-                          </div>
-
-                          <div 
-                            className={`flex flex-col gap-1 p-2 rounded-2xl transition-all duration-150 ${
-                              dragOverDemo 
-                                ? isLt
-                                  ? "bg-indigo-50 border-2 border-dashed border-indigo-400 scale-[1.01]"
-                                  : "bg-indigo-950/20 border-2 border-dashed border-indigo-500 scale-[1.01]" 
-                                : "bg-transparent border border-transparent"
-                            }`}
-                            onDragEnter={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDragOverDemo(true);
-                            }}
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDragOverDemo(true);
-                            }}
-                            onDragLeave={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDragOverDemo(false);
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDragOverDemo(false);
-                              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                                handleFileSelect(e.dataTransfer.files[0]);
-                              }
-                            }}
-                          >
-                            <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
-                              <span className="flex items-center gap-1.5">
-                                <FileText className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
-                                שדה טקסט חופשי / דפי מידע מורחבים וקבצי ידע:
-                              </span>
-                              <span className={`text-[8px] font-mono select-none ${isLt ? "text-indigo-700" : "text-indigo-300"}`}>גרור קבצים לכאן או הדבק</span>
-                            </label>
-                            <textarea
-                              placeholder="הדבק כאן חומר נוסף על החברה, ברושורים, מחירונים... (או גרור קובץ ידע לכאן)"
-                              value={landingAdditionalContext}
-                              onChange={(e) => setLandingAdditionalContext(e.target.value)}
-                              rows={3}
-                              className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 resize-y ${
-                                isLt
-                                  ? "bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20"
-                                  : "bg-[#151720] border-slate-800 text-white focus:ring-1 focus:ring-indigo-500/50"
+                              className={`w-full px-3 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 font-mono text-left dir-ltr ${
+                                landingStep1Attempted && !landingUrl.trim()
+                                  ? "border-red-500 bg-red-500/5 dark:bg-red-950/10 focus:border-red-500 focus:ring-red-500/20 text-slate-800 dark:text-white"
+                                  : isLt 
+                                    ? "bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20" 
+                                    : "bg-[#151720] border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500/80 focus:ring-indigo-500"
                               }`}
                               disabled={isCreatingDemo}
                             />
-                            <div className="border border-dashed border-indigo-300 dark:border-indigo-800/80 rounded-xl px-2.5 py-1.5 bg-indigo-50/30 dark:bg-indigo-950/10 flex items-center justify-between gap-2 overflow-hidden transition duration-150 mt-1">
-                              <div className="flex flex-col text-right">
-                                <span className="text-[9px] font-bold text-indigo-950 dark:text-indigo-250">
-                                  {fileLoading ? "מעבד ומחלץ טקסט..." : "רוצה לטעון קובץ ידע? גרור לכאן או לחץ:"}
-                                </span>
-                                <span className="text-[8px] text-slate-500 dark:text-slate-450 font-semibold">
-                                  מחלץ טקסט אוטומטית ממסמכים וקבצי ברושור (.pdf, .txt, .json, .csv, .md)
-                                </span>
-                              </div>
-                              <label className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-indigo-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-indigo-300 focus:border-indigo-500 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 rounded-lg text-[9px] font-bold cursor-pointer transition shadow-sm select-none">
-                                <Paperclip className="w-3 h-3 text-indigo-500" />
-                                הוסף מסמך 📎
-                                <input
-                                  type="file"
-                                  accept=".txt,.json,.csv,.md,.pdf"
-                                  className="hidden"
-                                  disabled={isCreatingDemo || fileLoading}
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                      handleFileSelect(file);
-                                    }
-                                  }}
-                                />
-                              </label>
-                            </div>
+                            {landingStep1Attempted && !landingUrl.trim() ? (
+                              <span className="text-[10px] text-red-500 dark:text-red-400 font-bold">כתובת האתר היא שדה חובה *</span>
+                            ) : (
+                              <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>ה-AI יסרוק כתובת זו בזמן אמת כדי לחלץ מוצרים ושירותים</span>
+                            )}
                           </div>
                         </div>
-                      )}
 
-                      {/* Wizard Navigation Footer controls */}
-                      <div className={`pt-4 border-t flex items-center justify-between select-none ${isLt ? "border-slate-100" : "border-slate-800/60"}`}>
-                        {landingWizardStep > 1 ? (
-                          <button
-                            type="button"
-                            onClick={() => setLandingWizardStep(landingWizardStep - 1)}
-                            className={`px-5 py-2.5 font-black rounded-xl text-xs transition cursor-pointer flex items-center gap-1 ${
-                              isLt 
-                                ? "bg-slate-100 hover:bg-slate-200 text-slate-600" 
-                                : "bg-slate-850 hover:bg-slate-800 text-slate-300"
-                            }`}
-                          >
-                            <ArrowRight className="w-3.5 h-3.5" />
-                            <span>חזור</span>
-                          </button>
-                        ) : (
-                          <div />
-                        )}
-
-                        <div className="flex items-center gap-3">
-                          {landingWizardStep < 2 ? (
-                            <button
-                              type="button"
-                              onClick={handleNextLandingStep}
-                              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-lg shadow-indigo-600/10 transition duration-150"
-                            >
-                              המשך לשלב הבא
-                            </button>
-                          ) : (
-                            <button
-                              type="submit"
-                              disabled={isCreatingDemo}
-                              className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs shadow-lg shadow-indigo-600/10 cursor-pointer transition duration-150 flex items-center gap-1.5"
-                            >
-                              <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
-                              <span>{landingAgentType === "support" ? "ייצר בוט תמיכה טכנית חכם ב-60 שניות! 🚀" : landingAgentType === "leads" ? "ייצר יועץ לימודים חכם ב-60 שניות! 🎓" : "ייצר בוט מכירות חכם ב-60 שניות! 🚀"}</span>
-                            </button>
-                          )}
+                        <div className="flex flex-col gap-1.5">
+                          <label className={`text-[11px] font-bold flex items-center justify-between ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                            <span className="flex items-center gap-1.5">
+                              טלפון בעל העסק לקבלת סיכומים 📞 <span className="text-red-500 font-bold">*</span>:
+                            </span>
+                          </label>
+                          <CountryPhoneInput
+                            id="landingPhone"
+                            value={landingPhone}
+                            onChange={(val, isValid, error) => {
+                              setLandingPhone(val);
+                              setLandingPhoneError(error);
+                            }}
+                            disabled={isCreatingDemo}
+                            placeholder="רשום טלפון ללא קידומת"
+                            showError={landingStep1Attempted}
+                            isLt={isLt}
+                          />
+                          {landingStep1Attempted && (!landingPhone || !landingPhone.trim() || landingPhoneError) ? (
+                            <span className="text-[10px] text-red-500 dark:text-red-400 font-bold">{landingPhoneError || "טלפון בעל העסק הוא שדה חובה *"}</span>
+                          ) : !landingPhoneError ? (
+                            <span className={`text-[9px] leading-none ${isLt ? "text-slate-400" : "text-slate-500"}`}>הכנס טלפון נייד לקבלת עדכונים וסיכומים של הבוט</span>
+                          ) : null}
                         </div>
                       </div>
-                    </form>
-                  </motion.div>
-                )}
+                    )}
 
-              {/* Loader screen with custom Israeli Hebrew progress steps */}
+                    {/* STEP 2: ADVANCED KNOWLEDGE & TEMPLATE */}
+                    {landingWizardStep === 2 && (
+                      <div className="flex flex-col gap-4 animate-fadeIn">
+                        <div
+                          className={`p-3 rounded-xl border transition ${
+                            dragOverDemo
+                              ? "border-indigo-500 bg-indigo-500/10"
+                              : isLt
+                                ? "border-slate-200 bg-slate-50"
+                                : "border-slate-800 bg-[#151720]"
+                          }`}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDragOverDemo(true);
+                          }}
+                          onDragLeave={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDragOverDemo(false);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDragOverDemo(false);
+                            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                              handleFileSelect(e.dataTransfer.files[0]);
+                            }
+                          }}
+                        >
+                          <label className={`text-[11px] font-bold flex items-center justify-between mb-1.5 ${isLt ? "text-slate-700" : "text-slate-300"}`}>
+                            <span className="flex items-center gap-1.5">
+                              <FileText className={`w-3.5 h-3.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`} />
+                              שדה טקסט חופשי / דפי מידע מורחבים וקבצי ידע:
+                            </span>
+                            <span className={`text-[8px] font-mono select-none ${isLt ? "text-indigo-700" : "text-indigo-300"}`}>גרור קבצים לכאן או הדבק</span>
+                          </label>
+                          <textarea
+                            placeholder="הדבק כאן חומר נוסף על החברה, ברושורים, מחירונים... (או גרור קובץ ידע לכאן)"
+                            value={landingAdditionalContext}
+                            onChange={(e) => setLandingAdditionalContext(e.target.value)}
+                            rows={3}
+                            className={`w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 resize-y ${
+                              isLt
+                                ? "bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20"
+                                : "bg-[#151720] border-slate-800 text-white focus:ring-1 focus:ring-indigo-500/50"
+                            }`}
+                            disabled={isCreatingDemo}
+                          />
+                          <div className="border border-dashed border-indigo-300 dark:border-indigo-800/80 rounded-xl px-2.5 py-1.5 bg-indigo-50/30 dark:bg-indigo-950/10 flex items-center justify-between gap-2 overflow-hidden transition duration-150 mt-1">
+                            <div className="flex flex-col text-right">
+                              <span className="text-[9px] font-bold text-indigo-950 dark:text-indigo-250">
+                                {fileLoading ? "מעבד ומחלץ טקסט..." : "רוצה לטעון קובץ ידע? גרור לכאן או לחץ:"}
+                              </span>
+                              <span className="text-[8px] text-slate-500 dark:text-slate-450 font-semibold">
+                                מחלץ טקסט אוטומטית ממסמכים וקבצי ברושור (.pdf, .txt, .json, .csv, .md)
+                              </span>
+                            </div>
+                            <label className="shrink-0 flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-indigo-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-indigo-300 focus:border-indigo-500 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 rounded-lg text-[9px] font-bold cursor-pointer transition shadow-sm select-none">
+                              <Paperclip className="w-3 h-3 text-indigo-500" />
+                              הוסף מסמך 📎
+                              <input
+                                type="file"
+                                accept=".txt,.json,.csv,.md,.pdf"
+                                className="hidden"
+                                disabled={isCreatingDemo || fileLoading}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    handleFileSelect(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 mt-2">
+                          <label className={`block text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>תבנית בסיס / אופי הפעילות של הסוכן ⚙️</label>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            {[
+                              { id: "sales", title: "סוכן שיווק ומכירות 🚀", desc: "סוכן דינמי החותר להשארת פרטים ותזמון שיעורי התנסות/פגישות" },
+                              { id: "support", title: "סוכן תמיכה ושירות 🛠️", desc: "סוכן המסייע במענה לשאלות נפוצות, פתרון בעיות ומתן מידע" },
+                              { id: "leads", title: "יועץ לימודים ואופטימיזציה 🎓", desc: "סוכן עם מיקוד אקדמי המלווה בסבלנות קהלי יעד הורים וילדים" }
+                            ].map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                type="button"
+                                onClick={() => setLandingAgentType(tpl.id as any)}
+                                className={`p-3 rounded-xl text-right border transition cursor-pointer flex flex-col gap-1 ${
+                                  landingAgentType === tpl.id
+                                    ? isLt
+                                      ? "bg-indigo-50 border-indigo-500 text-indigo-900 shadow-md ring-1 ring-indigo-500/20"
+                                      : "bg-sky-500/10 border-sky-500 text-white shadow-lg ring-1 ring-sky-500/20"
+                                    : isLt
+                                      ? "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300"
+                                      : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-800"
+                                }`}
+                              >
+                                <span className="text-xs font-extrabold">{tpl.title}</span>
+                                <span className={`text-[10px] opacity-75 leading-relaxed font-semibold ${
+                                  landingAgentType === tpl.id
+                                    ? isLt ? "text-indigo-800" : "text-white"
+                                    : isLt ? "text-slate-500" : "text-slate-400"
+                                }`}>{tpl.desc}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Wizard Navigation Footer controls */}
+                    <div className={`pt-4 border-t flex items-center justify-between select-none ${isLt ? "border-slate-100" : "border-slate-800/60"}`}>
+                      {landingWizardStep > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => setLandingWizardStep(landingWizardStep - 1)}
+                          className={`px-5 py-2.5 font-black rounded-xl text-xs transition cursor-pointer flex items-center gap-1 ${
+                            isLt 
+                              ? "bg-slate-100 hover:bg-slate-200 text-slate-600" 
+                              : "bg-slate-850 hover:bg-slate-800 text-slate-300"
+                          }`}
+                        >
+                          <ArrowRight className="w-3.5 h-3.5" />
+                          <span>חזור</span>
+                        </button>
+                      ) : (
+                        <div />
+                      )}
+
+                      <div className="flex items-center gap-3">
+                        {landingWizardStep < 2 ? (
+                          <button
+                            type="button"
+                            onClick={handleNextLandingStep}
+                            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-lg shadow-indigo-600/10 transition duration-150"
+                          >
+                            המשך לשלב הבא
+                          </button>
+                        ) : (
+                          <button
+                            type="submit"
+                            disabled={isCreatingDemo}
+                            className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs shadow-lg shadow-indigo-600/10 cursor-pointer transition duration-150 flex items-center gap-1.5"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                            <span>{landingAgentType === "support" ? "ייצר בוט תמיכה טכנית חכם ב-60 שניות! 🚀" : landingAgentType === "leads" ? "ייצר יועץ לימודים חכם ב-60 שניות! 🎓" : "ייצר בוט מכירות חכם ב-60 שניות! 🚀"}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </form>
+                </motion.div>
+              )}
+
+              {/* Loader screen with custom Israeli Hebrew progress steps - exactly 3 steps */}
               {isCreatingDemo && (
                 <motion.div
                   key="loader-view"
@@ -3674,15 +3712,13 @@ ${videos || "(לא הוגדר)"}
                     <p className={`text-xs font-bold tracking-wide ${isLt ? "text-indigo-600" : "text-[#38BDF8]"}`}>זמן משוער: פחות מדקה לשלמות</p>
                   </div>
 
-                  {/* Staggered progress logs from Haim Bar's request specifications */}
+                  {/* Staggered progress logs */}
                   <div className={`w-full border rounded-xl p-4 flex flex-col gap-3 text-right ${
                     isLt ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-[#151720] border-slate-800/80 text-white"
                   }`}>
                     {[
                       "🔍 סורק ומחלץ את המידע האמיתי מאתר האינטרנט של העסק...",
                       "🧠 מנתח את מוצרי העסק, יתרונותיו האמיתיים וקהל היעד באמצעות AI...",
-                      "✍️ כותב ומלטש פרוมפט מכירות מושלם ומנוסח בעברית (חוסם הפניות לקורסים לא קשורים)...",
-                      "🛡️ מגדיר את הערכים הגנריים: bot_generic_XYZ, סוכן Smarti ומקצה מפתח VIP...",
                       "🚀 מפיץ את הבוט החדש לעולם החופשי"
                     ].map((stepText, idx) => {
                       const isPast = idx < demoStep;
@@ -3722,121 +3758,47 @@ ${videos || "(לא הוגדר)"}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   className={`max-w-2xl mx-auto w-full border rounded-2xl p-4 md:p-5.5 shadow-2xl flex flex-col gap-4 ${
-                    isLt ? "bg-white border-green-200 text-slate-800 shadow-slate-200/50" : "bg-[#0E0F14]/95 border border-green-500/20 text-white"
+                    isLt ? "bg-white border-emerald-200 text-slate-800 shadow-slate-200/50" : "bg-[#0E0F14]/95 border border-emerald-500/20 text-white"
                   }`}
                 >
-                  {/* WhatsApp Bot Connection Box */}
-                  <div className={`border rounded-2xl p-4 text-right flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg pb-4 border-b ${
-                    isLt 
-                      ? "bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50 border-emerald-200 text-slate-800" 
-                      : "bg-gradient-to-r from-emerald-500/10 via-teal-500/15 to-emerald-500/10 border-emerald-500/20 text-white"
-                  }`}>
-                    <div className="flex flex-col gap-0.5">
+                  {/* Entire Green WhatsApp Bot Connection Card - Fully Clickable */}
+                  <a
+                    href="https://wa.me/972506725398?text=%D7%94%D7%99%D7%99%2C%20%D7%90%D7%A0%D7%99%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%9C%D7%91%D7%97%D7%95%D7%9F%20%D7%90%D7%AA%20%D7%94%D7%91%D7%95%D7%98%20%D7%A9%D7%99%D7%A6%D7%A8%D7%AA%D7%99"
+                    target="_blank"
+                    referrerPolicy="no-referrer"
+                    className={`border rounded-2xl p-4 md:p-5 text-right flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl transition-all duration-200 cursor-pointer hover:scale-[1.01] active:scale-[0.99] group ${
+                      isLt 
+                        ? "bg-emerald-600 hover:bg-emerald-700 border-emerald-700 text-white shadow-emerald-600/20" 
+                        : "bg-emerald-950/90 hover:bg-emerald-900 border-emerald-500/40 text-emerald-100 shadow-emerald-950/50"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 justify-start">
-                        <span className="flex h-2 w-2 relative">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-550 bg-green-500"></span>
+                        <span className="flex h-2.5 w-2.5 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-300"></span>
                         </span>
-                        <h4 className={`text-xs font-black ${isLt ? "text-slate-900" : "text-white"}`}>הבוט שלך נוצר ומוכן לשיחה! 🚀</h4>
+                        <h4 className="text-sm font-black text-white tracking-wide">הבוט שלך נוצר ומוכן לשיחה! 🚀</h4>
                       </div>
-                      <p className={`text-[11px] leading-normal max-w-md ${isLt ? "text-slate-600" : "text-slate-300"}`}>
-                        מערכת ה-AI חיברה את הסוכן למספר WhatsApp הדינמי. לחץ על הכפתור כדי להתחיל בשיחה איתו כעת!
+                      <p className="text-xs leading-relaxed max-w-md text-emerald-100 font-medium">
+                        מערכת ה-AI חיברה את הסוכן למספר WhatsApp הדינמי. לחץ בכל מקום כאן כדי להתחיל בשיחה איתו כעת!
                       </p>
                     </div>
-                    <a
-                      href="https://wa.me/972503054731?text=%D7%94%D7%99%D7%99%2C%20%D7%90%D7%A0%D7%99%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%9C%D7%91%D7%97%D7%95%D7%9F%20%D7%90%D7%AA%20%D7%94%D7%91%D7%95%D7%98%20%D7%A9%D7%99%D7%A6%D7%A8%D7%AA%D7%99"
-                      target="_blank"
-                      referrerPolicy="no-referrer"
-                      className="px-4 py-2.5 bg-[#25D366] hover:bg-[#1ebd59] bg-whatsapp text-white font-black text-[11px] rounded-xl shadow-xl transition-all hover:scale-[1.02] active:scale-95 duration-100 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      💬 כנס לשיחה עם הבוט ב-WhatsApp
-                    </a>
-                  </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-right">
-                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
-                      <span className="text-[9px] text-slate-500 font-bold">שם בעל העסק</span>
-                      <span className={`text-xs font-bold ${isLt ? "text-slate-905 text-slate-800" : "text-white"}`}>חיים בר</span>
+                    <div className="px-4 py-2.5 bg-emerald-500/30 group-hover:bg-emerald-500/50 border border-emerald-300/40 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shrink-0 transition-all shadow-md">
+                      <span className="text-base">💬</span>
+                      <span>כנס לשיחה ב-WhatsApp</span>
                     </div>
+                  </a>
 
-                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
-                      <span className="text-[9px] text-slate-500 font-bold">שם העסק שזוהה</span>
-                      <span className={`text-xs font-bold ${isLt ? "text-indigo-650 text-indigo-600" : "text-indigo-400"}`}>{demoResult.businessName}</span>
-                    </div>
-
-                    <div className={`border rounded-xl p-3 flex flex-col gap-0.5 ${isLt ? "bg-slate-50 border-slate-200" : "bg-[#141620] border-slate-800"}`}>
-                      <span className="text-[9px] text-slate-500 font-bold">מספר טלפון לקבלת סיכומים</span>
-                      <span className={`text-xs font-bold font-mono ${isLt ? "text-slate-805 text-slate-800" : "text-white"}`}>{demoResult.ownerPhone}</span>
-                    </div>
-                  </div>
-
-                  {/* Scrollable preview of generated Sales System Prompts */}
-                  <div className="flex flex-col gap-1.5 text-right">
-                    <span className={`text-[11px] font-bold ${isLt ? "text-slate-700" : "text-slate-300"}`}>תצוגה מקדימה של פרומפט המכירות שהורכב ב-AI:</span>
-                    <div className={`border rounded-xl p-3.5 max-h-52 overflow-y-auto text-xs leading-relaxed font-mono whitespace-pre-line scrollbar-thin ${
-                      isLt 
-                        ? "bg-slate-50 border-slate-200 text-slate-700" 
-                        : "bg-[#0b0c10] border-slate-850 text-slate-300"
-                    }`}>
-                      <div className="font-sans md-preview-container">
-                        <div className={`font-bold mb-1.5 ${isLt ? "text-indigo-600" : "text-indigo-400"}`}># פרומפט מכירות סלקטיבי מעולה ({demoResult.businessName})</div>
-                        
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🤖 זהות הבוט</strong>
-                          {demoResult.prompts.botIdentity}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🛍️ שירותים ומוצרים מהאתר</strong>
-                          {demoResult.prompts.coursesInfo}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>💎 חבילות והצעות מותאמות</strong>
-                          {demoResult.prompts.kidsCourses}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>💬 זרימת שיחת וווטסאפ ממוקדת</strong>
-                          {demoResult.prompts.conversationFlow}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>✍️ סגנון כתיבה ואימוג'י</strong>
-                          {demoResult.prompts.writingStyle}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>❓ שאלות ותשובות (FAQ)</strong>
-                          {demoResult.prompts.faqAnswers}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🛑 חוקי ברזל ("מה לא לעשות")</strong>
-                          {demoResult.prompts.whatNotToDo}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🔗 קישורים מהסורק</strong>
-                          {demoResult.prompts.syllabusLinks}
-                        </div>
-
-                        <div className="mb-2.5">
-                          <strong className={`block mt-1.5 ${isLt ? "text-slate-900" : "text-white"}`}>🚨 {landingAgentType === "support" ? "אסקלציה לתמיכה טכנית" : "אסקלציה לסוכן מכירות"}</strong>
-                          {demoResult.prompts.humanEscalation}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Premium Action trigger */}
-                  <div className="mt-0.5 flex flex-col gap-2">
+                  {/* Single Centered Action Button: Edit Prompt */}
+                  <div className="flex items-center justify-center pt-2">
                     <button
                       onClick={() => setShowPremiumModal(true)}
-                      className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs transition-all duration-150 flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/10 cursor-pointer"
+                      className="px-6 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg cursor-pointer transition flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95"
                     >
-                      <Sparkles className="w-4 h-4 text-slate-950 fill-slate-950/10 animate-pulse" />
-                      ערוך את הפרומפט וצפה בשיחות הבוט בזמן אמת 🌟
+                      <Sparkles className="w-4 h-4 fill-slate-950" />
+                      <span>ערוך את הפרומפט וצפה בשיחות הבוט בזמן אמת 🌟</span>
                     </button>
                   </div>
 
@@ -3857,7 +3819,7 @@ ${videos || "(לא הוגדר)"}
                               <Sparkles className="w-8 h-8 fill-amber-500/25" />
                             </div>
                             <div>
-                              <h4 className="text-lg font-black text-white">פיצ'ר פרימיום ללקוחות משלמים בלבד 👑</h4>
+                              <h4 className="text-lg font-black text-white">פיצ'ר פרימיום 👑</h4>
                               <p className="text-xs text-slate-400 mt-1">
                                 עריכת פרומפטים מותאמת באופן אישי וצפייה בשיחות חיות היא תכונה הזמינה לחברי עסק חכם Premium.
                               </p>
@@ -3879,13 +3841,13 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
 
-                           <div className="flex flex-col gap-2.5">
+                          <div className="flex flex-col gap-2.5">
                             <button
                               onClick={() => {
                                 setShowPremiumModal(false);
                                 handleGooglePopupLogin(true);
                               }}
-                              className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01]"
+                              className="w-full py-3 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black text-xs text-center rounded-xl shadow-lg cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01]"
                             >
                               🚀 פתח חשבון התנסות חינם לחודש
                             </button>
@@ -3900,25 +3862,6 @@ ${videos || "(לא הוגדר)"}
                       </div>
                     )}
                   </AnimatePresence>
-
-                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800/50">
-                    <button
-                      onClick={() => {
-                        setDemoResult(null);
-                        setLandingUrl("");
-                        setLandingPhone("");
-                      }}
-                      className="px-5 py-2.5 bg-[#171A24] hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-800 transition text-xs font-bold cursor-pointer"
-                    >
-                      צור בוט הדגמה נוסף
-                    </button>
-                    <button
-                      onClick={() => setIsLandingPage(false)}
-                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold cursor-pointer transition"
-                    >
-                      הרשמה / כניסת מנהלים ללוח הבקרה
-                    </button>
-                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -4002,7 +3945,7 @@ ${videos || "(לא הוגדר)"}
                 <button
                   type="button"
                   onClick={() => handleGooglePopupLogin(true)}
-                  className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs text-center rounded-xl shadow-lg shadow-green-600/10 cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
+                  className="w-full py-3 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black text-xs text-center rounded-xl shadow-lg cursor-pointer transition flex items-center justify-center gap-2 shrink-0 hover:scale-[1.01] active:scale-[0.99]"
                 >
                   🚀 פתח חשבון התנסות חינם לחודש
                 </button>
@@ -4092,6 +4035,7 @@ ${videos || "(לא הוגדר)"}
                             setSessionToken(data.token);
                             setSessionUser(data.user);
                             setIsAuthenticated(true);
+                            setIsLandingPage(false);
                             fetchAgentsFromServer(data.token, data.user?.email);
                             fetchFullSettingsFromServer(data.token);
                           } else {
@@ -4183,22 +4127,43 @@ ${videos || "(לא הוגדר)"}
 
           {/* Connected User Profile Controls */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* Security controls */}
+            {/* WhatsApp Business API Settings Button */}
+            <button
+              onClick={() => setShowWhatsAppModal(true)}
+              className="px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-emerald-200 rounded-xl border border-emerald-500/30 transition flex items-center gap-1.5 cursor-pointer text-xs font-black shadow-sm"
+              title="הגדרות חיבור WhatsApp Business (Cloud API & n8n)"
+            >
+              <Smartphone className="w-4 h-4 text-emerald-400" />
+              <span>חיבור WhatsApp Business 💬</span>
+            </button>
+
+            {/* Security controls & System Firebase Storage Settings (Admin Only) */}
             {sessionUser?.email === "haim.bar@gmail.com" && (
-              <button
-                onClick={() => {
-                  setSecurityGoogleClientId(googleClientId);
-                  setSecurityAllowedEmails(allowedEmails);
-                  setSecurityBypassUsers(bypassUsers);
-                  setSecurityFeedback(null);
-                  setShowSecurityModal(true);
-                }}
-                className="p-2 bg-[#171A24] text-slate-300 hover:text-sky-400 hover:shadow-[0_0_12px_rgba(56,189,248,0.2)] rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
-                title="נהל הרשאות ואימיילים מורשים"
-              >
-                <Shield className="w-4 h-4 text-sky-400" />
-                {t("permissions")}
-              </button>
+              <>
+                <button
+                  onClick={() => setShowSystemFirebaseModal(true)}
+                  className="p-2 bg-[#171A24] text-slate-300 hover:text-emerald-400 hover:shadow-[0_0_12px_rgba(16,185,129,0.2)] rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
+                  title="הגדרת מפתחות Firebase Storage ברמת המערכת (מנהל מערכת ראשי)"
+                >
+                  <Globe className="w-4 h-4 text-emerald-400" />
+                  <span>הגדרות Firebase 🌐</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSecurityGoogleClientId(googleClientId);
+                    setSecurityAllowedEmails(allowedEmails);
+                    setSecurityBypassUsers(bypassUsers);
+                    setSecurityFeedback(null);
+                    setShowSecurityModal(true);
+                  }}
+                  className="p-2 bg-[#171A24] text-slate-300 hover:text-sky-400 hover:shadow-[0_0_12px_rgba(56,189,248,0.2)] rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
+                  title="נהל הרשאות ואימיילים מורשים"
+                >
+                  <Shield className="w-4 h-4 text-sky-400" />
+                  {t("permissions")}
+                </button>
+              </>
             )}
 
             {/* Language Selector Dropdown */}
@@ -4834,6 +4799,7 @@ ${videos || "(לא הוגדר)"}
                     setOwnerPhoneError(error);
                   }}
                   placeholder="רשום טלפון ללא קידומת (למשל: 054-7866119)"
+                  isLt={false}
                 />
               </div>
 
@@ -4979,6 +4945,37 @@ ${videos || "(לא הוגדר)"}
                 </p>
               </div>
 
+            </div>
+
+            {/* WhatsApp Business API Connection Card */}
+            <div className="pt-4 mt-2 border-t border-slate-850 flex flex-col sm:flex-row items-center justify-between gap-4 bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20 shadow-inner shrink-0 text-emerald-400">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div className="text-right">
+                  <h3 className="text-xs font-black text-white flex items-center gap-2">
+                    <span>חיבור WhatsApp Business (Cloud API & n8n) 💬</span>
+                    {agents.find(a => a.id === activeId)?.whatsappConfig?.phoneNumberId ? (
+                      <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">מחובר 🟢</span>
+                    ) : (
+                      <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-bold">טרם חוברו הגדרות 🟡</span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5 font-medium font-sans">
+                    חיבור WhatsApp Embedded Signup מול Meta, ניהול Phone Number ID, System User Access Token, WABA ID ו-Code עבור n8n
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowWhatsAppModal(true)}
+                className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-xl text-xs transition duration-200 cursor-pointer shadow-md shadow-emerald-500/10 flex items-center justify-center gap-2 shrink-0"
+              >
+                <Smartphone className="w-4 h-4 text-emerald-200" />
+                <span>הגדרות חיבור WhatsApp 📱</span>
+              </button>
             </div>
 
             {/* The brain of the agent (Prompt) callout */}
@@ -6254,22 +6251,50 @@ ${videos || "(לא הוגדר)"}
                           </div>
                         )}
 
-                        {/* Textarea - Giant Canvas */}
-                        <div className="flex-1 flex flex-col min-h-[350px]">
-                          <textarea
-                            id={`modal-prompt-area-${sec.key}`}
-                            placeholder={sec.placeholder}
-                            value={activeVal}
-                            onChange={(e) => handlePromptPartChange(sec.key as any, e.target.value)}
-                            disabled={sessionUser?.email !== "haim.bar@gmail.com"}
-                            className={`w-full flex-1 p-5 border rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none font-mono leading-relaxed resize-none placeholder-slate-700 h-full scrollbar-thin ${
-                              sessionUser?.email === "haim.bar@gmail.com"
-                                ? "bg-[#050608] border-slate-800 text-slate-100 focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-                                : "bg-[#0c0d12] border-slate-900 text-slate-400 cursor-not-allowed opacity-80"
-                            }`}
-                             dir="rtl"
-                           />
-                         </div>
+                        {/* Textarea or Firebase Media Uploader Component */}
+                        {(sec.key === "imagesInfo" || sec.key === "videosInfo") ? (
+                          <div className="flex-1 flex flex-col gap-3 min-h-[350px]">
+                            <FirebaseMediaUploader
+                              mediaType={sec.key === "imagesInfo" ? "image" : "video"}
+                              title={sec.title}
+                              value={activeVal}
+                              onChange={(val) => handlePromptPartChange(sec.key as any, val)}
+                              isReadonly={sessionUser?.email !== "haim.bar@gmail.com"}
+                            />
+                            
+                            {/* Optional Raw Textarea fallback for power users */}
+                            <details className="bg-[#050608] border border-slate-800 rounded-xl p-3 text-xs">
+                              <summary className="font-extrabold text-slate-400 cursor-pointer hover:text-white select-none">
+                                📝 תצוגת טקסט גולמי (Raw Prompt Data)
+                              </summary>
+                              <textarea
+                                id={`modal-prompt-area-${sec.key}`}
+                                placeholder={sec.placeholder}
+                                value={activeVal}
+                                onChange={(e) => handlePromptPartChange(sec.key as any, e.target.value)}
+                                disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                                className="w-full mt-2 p-3 bg-[#08090f] border border-slate-800 rounded-lg text-xs font-mono text-slate-300 h-32 resize-y focus:outline-none focus:border-sky-500"
+                                dir="rtl"
+                              />
+                            </details>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex flex-col min-h-[350px]">
+                            <textarea
+                              id={`modal-prompt-area-${sec.key}`}
+                              placeholder={sec.placeholder}
+                              value={activeVal}
+                              onChange={(e) => handlePromptPartChange(sec.key as any, e.target.value)}
+                              disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                              className={`w-full flex-1 p-5 border rounded-2xl text-xs sm:text-sm font-semibold focus:outline-none font-mono leading-relaxed resize-none placeholder-slate-700 h-full scrollbar-thin ${
+                                sessionUser?.email === "haim.bar@gmail.com"
+                                  ? "bg-[#050608] border-slate-800 text-slate-100 focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                                  : "bg-[#0c0d12] border-slate-900 text-slate-400 cursor-not-allowed opacity-80"
+                              }`}
+                              dir="rtl"
+                            />
+                          </div>
+                        )}
 
                         {/* File Upload Area specifically for Brochures and Information */}
                         {sec.key === "syllabusLinks" && (
@@ -6458,12 +6483,12 @@ ${videos || "(לא הוגדר)"}
                       </div>
 
                       <div className="space-y-1.5">
-                        <label className="block text-xs font-black text-slate-300">שם בעל העסק / הנציג 👤</label>
+                        <label className="block text-xs font-black text-slate-300">שם הנציג / בעל העסק להפניית לקוחות 👤</label>
                         <input
                           type="text"
                           value={wizardOwnerName}
                           onChange={(e) => setWizardOwnerName(e.target.value)}
-                          placeholder="לדוגמה: חיים בר..."
+                          placeholder="שם הנציג שיקבל פניות (למשל: מנהל המשתלם, אריאל מהנגרייה, נציג השירות)"
                           className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500 font-bold"
                           dir="rtl"
                         />
@@ -6493,6 +6518,7 @@ ${videos || "(לא הוגדר)"}
                           setWizardOwnerPhoneError(error);
                         }}
                         placeholder="רשום טלפון ללא קידומת (למשל: 054-7866119)"
+                        isLt={false}
                       />
                     </div>
 
@@ -6873,6 +6899,35 @@ ${videos || "(לא הוגדר)"}
           );
         })()}
       </AnimatePresence>
+
+      {/* WhatsApp Business Settings Modal */}
+      <WhatsAppSettingsModal
+        isOpen={showWhatsAppModal}
+        onClose={() => setShowWhatsAppModal(false)}
+        sessionToken={sessionToken}
+        botId={botId || activeId || "bot_default"}
+        businessName={businessName || "הסוכן שלך"}
+        initialOwnerPhone={ownerPhone}
+        apiFetch={apiFetch}
+        onConfigSaved={(updated) => {
+          setAgents(prev => prev.map(a => {
+            if (a.id === activeId || a.botId === botId) {
+              return {
+                ...a,
+                ownerPhone: updated.phoneNumber || a.ownerPhone,
+                whatsappConfig: updated
+              };
+            }
+            return a;
+          }));
+        }}
+      />
+
+      {/* System Admin Firebase Storage Config Modal */}
+      <FirebaseConfigModal
+        isOpen={showSystemFirebaseModal}
+        onClose={() => setShowSystemFirebaseModal(false)}
+      />
 
     </div>
   );

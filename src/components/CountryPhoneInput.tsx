@@ -89,6 +89,8 @@ interface CountryPhoneInputProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  showError?: boolean;
+  isLt?: boolean;
 }
 
 export default function CountryPhoneInput({
@@ -96,11 +98,16 @@ export default function CountryPhoneInput({
   value,
   onChange,
   placeholder = "חיוג מהיר ללא הקידומת, למשל: 054-7866119",
-  disabled = false
+  disabled = false,
+  showError = false,
+  isLt
 }: CountryPhoneInputProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [isTouched, setIsTouched] = useState(false);
+  
+  const isLight = isLt !== undefined ? isLt : !document.documentElement.classList.contains("dark");
   
   // Extract initial country and state
   const { countryCode: initialCountryCode, nationalNumber: initialNationalNumber } = parsePhoneNumber(value);
@@ -117,6 +124,7 @@ export default function CountryPhoneInput({
     setSelectedCountry(country);
     setPhoneInput(nationalNumber);
     setValidationError("");
+    setIsTouched(false);
   }, [value]);
 
   // Click outside close
@@ -252,12 +260,20 @@ export default function CountryPhoneInput({
             type="button"
             disabled={disabled}
             onClick={() => setIsOpen(!isOpen)}
-            className="h-full px-3 py-2.5 bg-white dark:bg-[#151720] border border-slate-300 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-[#1c1e2a] focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 min-w-[90px] justify-center cursor-pointer font-mono shadow-sm"
+            className={`h-full px-3 py-2.5 border rounded-xl text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 min-w-[90px] justify-center cursor-pointer font-mono shadow-sm focus:outline-none focus:ring-1 transition duration-150 ${
+              (showError || (isTouched && !!validationError))
+                ? isLight
+                  ? "border-red-500 bg-red-500/5 text-slate-800 focus:ring-red-500/20"
+                  : "border-red-500 bg-[#1e141a] text-white focus:ring-red-500/20"
+                : isLight
+                  ? "bg-white border-slate-300 text-slate-800 hover:bg-slate-50 focus:ring-indigo-500/20"
+                  : "bg-[#151720] border-slate-800 text-white hover:bg-[#1c1e2a] focus:ring-indigo-500/20"
+            }`}
             id={`country-btn-${id}`}
           >
             <span className="text-base leading-none select-none">{selectedCountry.flag}</span>
-            <span className="text-slate-800 dark:text-slate-200 font-bold">+{selectedCountry.code}</span>
-            <ChevronDown className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+            <span className={`font-bold ${isLight ? "text-slate-800" : "text-slate-200"}`}>+{selectedCountry.code}</span>
+            <ChevronDown className={`w-3 h-3 ${isLight ? "text-slate-400" : "text-slate-500"}`} />
           </button>
 
           {/* Dropdown panel */}
@@ -268,47 +284,57 @@ export default function CountryPhoneInput({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 5 }}
                 transition={{ duration: 0.15 }}
-                className="absolute z-50 mt-1 left-0 w-64 bg-white dark:bg-[#11121d] border border-slate-200 dark:border-slate-850 rounded-xl shadow-2xl overflow-hidden focus:outline-none"
+                className={`absolute z-50 mt-1 left-0 w-64 border rounded-xl shadow-2xl overflow-hidden focus:outline-none ${
+                  isLight ? "bg-white border-slate-200" : "bg-[#11121d] border-slate-800"
+                }`}
                 id={`country-dropdown-${id}`}
               >
                 {/* Search country box */}
-                <div className="p-2 border-b border-slate-200 dark:border-slate-850 flex items-center gap-2 bg-slate-50 dark:bg-[#151724]">
-                  <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />
+                <div className={`p-2 border-b flex items-center gap-2 ${isLight ? "bg-slate-50 border-slate-200" : "bg-[#151724] border-slate-800"}`}>
+                  <Search className={`w-3.5 h-3.5 shrink-0 ${isLight ? "text-slate-400" : "text-slate-500"}`} />
                   <input
                     type="text"
                     dir="rtl"
                     placeholder="חפש לפי מדינה או קידומת..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-transparent text-xs text-slate-850 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none"
+                    className={`w-full bg-transparent text-xs focus:outline-none ${
+                      isLight ? "text-slate-850 placeholder-slate-400" : "text-white placeholder-slate-600"
+                    }`}
                     autoFocus
                   />
                 </div>
 
                 {/* Scrollable options list */}
-                <div className="max-h-52 overflow-y-auto py-1 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-800">
+                <div className={`max-h-52 overflow-y-auto py-1 scrollbar-thin ${isLight ? "scrollbar-thumb-slate-300" : "scrollbar-thumb-slate-800"}`}>
                   {sortedCountries.length > 0 ? (
                     sortedCountries.map((c) => (
                       <button
                         key={`${c.code}-${c.englishName}`}
                         type="button"
                         onClick={() => handleCountrySelect(c)}
-                        className={`w-full px-3 py-2 text-right hover:bg-slate-100 dark:hover:bg-[#1a1c2a] flex items-center justify-between text-xs transition duration-100 cursor-pointer ${
-                          selectedCountry.code === c.code ? "bg-indigo-50 dark:bg-indigo-650/10 text-indigo-600 dark:text-indigo-400 font-bold" : "text-slate-700 dark:text-slate-300"
+                        className={`w-full px-3 py-2 text-right flex items-center justify-between text-xs transition duration-100 cursor-pointer ${
+                          selectedCountry.code === c.code
+                            ? isLight
+                              ? "bg-indigo-50 text-indigo-600 font-bold"
+                              : "bg-indigo-950/25 text-indigo-400 font-bold"
+                            : isLight
+                              ? "text-slate-700 hover:bg-slate-100"
+                              : "text-slate-300 hover:bg-[#1a1c2a]"
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <Check className={`w-3 h-3 text-indigo-600 dark:text-indigo-400 ${selectedCountry.code === c.code ? "opacity-100" : "opacity-0"}`} />
-                          <span className="font-mono text-slate-400 dark:text-slate-500">+{c.code}</span>
+                          <Check className={`w-3 h-3 ${isLight ? "text-indigo-600" : "text-indigo-400"} ${selectedCountry.code === c.code ? "opacity-100" : "opacity-0"}`} />
+                          <span className={`font-mono ${isLight ? "text-slate-400" : "text-slate-500"}`}>+{c.code}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-slate-700 dark:text-slate-300">{c.name}</span>
+                          <span className={isLight ? "text-slate-700" : "text-slate-300"}>{c.name}</span>
                           <span className="text-base">{c.flag}</span>
                         </div>
                       </button>
                     ))
                   ) : (
-                    <div className="px-3 py-4 text-center text-[10px] text-slate-400 dark:text-slate-500">
+                    <div className={`px-3 py-4 text-center text-[10px] ${isLight ? "text-slate-400" : "text-slate-500"}`}>
                       לא נמצאו מדינות מתאימות לחיפוש
                     </div>
                   )}
@@ -325,18 +351,23 @@ export default function CountryPhoneInput({
           dir="ltr"
           value={phoneInput}
           onChange={(e) => handlePhoneInputChange(e.target.value)}
+          onBlur={() => setIsTouched(true)}
           placeholder={placeholder}
           disabled={disabled}
-          className={`w-full px-3.5 py-2.5 bg-white dark:bg-[#151720] border ${
-            validationError ? "border-red-500/50 focus:border-red-500" : "border-slate-300 dark:border-slate-800 focus:border-indigo-500"
-          } rounded-xl text-xs text-slate-800 dark:text-white focus:outline-none focus:ring-1 ${
-            validationError ? "focus:ring-red-500/50" : "focus:ring-indigo-500"
-          } transition duration-150 font-mono text-left tracking-wider shadow-sm`}
+          className={`w-full px-3.5 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-1 transition duration-150 font-mono text-left tracking-wider shadow-sm ${
+            (showError || (isTouched && !!validationError))
+              ? isLight
+                ? "border-red-500 bg-red-500/5 text-slate-800 placeholder-slate-400 focus:ring-red-500/20"
+                : "border-red-500 bg-[#1e141a] text-white placeholder-slate-500 focus:ring-red-500/20"
+              : isLight
+                ? "bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:ring-indigo-500/20"
+                : "bg-[#151720] border-slate-850 text-white placeholder-slate-550 focus:border-indigo-550 focus:ring-indigo-500/20"
+          }`}
         />
       </div>
 
       {/* Validation warning */}
-      {validationError && (
+      {(showError || (isTouched && !!validationError)) && validationError && (
         <span className="text-[10px] text-red-500 dark:text-red-400 font-bold flex items-center gap-1 mt-0.5" id={`phone-err-${id}`}>
           <AlertCircle className="w-3 h-3 text-red-500 dark:text-red-400" />
           {validationError}
