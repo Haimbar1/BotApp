@@ -590,6 +590,40 @@ export default function App() {
     }
   };
 
+  // Map raw field labels (as sent from the webhook) to a relevant icon,
+  // so the chat viewer shows an icon instead of "chatInput:", "Name:", "Phone:" etc.
+  const CHAT_FIELD_ICON_MAP: Record<string, any> = {
+    chatInput: MessageSquare,
+    content: MessageSquare,
+    Name: User,
+    name: User,
+    Phone: Phone,
+    phone: Phone
+  };
+
+  // Renders a human message body, replacing known "Label: value" lines with an icon + value
+  const renderHumanMessageLines = (text: string) => {
+    const lines = text.split("\n");
+    const fieldLineRegex = /^(chatInput|content|Name|name|Phone|phone):\s*(.*)$/;
+
+    return lines.map((line, idx) => {
+      const match = line.match(fieldLineRegex);
+      if (match) {
+        const [, field, value] = match;
+        const Icon = CHAT_FIELD_ICON_MAP[field];
+        if (!value.trim()) return null;
+        return (
+          <div key={idx} dir="rtl" className="flex items-center gap-1.5">
+            {Icon && <Icon className="w-3.5 h-3.5 text-sky-500 shrink-0" />}
+            <span>{value}</span>
+          </div>
+        );
+      }
+      if (!line.trim()) return null;
+      return <span key={idx}>{line}</span>;
+    });
+  };
+
   // Fetch chats for the currently active bot
   useEffect(() => {
     let active = true;
@@ -5294,9 +5328,15 @@ ${videos || "(לא הוגדר)"}
                                         : "bg-[#1d2235]/60 border-slate-700/30 text-slate-100 rounded-tr-none"
                                     }`}
                                   >
-                                    <p className="whitespace-pre-wrap select-text break-words text-right leading-relaxed" dir="rtl">
-                                      {parsed.text}
-                                    </p>
+                                    {isAI ? (
+                                      <p className="whitespace-pre-wrap select-text break-words text-right leading-relaxed" dir="rtl">
+                                        {parsed.text}
+                                      </p>
+                                    ) : (
+                                      <div className="flex flex-col gap-1 select-text break-words text-right leading-relaxed" dir="rtl">
+                                        {renderHumanMessageLines(parsed.text)}
+                                      </div>
+                                    )}
 
                                     {/* Behind the scenes for AI response */}
                                     {isAI && (parsed.action || parsed.summary || parsed.raw) && (
