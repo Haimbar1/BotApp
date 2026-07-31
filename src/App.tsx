@@ -5298,7 +5298,7 @@ ${videos || "(לא הוגדר)"}
                                 <div
                                   key={msg.id}
                                   className={`flex flex-col gap-1 w-full max-w-[85%] ${
-                                    isAI ? "self-start text-left items-start" : "self-end text-right items-end"
+                                    isAI ? "self-start text-left items-start" : "self-start text-right items-start"
                                   }`}
                                 >
                                   {/* Sender / Name indicator */}
