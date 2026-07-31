@@ -5283,26 +5283,17 @@ ${videos || "(לא הוגדר)"}
                         <div className="flex flex-col h-full overflow-hidden">
                           
                           {/* Thread Header */}
-                          <div className="p-3 border-b border-slate-850 bg-[#090a0f] flex items-center justify-between gap-3">
+                          <div className="p-3 border-b border-slate-850 bg-[#090a0f] flex items-center gap-3">
                             <div className="flex items-center gap-2">
                               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500/20 to-indigo-500/20 flex items-center justify-center text-xs font-black border border-sky-500/20">
                                 {(activeSession.name || activeSession.phone || "").substring(0, 2)}
                               </div>
                               <div className="text-right">
                                 <h4 className="text-xs font-black text-slate-100">{activeSession.name}</h4>
-                                <p className="text-[10px] text-slate-500 font-mono">טלפון: {activeSession.phone}</p>
+                                {activeSession.name !== activeSession.phone && (
+                                  <p className="text-[10px] text-slate-500 font-mono">טלפון: {activeSession.phone}</p>
+                                )}
                               </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleClearSessionChats(activeSession.sessionId)}
-                                className="px-2.5 py-1 text-[10px] bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 rounded-lg transition-all cursor-pointer flex items-center gap-1 font-bold"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>נקה שיחה זו</span>
-                              </button>
                             </div>
                           </div>
 
