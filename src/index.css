@@ -447,6 +447,12 @@
   color: #4338ca !important;
 }
 
+.theme-light .text-sky-200,
+.theme-light .text-sky-100,
+.theme-light .text-sky-50 {
+  color: #0369a1 !important;
+}
+
 .theme-light .text-teal-400,
 .theme-light .text-teal-300 {
   color: #0f766e !important;

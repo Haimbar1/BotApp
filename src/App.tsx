@@ -601,27 +601,46 @@ export default function App() {
     phone: Phone
   };
 
-  // Renders a human message body, replacing known "Label: value" lines with an icon + value
+  // Renders a human message body, replacing known "Label: value" lines with an icon + value.
+  // Fixed display order: Name, then Phone, then the actual chat message text (chatInput/content) last.
   const renderHumanMessageLines = (text: string) => {
     const lines = text.split("\n");
     const fieldLineRegex = /^(chatInput|content|Name|name|Phone|phone):\s*(.*)$/;
+    const fieldOrder = ["Name", "Phone", "chatInput"];
 
-    return lines.map((line, idx) => {
+    const matchedByField: Record<string, string> = {};
+    const otherLines: string[] = [];
+
+    lines.forEach((line) => {
       const match = line.match(fieldLineRegex);
       if (match) {
-        const [, field, value] = match;
+        const [, rawField, value] = match;
+        if (!value.trim()) return;
+        // Normalize casing (name/Name -> Name, phone/Phone -> Phone, content -> chatInput)
+        const normalizedField =
+          rawField.toLowerCase() === "name" ? "Name" :
+          rawField.toLowerCase() === "phone" ? "Phone" : "chatInput";
+        matchedByField[normalizedField] = value;
+      } else if (line.trim()) {
+        otherLines.push(line);
+      }
+    });
+
+    const renderedFields = fieldOrder
+      .filter((field) => matchedByField[field] !== undefined)
+      .map((field) => {
         const Icon = CHAT_FIELD_ICON_MAP[field];
-        if (!value.trim()) return null;
         return (
-          <div key={idx} dir="rtl" className="flex items-center gap-1.5">
+          <div key={field} dir="rtl" className="flex items-center gap-1.5">
             {Icon && <Icon className="w-3.5 h-3.5 text-sky-500 shrink-0" />}
-            <span>{value}</span>
+            <span>{matchedByField[field]}</span>
           </div>
         );
-      }
-      if (!line.trim()) return null;
-      return <span key={idx}>{line}</span>;
-    });
+      });
+
+    const renderedOther = otherLines.map((line, idx) => <span key={`other-${idx}`}>{line}</span>);
+
+    return [...renderedFields, ...renderedOther];
   };
 
   // Fetch chats for the currently active bot
@@ -5267,7 +5286,7 @@ ${videos || "(לא הוגדר)"}
                           <div className="p-3 border-b border-slate-850 bg-[#090a0f] flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2">
                               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500/20 to-indigo-500/20 flex items-center justify-center text-xs font-black border border-sky-500/20">
-                                {activeSession.name ? activeSession.name.substring(0, 2) : "📞"}
+                                {(activeSession.name || activeSession.phone || "").substring(0, 2)}
                               </div>
                               <div className="text-right">
                                 <h4 className="text-xs font-black text-slate-100">{activeSession.name}</h4>
