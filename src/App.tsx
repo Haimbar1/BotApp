@@ -5281,21 +5281,6 @@ ${videos || "(לא הוגדר)"}
 
                       return (
                         <div className="flex flex-col h-full overflow-hidden">
-                          
-                          {/* Thread Header */}
-                          <div className="p-3 border-b border-slate-850 bg-[#090a0f] flex items-center gap-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500/20 to-indigo-500/20 flex items-center justify-center text-xs font-black border border-sky-500/20">
-                                {(activeSession.name || activeSession.phone || "").substring(0, 2)}
-                              </div>
-                              <div className="text-right">
-                                <h4 className="text-xs font-black text-slate-100">{activeSession.name}</h4>
-                                {activeSession.name !== activeSession.phone && (
-                                  <p className="text-[10px] text-slate-500 font-mono">טלפון: {activeSession.phone}</p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
 
                           {/* Message List */}
                           <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3.5 custom-scrollbar bg-[#07080d]/40">
