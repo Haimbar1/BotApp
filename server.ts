@@ -656,30 +656,61 @@ async function startServer() {
     }
   });
 
-  // ---------------- PUBLIC FILE UPLOAD ROUTE ----------------
-  app.post("/api/upload", (req: any, res: any) => {
+  // ---------------- PUBLIC FILE UPLOAD ROUTE (IMGBB INTEGRATION) ----------------
+  app.post("/api/upload", async (req: any, res: any) => {
     try {
       const { filename, base64 } = req.body;
       if (!base64) {
         return res.status(400).json({ success: false, message: "חסר תוכן הקובץ ב-base64" });
       }
 
+      const cleanBase64 = base64.includes(",") ? base64.split(",")[1] : base64;
+
+      // Primary: ImgBB Service Upload
+      try {
+        const params = new URLSearchParams();
+        params.append("image", cleanBase64);
+
+        const imgbbRes = await fetch("https://api.imgbb.com/1/upload?expiration=15552000&key=bb5133b78a888bdda2f9a761b36b6476", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params
+        });
+
+        const imgbbData = await imgbbRes.json();
+        if (imgbbData && imgbbData.success && imgbbData.data) {
+          console.log(`[SERVER] File uploaded successfully to ImgBB: ${imgbbData.data.url}`);
+          return res.json({
+            success: true,
+            url: imgbbData.data.url,
+            displayUrl: imgbbData.data.display_url || imgbbData.data.url,
+            thumbUrl: imgbbData.data.thumb?.url || imgbbData.data.display_url || imgbbData.data.url,
+            deleteUrl: imgbbData.data.delete_url
+          });
+        } else {
+          console.warn("[SERVER] ImgBB upload returned non-success, using local fallback:", imgbbData);
+        }
+      } catch (imgbbErr) {
+        console.error("[SERVER] ImgBB upload fetch error, falling back to disk:", imgbbErr);
+      }
+
+      // Fallback to local server disk storage
       const sanitizedName = (filename || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
       const uniqueName = `${Date.now()}_${sanitizedName}`;
       const filePath = path.join(UPLOADS_DIR, uniqueName);
 
-      const base64Data = base64.replace(/^data:.*?;base64,/, "");
-      const buffer = Buffer.from(base64Data, "base64");
+      const buffer = Buffer.from(cleanBase64, "base64");
       fs.writeFileSync(filePath, buffer);
 
       const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
       const host = req.headers["x-forwarded-host"] || req.get("host");
       const publicUrl = `${protocol}://${host}/uploads/${uniqueName}`;
 
-      console.log(`[SERVER] File uploaded successfully: ${publicUrl} (${buffer.length} bytes)`);
+      console.log(`[SERVER] File uploaded successfully to local fallback: ${publicUrl} (${buffer.length} bytes)`);
       return res.json({
         success: true,
         url: publicUrl,
+        thumbUrl: publicUrl,
         filename: uniqueName,
         size: buffer.length
       });
@@ -1837,8 +1868,17 @@ async function startServer() {
       const initialCount = chats.length;
 
       chats = chats.filter((chat: any) => {
-        if (sessionId && chat.sessionId === sessionId) return false;
-        if (botId && chat.botId === botId) return false;
+        if (sessionId) {
+          const reqSid = String(sessionId).trim();
+          const chatSid = String(chat.sessionId || chat.session_id || "").trim();
+          const reqPhone = reqSid.split("_")[0];
+          const chatPhone = chatSid.split("_")[0] || String(chat.phone || "").trim();
+          
+          if (chatSid === reqSid) return false;
+          if (reqPhone && chatPhone && reqPhone === chatPhone) return false;
+          if (reqPhone && chatSid.startsWith(reqPhone)) return false;
+        }
+        if (botId && String(chat.botId) === String(botId)) return false;
         return true;
       });
 

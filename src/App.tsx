@@ -438,7 +438,7 @@ export default function App() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   const [showKey, setShowKey] = useState<boolean>(false);
   const [webhookUrl, setWebhookUrl] = useState<string>(DEFAULT_WEBHOOK_URL);
   const [isUrlLocked, setIsUrlLocked] = useState<boolean>(true);
@@ -528,6 +528,20 @@ export default function App() {
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
   const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
+  const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("deleted_session_ids");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const isSessionDeleted = (sId: string) => {
+    if (!sId) return false;
+    const phone = sId.split("_")[0];
+    return deletedSessionIds.some(d => d === sId || (phone && d.startsWith(phone)) || (phone && d === phone));
+  };
 
   // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
   const parseChatMessageContent = (content: string, type: "human" | "ai") => {
@@ -706,7 +720,8 @@ export default function App() {
               };
             }).filter(Boolean);
 
-            setChats(liveChats);
+            const filteredChats = liveChats.filter((c: any) => c && c.sessionId && !isSessionDeleted(c.sessionId));
+            setChats(filteredChats);
           } else {
             console.error("[CHATS] Failed to fetch chats through fetch-config proxy:", result.message);
             throw new Error("Proxy call failed");
@@ -723,7 +738,8 @@ export default function App() {
           const result = await response.json();
           if (active) {
             if (result.success) {
-              setChats(result.data || []);
+              const rawList = result.data || [];
+              setChats(rawList.filter((c: any) => c && (c.sessionId || c.session_id) && !isSessionDeleted(c.sessionId || c.session_id)));
             } else {
               setChats([]);
             }
@@ -833,28 +849,41 @@ export default function App() {
   }, [chatSessions, selectedSessionId]);
 
   const handleClearSessionChats = async (sessionId: string) => {
-    if (!window.confirm("האם אתה בטוח שברצונך למחוק את היסטוריית השיחה של טלפון זה? פעולה זו אינה הפיכה.")) {
-      return;
+    if (!sessionId) return;
+
+    const phone = sessionId.split("_")[0];
+
+    // Immediately purge from UI state & persist deletion mark
+    setDeletedSessionIds(prev => {
+      const updated = Array.from(new Set([...prev, sessionId, phone].filter(Boolean)));
+      try {
+        localStorage.setItem("deleted_session_ids", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Failed to save deleted session IDs:", e);
+      }
+      return updated;
+    });
+
+    setChats(prev => prev.filter(c => {
+      const cSid = c.sessionId || c.session_id || "";
+      const cPhone = cSid.split("_")[0];
+      return cSid !== sessionId && cPhone !== phone;
+    }));
+
+    if (selectedSessionId === sessionId || selectedSessionId.startsWith(phone)) {
+      setSelectedSessionId("");
     }
+
     try {
-      const response = await apiFetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`, {
+      await apiFetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${sessionToken}`
         }
       });
-      const result = await response.json();
-      if (result.success) {
-        setChatsRefreshTrigger(prev => prev + 1);
-        if (selectedSessionId === sessionId) {
-          setSelectedSessionId("");
-        }
-      } else {
-        alert("שגיאה במחיקת השיחה: " + result.message);
-      }
+      setChatsRefreshTrigger(prev => prev + 1);
     } catch (err) {
-      console.error("[CHATS] Error deleting chats:", err);
-      alert("שגיאה בחיבור לשרת למחיקת השיחה");
+      console.error("[CHATS] Error deleting chats on server:", err);
     }
   };
 
@@ -1666,8 +1695,11 @@ export default function App() {
         if (data.success && data.data && data.data.length > 0) {
           setAgents(data.data);
           const currentId = activeId;
+          const activeOnly = data.data.filter((a: any) => a.status === "Active");
           const matchingAgent = data.data.find((a: any) => a.id === currentId);
-          const targetAgent = matchingAgent || data.data[0];
+          const targetAgent = (matchingAgent && matchingAgent.status === "Active")
+            ? matchingAgent
+            : (activeOnly[0] || data.data[0]);
           setActiveId(targetAgent.id);
           loadAgentToForm(targetAgent);
           
@@ -1728,8 +1760,10 @@ export default function App() {
         const parsed = JSON.parse(savedAgents) as AgentConfig[];
         if (parsed.length > 0) {
           setAgents(parsed);
-          setActiveId(parsed[0].id);
-          loadAgentToForm(parsed[0]);
+          const activeOnly = parsed.filter((a: any) => a.status === "Active");
+          const targetAgent = activeOnly[0] || parsed[0];
+          setActiveId(targetAgent.id);
+          loadAgentToForm(targetAgent);
           saveAgentsToServer(parsed, token);
           return;
         }
@@ -3202,8 +3236,11 @@ ${videos || "(לא הוגדר)"}
         if (parsedAgents.length > 0) {
           setAgents(parsedAgents);
           const currentId = activeId;
+          const activeOnly = parsedAgents.filter((a: any) => a.status === "Active");
           const matchingAgent = parsedAgents.find((a: any) => a.id === currentId);
-          const targetAgent = matchingAgent || parsedAgents[0];
+          const targetAgent = (matchingAgent && matchingAgent.status === "Active")
+            ? matchingAgent
+            : (activeOnly[0] || parsedAgents[0]);
           setActiveId(targetAgent.id);
           loadAgentToForm(targetAgent);
           saveAgentsToServer(parsedAgents, tokenToUse);
@@ -3325,6 +3362,17 @@ ${videos || "(לא הוגדר)"}
     }
     return true;
   });
+
+  // Keep activeId and workspace form state aligned with filteredAgents list
+  useEffect(() => {
+    if (agents.length === 0) return;
+    const isCurrentActiveInFiltered = filteredAgents.some(a => a.id === activeId);
+    if (!isCurrentActiveInFiltered && filteredAgents.length > 0) {
+      const firstFiltered = filteredAgents[0];
+      setActiveId(firstFiltered.id);
+      loadAgentToForm(firstFiltered);
+    }
+  }, [agents, statusFilter, searchTerm, activeId]);
 
   // Loading indicator for active checking
   if (isAuthChecking) {
@@ -5052,24 +5100,20 @@ ${videos || "(לא הוגדר)"}
                 <span className="text-xs font-bold font-sans">טוען היסטוריית שיחות מהשרת...</span>
               </div>
             ) : chatSessions.length === 0 ? (
-              <div className="bg-[#10121a]/50 rounded-xl p-8 border border-dashed border-slate-800 flex flex-col items-center text-center gap-4">
+              <div className="bg-[#10121a]/50 rounded-xl p-8 border border-dashed border-slate-800 flex flex-col items-center text-center gap-4 my-4">
                 <div className="p-4 bg-slate-900/50 rounded-full border border-slate-800 text-slate-500">
                   <MessageSquare className="w-8 h-8" />
                 </div>
-                <div className="max-w-md">
+                <div className="flex flex-col items-center gap-3">
                   <h3 className="text-sm font-extrabold text-slate-200">אין שיחות שמורות בבוט זה עדיין</h3>
-                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                    כאשר הבוט יתכתב עם לקוחות ב-WhatsApp (או דרך n8n), השיחות יישמרו כאן אוטומטית. 
-                    ניתן לדחוף שיחות חדשות ב-POST Endpoint:
-                  </p>
-                  <div className="mt-4 p-3 bg-slate-950/80 rounded-lg border border-slate-800 font-mono text-[10px] text-sky-300 text-left select-all overflow-x-auto whitespace-pre">
-{`POST /api/chats
-{
-  "sessionId": "972547866119_${agents.find(a => a.id === activeId)?.botId || "bot_id"}",
-  "type": "human",
-  "content": "שלום בוט"
-}`}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setChatsRefreshTrigger(prev => prev + 1)}
+                    className="mt-1 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isChatsLoading ? "animate-spin" : ""}`} />
+                    <span>רענן שיחות</span>
+                  </button>
                 </div>
               </div>
             ) : (
@@ -5132,8 +5176,16 @@ ${videos || "(לא הוגדר)"}
                               <span className="text-xs font-black truncate max-w-[130px]" title={session.name}>
                                 {session.name || session.phone}
                               </span>
-                              <span className="text-[9px] text-slate-500 font-mono">
-                                {session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                              <span className="text-[9px] text-slate-400 font-mono font-bold bg-slate-900/80 border border-slate-800 px-1.5 py-0.5 rounded">
+                                {session.lastTimestamp ? (() => {
+                                  const d = new Date(session.lastTimestamp);
+                                  if (isNaN(d.getTime())) return session.lastTimestamp;
+                                  const day = String(d.getDate()).padStart(2, "0");
+                                  const month = String(d.getMonth() + 1).padStart(2, "0");
+                                  const hours = String(d.getHours()).padStart(2, "0");
+                                  const minutes = String(d.getMinutes()).padStart(2, "0");
+                                  return `${day}/${month} ${hours}:${minutes}`;
+                                })() : ""}
                               </span>
                             </div>
 
@@ -5216,8 +5268,22 @@ ${videos || "(לא הוגדר)"}
                                   }`}
                                 >
                                   {/* Sender / Name indicator */}
-                                  <span className="text-[9px] text-slate-500 font-mono px-1">
-                                    {isAI ? "🤖 סוכן AI" : `👤 ${activeSession.name || "לקוח"}`} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  <span className="text-[9px] text-slate-400 font-mono px-1 flex items-center gap-1.5">
+                                    <span>{isAI ? "🤖 סוכן AI" : `👤 ${activeSession.name || "לקוח"}`}</span>
+                                    <span>•</span>
+                                    <span className="text-slate-300 font-bold">
+                                      {(() => {
+                                        const d = new Date(msg.timestamp);
+                                        if (isNaN(d.getTime())) return msg.timestamp;
+                                        const day = String(d.getDate()).padStart(2, "0");
+                                        const month = String(d.getMonth() + 1).padStart(2, "0");
+                                        const year = d.getFullYear();
+                                        const hours = String(d.getHours()).padStart(2, "0");
+                                        const minutes = String(d.getMinutes()).padStart(2, "0");
+                                        const seconds = String(d.getSeconds()).padStart(2, "0");
+                                        return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+                                      })()}
+                                    </span>
                                   </span>
 
                                   {/* Speech Bubble */}
@@ -5854,7 +5920,7 @@ ${videos || "(לא הוגדר)"}
                   <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017]">
                     <div className="flex items-center gap-1.5">
                       <List className="w-4 h-4 text-slate-400" />
-                      <span className="text-[10px] sm:text-[11px] font-black text-slate-350 tracking-wide">📦 רשימת תתי-ההנחיות (9 בלוקים)</span>
+                      <span className="text-[10px] sm:text-[11px] font-black text-slate-200 tracking-wide">📦 רשימת תתי-ההנחיות (9 בלוקים)</span>
                     </div>
                   </div>
 
@@ -5887,7 +5953,7 @@ ${videos || "(לא הוגדר)"}
                           className={`w-full text-right p-3 rounded-xl transition duration-150 flex items-center justify-between cursor-pointer group border ${
                             isActive 
                               ? "bg-[#181d2d] text-sky-400 border-sky-500/30 font-bold shadow-md ring-1 ring-sky-500/10" 
-                              : "bg-[#0c0d13]/70 hover:bg-[#141724]/40 hover:text-slate-205 text-slate-300 border-transparent"
+                              : "bg-[#0c0d13]/70 hover:bg-[#141724]/40 hover:text-slate-200 text-slate-300 border-transparent"
                           }`}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
@@ -5934,147 +6000,52 @@ ${videos || "(לא הוגדר)"}
                 {/* 2. Main Middle Spacious Canvas Column (lg:col-span-6) */}
                 <div className={`${mobileWorkspaceTab === 'editor' ? 'flex' : 'hidden'} lg:flex lg:col-span-6 h-full min-h-0 flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850`} dir="rtl">
                   {(() => {
-                    const sectionsStatic = [
-                      {
-                        key: "botIdentity",
-                        title: "זהות הבוט ומאפייניו",
-                        emoji: "🤖",
-                        desc: "הגדר את השם, התפקיד, האישיות וחוקי ההתנהגות הכלליים של הסוכן כשהוא פונה ללקוח.",
-                        placeholder: "לדוגמה: אתה עוזר וירטואלי חכם וחביב בשם 'סמארטי' המייצג את {BusinessName}...",
-                        value: botIdentity,
-                        starter: "אתה עוזר וירטואלי חכם וחביב בשם 'סמארטי' של {BusinessName}. עליך לפנות ללקוחות בשמם, לענות ברוך ובחן, ולסייע להם ברישום לקורסים וסדנאות פיתוח המשחקים והקוד שלנו."
-                      },
-                      {
-                        key: "coursesInfo",
-                        title: "מה אני מוכר — מוצרים/שירותים/קורסים",
-                        emoji: "📖",
-                        desc: "פרטי השירותים הכלליים, המוצרים, הקורסים המקצועיים, הסילבוסים, מחירי מחירון או הצעות הערך שהעסק מוכר.",
-                        placeholder: "לדוגמה: שירות ייעוץ אסטרטגי פרימיום, קורס פיתוח מתקדם, או מוצרי העסק המרכזיים...",
-                        value: coursesInfo,
-                        starter: "אצלנו ב-{BusinessName} אנו מציעים מגוון שירותים, מוצרים או קורסים מובילים המקנים ערך משמעותי:\n1. שירות / קורס הדגל של העסק בשילוב פרויקטים מעשיים.\n2. חבילת ליווי שבועית צמודה ומקצועית 1-על-1.\nכל הפעילויות שלנו כוללות ליווי שקוף ומענה מקצועי."
-                      },
-                      {
-                        key: "kidsCourses",
-                        title: "קהל יעד וסיגמנטים מיוחדים",
-                        emoji: "👥",
-                        desc: "פילוח קהלי היעד של העסק, סיגמנטים, העדפות, קהלים ספציפיים (כמו הורים וילדים, קהלי פרימיום, מתחילים או מתקדמים) וכיצד לפנות לכל סיגמנט.",
-                        placeholder: "לדוגמה: סיגמנט לקוחות פרימיום VIP המעורבים בתהליך, חוגי ילדים, או קהל עסקי B2B...",
-                        value: kidsCourses,
-                        starter: "התאמת השירותים והמוצרים לקהלי היעד השונים של העסק:\n- התאמת תהליך אפיון ייחודי לקבוצות ומגזרים בעלי דרישות מיוחדות (לדוגמה לקוחות פרימיום VIP, הורים לילדים או קהל יעד מבוגר).\n- התייחסות מתודית וסבלנית לפניות בהתאם לרמה, תחומי עניין אישיים או צרכים נקודתיים."
-                      },
-                      {
-                        key: "conversationFlow",
-                        title: "זרימת ושלבי השיחה",
-                        emoji: "💬",
-                        desc: "הנח את הסוכן לפעול לפי שלבים הדרגתיים: החל משלב הברכה ומיקוד הצורך, דרך הצעת הקורס, ועד הפניה להשארת פרטים.",
-                        placeholder: "לדוגמה:\n1. שלב פתיחה וברכה קצרה.\n2. בירור גיל המתמודד...",
-                        value: conversationFlow,
-                        starter: "1. ברך את הלקוח והצג את עצמך באדיבות.\n2. ברר בעדינות מהו גיל המשתתף המיועד לקורס (ילד או מבוגר).\n3. בהתאם לתשובה, שלח קישור למידע על הקורסים הרלוונטיים.\n4. הצע שיחת ייעוץ אישית עם מנהל הרישום בסניף."
-                      },
-                      {
-                        key: "writingStyle",
-                        title: "טון ואופן כתיבה",
-                        emoji: "✍️",
-                        desc: "חוקים וסגנון ניסוח ההודעות (למשל: עד 2 שורות בלבד להודעה, שימוש מתון באימוג'י, שפת יומיום פשוטה בגובה העיניים).",
-                        placeholder: "לדוגמה: ענה בקצרה, השתמש תמיד באימוג'י, אל תכתוב תשובות ארוכות שמעייפות את הלקוח...",
-                        value: writingStyle,
-                        starter: "- ענה בטון שירותי, אנרגטי ומאוד ידידותי.\n- הגבל כל הודעה למקסימום 2-3 פסקאות קצרצרות.\n- תמיד פנה בגובה העיניים והשתמש באימוג'י בכל הודעה 🚀."
-                      },
-                      {
-                        key: "faqAnswers",
-                        title: "תשובות לשאלות נפוצות",
-                        emoji: "❓",
-                        desc: "ריכוז פתרונות מובנים מראש לשאלות פופולריות שיכולות לעלות במהלך השיחה (כגון מועדים, דרכי החזר ומלגת לימודים).",
-                        placeholder: "לדוגמה:\nש: האם מתאים למתחילים?\nת: כן, אין צורך בידע מוקדם...",
-                        value: faqAnswers,
-                        starter: "ש: מתי הקורס מתחיל?\nת: הקורס הינו קורס למידה עצמית בליווי מנטורים וניתן להתחיל בו מיד.\n\nש: מה העלות של הקורסים?\nת: עלויות משתנות לפי מסלול הלימודים, שירות הליווי והמימון. יועץ אנושי יפרט לך הכל בטלפון."
-                      },
-                      {
-                        key: "whatNotToDo",
-                        title: "מה לא לעשות (חוקי הברזל)",
-                        emoji: "⚠️",
-                        desc: "הנחיות קריטיות ונושאים אסורים לדיון או להתייחסות (למשל: לא להבטיח משרות באופן מוחלט, לא להמציא מחירים שלא במחירון).",
-                        placeholder: "לדוגמה:\n1. בשום סנריו אל תגיד את המילים...\n2. לעולם אל תציע הנחה של יותר מ-...",
-                        value: whatNotToDo,
-                        starter: "1. בשום מצב אל תמציא מחירים או הנחות מדעתך.\n2. אל תשווה את העסק לחברות אחרות באופן שלילי.\n3. אל תתחייב למציאת עבודה של 100% בסיום הלימודים אלא לליווי וייעוץ מקיף של מנהלי ההקשרים."
-                      },
-                      {
-                        key: "syllabusLinks",
-                        title: "ברושורים, חומרי מידע וקישורים",
-                        emoji: "🔗",
-                        desc: "רשימת הקישורים התקינים, הברושורים, קטלוג המוצרים, הסילבוסים או המחירונים שהבוט מורשה לשלוח ישירות בצ'אט.",
-                        placeholder: "לדוגמה:\n- קטלוג השירותים הכללי: https://mydomain.com/files/catalog.pdf",
-                        value: syllabusLinks,
-                        starter: "- קטלוג מוצרים ושירותים ומחירון מעודכן: https://yourdomain.com/catalog.pdf\n- ברושור הסבר דיגיטלי ללקוחות חדשים: https://yourdomain.com/brochure.pdf"
-                      },
-                      {
-                        key: "humanEscalation",
-                        title: "אסקלציה לאנוש (הפניה לנציג)",
-                        emoji: "📞",
-                        desc: "באילו מקרים ומצבים הבוט מחויב להפנות או לשלוח את המשתמש ישירות למנהל המערכת, לחיוג טלפוני או השארת פרטים.",
-                        placeholder: "לדוגמה: אם המשתמש שואל שאלות פיננסיות מורכבות או כועס, הפנה אותו לטלפון {OwnerPhone}...",
-                        value: humanEscalation,
-                        starter: "ברגע שהמשתמש מביע רצון מפורש להירשם או רוצה לשוחח עם נציג מכירות חי, בקש ממנו להשאיר מספר טלפון, או שלח אותו לחייג ישירות לנציג בטלפון {OwnerPhone} או שלח קישור לווטסאפ של מנהל המערכת."
-                      },
-                      {
-                        key: "imagesInfo",
-                        title: "תמונות וגלריית מדיה",
-                        emoji: "🖼️",
-                        desc: "גלריית תמונות, קטלוג תמונות, הדמיות וסביבות לימודים שמופיעות בשיחה כאשר לקוחות שואלים שאלות או כשהבוט מציע להמחיש בעזרת תמונה.",
-                        placeholder: "לדוגמה:\n- תמונת כיתת הלימוד הפיזית בסניף: https://mydomain.com/images/classroom.jpg",
-                        value: imagesInfo,
-                        starter: "- תמונת כיתת הלימוד השקופה של סטודיו SBS: https://sbsgames.dev/img/classroom.jpg\n- הדמיית פרויקטים של תלמידים: https://sbsgames.dev/img/projects-collage.jpg"
-                      },
-                      {
-                        key: "videosInfo",
-                        title: "סרטוני וידאו והדרכה",
-                        emoji: "🎥",
-                        desc: "קישורי וידאו, סרטוני יוטיוב, הדרכות קצרות והתרשמויות מהכלים שהבוט יכול להציג או להציע באופן פרואקטיבי ולפי הקשר.",
-                        placeholder: "לדוגמה:\n- סרטון סיכום פרויקטים ביוטיוב: https://youtube.com/watch?v=...",
-                        value: videosInfo,
-                        starter: "- סרטון קצר המציג פרויקטים נבחרים של תלמידים ביוטיוב: https://youtube.com/watch?v=sbsgames_showcase\n- סרטון סיור מושקע בסטודיו: https://youtube.com/watch?v=sbsgames_tour"
-                      }
+                    const secList = [
+                      { key: "botIdentity", title: "זהות הבוט ומאפייניו", placeholder: "הגדר את שם הבוט, התפקיד שלו, הערכים שלו והאופן שבו הוא מציג את עצמו...", starter: "אתה עוזר דיגיטלי ייעודי ונציג שירות ומכירות מקצועי..." },
+                      { key: "coursesInfo", title: "מה אני מוכר — שירותים/מוצרים/קורסים", placeholder: "פרט פה את המוצרים והקורסים...", starter: "פירוט הקורסים והשירותים שאנו מציעים..." },
+                      { key: "kidsCourses", title: "קהל יעד וסיגמנטים מיוחדים", placeholder: "פרט מיהו קהל היעד...", starter: "קהל היעד המרכזי שלנו כולל..." },
+                      { key: "conversationFlow", title: "זרימת ושלבי השיחה", placeholder: "הגדר את השלבים שהשיחה צריכה לעבור...", starter: "שלבי השיחה המומלצים..." },
+                      { key: "writingStyle", title: "טון ואופן כתיבה", placeholder: "איך הבוט צריך להתבטא...", starter: "טון הדיבור צריך להיות חם, מקצועי, מזמין..." },
+                      { key: "faqAnswers", title: "שאלות פופולריות (FAQ)", placeholder: "תשובות מוכנות לשאלות שכיחות...", starter: "שאלות ותשובות נפוצות..." },
+                      { key: "whatNotToDo", title: "חוקי ברזל (מה לא לעשות)", placeholder: "רשום מה אסור לבוט לעשות...", starter: "חוקי ברזל ואיסורים..." },
+                      { key: "syllabusLinks", title: "ברושורים, חומרי מידע וקישורים", placeholder: "קישורים לקטלוגים וברושורים...", starter: "קישורים וחומרי מידע..." },
+                      { key: "humanEscalation", placeholder: "מתי להעביר לנציג אנושי...", title: "אסקלציה לאנוש (הפניה לנציג)", starter: "במידה והלקוח מבקש נציג אנושי..." },
+                      { key: "imagesInfo", title: "תמונות וגלריית מדיה", placeholder: "תמונות וגלריות...", starter: "גלריית תמונות ותכנים ויזואליים..." },
+                      { key: "videosInfo", title: "סרטוני וידאו והדרכה", placeholder: "סרטוני וידאו...", starter: "סרטוני הדרכה ווידאו..." }
                     ];
 
-                    const sec = sectionsStatic.find(s => s.key === activeModalTab) || sectionsStatic[0];
-                    const activeVal = sec.value || "";
+                    const sec = secList.find(s => s.key === activeModalTab) || secList[0];
+                    const activeVal = sec.key === "botIdentity" ? botIdentity
+                      : sec.key === "coursesInfo" ? coursesInfo
+                      : sec.key === "kidsCourses" ? kidsCourses
+                      : sec.key === "conversationFlow" ? conversationFlow
+                      : sec.key === "writingStyle" ? writingStyle
+                      : sec.key === "faqAnswers" ? faqAnswers
+                      : sec.key === "whatNotToDo" ? whatNotToDo
+                      : sec.key === "syllabusLinks" ? syllabusLinks
+                      : sec.key === "humanEscalation" ? humanEscalation
+                      : sec.key === "imagesInfo" ? imagesInfo
+                      : sec.key === "videosInfo" ? videosInfo
+                      : "";
+
+                    const resolvedStarter = sec.starter;
 
                     return (
-                      <div className="flex flex-col flex-1 p-6 pb-32 gap-5 min-h-full">
+                      <div className="p-4 sm:p-6 flex flex-col gap-4 flex-1">
                         
-                        {/* Selected info block */}
-                        <div className="bg-[#10121d] border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                          <div className="flex items-start gap-4">
-                            {/* Mobile Back Button */}
-                            <button
-                              type="button"
-                              onClick={() => setMobileWorkspaceTab("blocks")}
-                              className="lg:hidden p-2 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 rounded-xl transition cursor-pointer self-center flex items-center justify-center border border-slate-700 shadow shadow-sky-500/5 focus:outline-none shrink-0"
-                              title="חזרה לרשימת החלקים"
-                            >
-                              <ArrowRight className="w-4.5 h-4.5" />
-                            </button>
-
-                            <span className="text-4xl bg-[#171b2e] p-3 rounded-2xl border border-slate-800/80 shadow-md">{sec.emoji}</span>
-                            <div>
-                              <h3 className="text-sm font-black text-white">{sec.title}</h3>
-                              <p className="text-[11px] text-slate-400 font-bold leading-relaxed mt-1">{sec.desc}</p>
-                            </div>
+                        {/* Title Header Bar */}
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-[#11131c] p-4 rounded-2xl border border-slate-800 shadow-sm">
+                          <div>
+                            <span className="text-[10px] text-sky-400 font-extrabold uppercase tracking-widest block">עריכת חלק פנימי</span>
+                            <h3 className="text-sm sm:text-base font-black text-white">{sec.title}</h3>
                           </div>
 
                           {sessionUser?.email === "haim.bar@gmail.com" && (
-                            <div className="flex-shrink-0">
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => {
-                                  // Resolve template keywords dynamically
-                                  let resolvedStarter = sec.starter;
-                                  resolvedStarter = resolvedStarter.replace(/{BusinessName}/g, businessName || "[שם העסק]");
-                                  resolvedStarter = resolvedStarter.replace(/{OwnerPhone}/g, ownerPhone || "[טלפון בעל העסק]");
-
-                                  if (confirm(`האם אתה בטוח שברצונך להחיל נקודת התחלה עבור "${sec.title}"? תוכן קיים בחלק זה יימחק ויוחלף בטקסט בסיס מקצועי.`)) {
-                                    handlePromptPartChange(sec.key as any, resolvedStarter);
-                                  }
+                                  handlePromptPartChange(sec.key as any, resolvedStarter);
                                 }}
                                 className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-sky-500/25 to-indigo-500/25 hover:from-sky-500/35 hover:to-indigo-500/35 text-sky-300 hover:text-white border border-sky-400/25 hover:border-sky-400/50 rounded-xl transition duration-150 text-[10.5px] font-black cursor-pointer flex items-center justify-center gap-1.5 shadow"
                               >
@@ -6087,18 +6058,6 @@ ${videos || "(לא הוגדר)"}
                         {/* Format tools toolbar */}
                         <div className="flex flex-wrap gap-1.5 bg-[#10121D] p-2.5 rounded-xl border border-slate-800/80 select-none items-center">
                           <button
-                            type="button"
-                            onClick={() => {
-                              const el = document.getElementById(`modal-prompt-area-${sec.key}`) as HTMLTextAreaElement;
-                              if (el) insertMarkdownIntoElement(el, "**", "**", sec.key, activeVal);
-                            }}
-                            className="px-3.5 py-1 text-xs bg-[#171A26] text-slate-350 hover:bg-[#22273b] hover:text-white rounded-lg border border-slate-800/80 font-bold transition duration-150 cursor-pointer"
-                            title="הדגש טקסט"
-                          >
-                            B
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => {
                               const el = document.getElementById(`modal-prompt-area-${sec.key}`) as HTMLTextAreaElement;
                               if (el) insertMarkdownIntoElement(el, "*", "*", sec.key, activeVal);
@@ -6204,9 +6163,9 @@ ${videos || "(לא הוגדר)"}
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm">✨</span>
-                                <span className="text-xs font-black text-sky-305 text-sky-300">שיפור ומשוב אישי בעזרת AI עבור "{sec.title}"</span>
+                                <span className="text-xs font-black text-sky-300">שיפור ומשוב אישי בעזרת AI עבור "{sec.title}"</span>
                               </div>
-                              <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-505/10 rounded-full font-black">מנוע AI חכם</span>
+                              <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-500/20 rounded-full font-black px-2 py-0.5">מנוע AI חכם</span>
                             </div>
 
                             <div className="flex flex-col sm:flex-row gap-2 items-stretch">
@@ -6330,25 +6289,14 @@ ${videos || "(לא הוגדר)"}
                           </div>
                         )}
 
-                         {/* Active Area count/reset footer */}
-                         <div className="flex items-center justify-between text-[11px] text-slate-500 font-bold border-t border-slate-850 pt-3 select-none">
-                           <div className="flex items-center gap-3 font-mono">
-                             <span>תווים: {activeVal.length}</span>
-                             <span className="text-slate-800">|</span>
-                             <span>מילים: {activeVal.split(/\s+/).filter(Boolean).length}</span>
-                           </div>
-                           <button
-                             type="button"
-                             onClick={() => {
-                               if (confirm(`האם אתה בטוח שברצונך לאפס לחלוטין את תוכן החלק "${sec.title}"?`)) {
-                                 handlePromptPartChange(sec.key as any, "");
-                               }
-                             }}
-                             className="text-[10.5px] text-red-400 hover:text-red-300 transition hover:underline font-bold cursor-pointer"
-                           >
-                             🔄 איפוס תוכן נוכחי
-                           </button>
-                         </div>
+                          {/* Active Area count footer */}
+                          <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold border-t border-slate-850 pt-3 select-none">
+                            <div className="flex items-center gap-3 font-mono">
+                              <span>תווים: {activeVal.length}</span>
+                              <span className="text-slate-800">|</span>
+                              <span>מילים: {activeVal.split(/\s+/).filter(Boolean).length}</span>
+                            </div>
+                          </div>
 
                        </div>
                      );
