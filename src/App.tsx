@@ -5223,6 +5223,12 @@ ${videos || "(לא הוגדר)"}
                               </span>
                             </div>
 
+                            {session.name !== session.phone && (
+                              <span className="text-[9px] text-slate-500 font-mono text-right truncate">
+                                📞 {session.phone}
+                              </span>
+                            )}
+
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-[10px] text-slate-400 truncate flex-1 text-right leading-normal">
                                 {parsedLast.text}
@@ -5241,12 +5247,6 @@ ${videos || "(לא הוגדר)"}
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
-
-                            {session.name !== session.phone && (
-                              <span className="text-[9px] text-slate-500 font-mono text-right truncate">
-                                📞 {session.phone}
-                              </span>
-                            )}
                           </div>
                         );
                       })}
