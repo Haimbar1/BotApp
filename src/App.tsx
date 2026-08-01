@@ -2921,39 +2921,40 @@ ${videos || "(לא הוגדר)"}
           return "";
         };
 
-        const pulledOwnerName = getVal(["ownerName", "שם בעל העסק"]);
-        const pulledBusinessName = getVal(["businessName", "שם העסק"]);
-        const pulledOwnerPhone = getVal(["ownerPhone", "טלפון בעל העסק"]);
+        const pulledOwnerName = getVal(["ownerName", "שם בעל העסק", "Owner Name"]);
+        const pulledBusinessName = getVal(["businessName", "שם העסק", "Business Name"]);
+        const pulledOwnerPhone = getVal(["ownerPhone", "טלפון בעל העסק", "Owne Phone", "Owner Phone"]);
         const pulledBotId = getVal(["botId", "Bot ID"]);
-        const pulledAgentTypeRaw = getVal(["agentType", "סוג", "סוג הבוט"]);
+        const pulledAgentTypeRaw = getVal(["agentType", "סוג", "סוג הבוט", "Type"]);
         const pulledAgentType: "sales" | "support" = (pulledAgentTypeRaw.includes("תמיכה") || pulledAgentTypeRaw.toLowerCase().includes("support")) ? "support" : "sales";
-        const pulledNameRaw = getVal(["name", "שם", "שם הבוט"]);
+        const pulledNameRaw = getVal(["name", "שם", "שם הבוט", "Name"]);
         const pulledName = pulledNameRaw || (pulledBusinessName ? `${pulledBusinessName} _ ${pulledAgentType === "support" ? "תמיכה טכנית" : "מכירות"}` : "");
         const pulledWhatsappInstance = getVal([
           "whatsappInstance", 
           "שם ואטסאפ instance", 
           "שם ואטסאפ instance ", 
           "שם וואטסאפ instance", 
-          "שם וואטסאפ instance "
+          "שם וואטסאפ instance ",
+          "WhatsApp Instance Name"
         ]);
         const pulledBusinessPrompt = getVal(["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
         const pulledKey = getVal(["key", "Key", "מפתח"]);
-        const pulledLeadFollowUpDays = getVal(["leadFollowUpDays", "זמן למעקב אחרי ליד בימים"]) || "3";
+        const pulledLeadFollowUpDays = getVal(["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
         const pulledAgentEmail = getVal(["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]);
         const pulledStatusRaw = getVal(["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
         const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
-        const pulledBotIdentity = getVal(["botIdentity", "זהות הבוט"]);
-        const pulledCoursesInfo = getVal(["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר"]);
-        const pulledKidsCourses = getVal(["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים"]);
-        const pulledConversationFlow = getVal(["conversationFlow", "זרימת שיחה", "תסריט שיחה"]);
-        const pulledWritingStyle = getVal(["writingStyle", "טון ואופן כתיבה", "סגנון כתיבה"]);
-        const pulledFaqAnswers = getVal(["faqAnswers", "תשובות לשאלות נפוצות", "שאלות נפוצות"]);
-        const pulledWhatNotToDo = getVal(["whatNotToDo", "מה לא לעשות", "איסורים"]);
-        const pulledSyllabusLinks = getVal(["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
-        const pulledHumanEscalation = getVal(["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
-        const pulledImagesInfo = getVal(["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה"]);
-        const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו"]);
+        const pulledBotIdentity = getVal(["botIdentity", "זהות הבוט", "Bot Identity"]);
+        const pulledCoursesInfo = getVal(["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר", "Sale Products ", "Sale Products"]);
+        const pulledKidsCourses = getVal(["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים", "Audience ", "Audience", "Services ", "Services"]);
+        const pulledConversationFlow = getVal(["conversationFlow", "זרימת שיחה", "תסריט שיחה", "Conversation Flow"]);
+        const pulledWritingStyle = getVal(["writingStyle", "טון ואופן כתיבה", "סגנון כתיבה", "Tone"]);
+        const pulledFaqAnswers = getVal(["faqAnswers", "תשובות לשאלות נפוצות", "שאלות נפוצות", "FAQ"]);
+        const pulledWhatNotToDo = getVal(["whatNotToDo", "מה לא לעשות", "איסורים", "Not allowed ", "Not allowed"]);
+        const pulledSyllabusLinks = getVal(["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים", "Broshures Links", "Brochures Links"]);
+        const pulledHumanEscalation = getVal(["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש", "Escelation To Human ", "Escalation To Human"]);
+        const pulledImagesInfo = getVal(["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה", "Pics"]);
+        const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו", "Video"]);
 
         // If pulled data has no separate fields, extract from unified businessPrompt
         let finalBotIdentity = pulledBotIdentity;
@@ -3160,39 +3161,40 @@ ${videos || "(לא הוגדר)"}
         };
 
         const parsedAgents: AgentConfig[] = rawList.map((item: any, idx: number) => {
-          const pulledOwnerName = getVal(item, ["ownerName", "שם בעל העסק"]);
-          const pulledBusinessName = getVal(item, ["businessName", "שם העסק"]) || `פרויקט מה-Webhook ${idx + 1}`;
-          const pulledOwnerPhone = getVal(item, ["ownerPhone", "טלפון בעל העסק"]);
+          const pulledOwnerName = getVal(item, ["ownerName", "שם בעל העסק", "Owner Name"]);
+          const pulledBusinessName = getVal(item, ["businessName", "שם העסק", "Business Name"]) || `פרויקט מה-Webhook ${idx + 1}`;
+          const pulledOwnerPhone = getVal(item, ["ownerPhone", "טלפון בעל העסק", "Owne Phone", "Owner Phone"]);
           const pulledBotId = getVal(item, ["botId", "Bot ID"]);
-          const pulledAgentTypeRaw = getVal(item, ["agentType", "סוג", "סוג הבוט"]);
+          const pulledAgentTypeRaw = getVal(item, ["agentType", "סוג", "סוג הבוט", "Type"]);
           const pulledAgentType: "sales" | "support" = (pulledAgentTypeRaw.includes("תמיכה") || pulledAgentTypeRaw.toLowerCase().includes("support")) ? "support" : "sales";
-          const pulledNameRaw = getVal(item, ["name", "שם", "שם הבוט"]);
+          const pulledNameRaw = getVal(item, ["name", "שם", "שם הבוט", "Name"]);
           const pulledName = pulledNameRaw || (pulledBusinessName ? `${pulledBusinessName} _ ${pulledAgentType === "support" ? "תמיכה טכנית" : "מכירות"}` : "");
           const pulledWhatsappInstance = getVal(item, [
             "whatsappInstance", 
             "שם ואטסאפ instance", 
             "שם ואטסאפ instance ", 
             "שם וואטסאפ instance", 
-            "שם וואטסאפ instance "
+            "שם וואטסאפ instance ",
+            "WhatsApp Instance Name"
           ]);
           const pulledBusinessPrompt = getVal(item, ["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
           const pulledKey = getVal(item, ["key", "Key", "מפתח"]);
-          const pulledLeadFollowUpDays = getVal(item, ["leadFollowUpDays", "זמן למעקב אחרי ליד בימים"]) || "3";
+          const pulledLeadFollowUpDays = getVal(item, ["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
           const pulledAgentEmail = getVal(item, ["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]) || "haim.bar@gmail.com";
           const pulledStatusRaw = getVal(item, ["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
           const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
-          const pulledBotIdentity = getVal(item, ["botIdentity", "זהות הבוט"]);
-          const pulledCoursesInfo = getVal(item, ["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר"]);
-          const pulledKidsCourses = getVal(item, ["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים"]);
-          const pulledConversationFlow = getVal(item, ["conversationFlow", "זרימת שיחה", "תסריט שיחה"]);
-          const pulledWritingStyle = getVal(item, ["writingStyle", "טון ואופן כתיבה", "סגנון כתיבה"]);
-          const pulledFaqAnswers = getVal(item, ["faqAnswers", "תשובות לשאלות נפוצות", "שאלות נפוצות"]);
-          const pulledWhatNotToDo = getVal(item, ["whatNotToDo", "מה לא לעשות", "איסורים"]);
-          const pulledSyllabusLinks = getVal(item, ["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים"]);
-          const pulledHumanEscalation = getVal(item, ["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש"]);
-          const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה"]);
-          const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו"]);
+          const pulledBotIdentity = getVal(item, ["botIdentity", "זהות הבוט", "Bot Identity"]);
+          const pulledCoursesInfo = getVal(item, ["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר", "Sale Products ", "Sale Products"]);
+          const pulledKidsCourses = getVal(item, ["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים", "Audience ", "Audience", "Services ", "Services"]);
+          const pulledConversationFlow = getVal(item, ["conversationFlow", "זרימת שיחה", "תסריט שיחה", "Conversation Flow"]);
+          const pulledWritingStyle = getVal(item, ["writingStyle", "טון ואופן כתיבה", "סגנון כתיבה", "Tone"]);
+          const pulledFaqAnswers = getVal(item, ["faqAnswers", "תשובות לשאלות נפוצות", "שאלות נפוצות", "FAQ"]);
+          const pulledWhatNotToDo = getVal(item, ["whatNotToDo", "מה לא לעשות", "איסורים", "Not allowed ", "Not allowed"]);
+          const pulledSyllabusLinks = getVal(item, ["syllabusLinks", "לינקים לסילבוסים", "קישורים לסילבוסים", "Broshures Links", "Brochures Links"]);
+          const pulledHumanEscalation = getVal(item, ["humanEscalation", "אסקלציה לאנוש", "העברה לאנוש", "Escelation To Human ", "Escalation To Human"]);
+          const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה", "Pics"]);
+          const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו", "Video"]);
 
           let finalBotIdentity = pulledBotIdentity;
           let finalCoursesInfo = pulledCoursesInfo;
