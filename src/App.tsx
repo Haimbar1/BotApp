@@ -4745,7 +4745,17 @@ ${videos || "(לא הוגדר)"}
                   <button
                     key={tab.key}
                     type="button"
-                    onClick={() => setAgentPanelTab(tab.key)}
+                    onClick={() => {
+                      setAgentPanelTab(tab.key);
+                      if (tab.key === "prompt") {
+                        setActiveModalTab("botIdentity");
+                        const currentAgent = agents.find(a => a.id === activeId);
+                        if (currentAgent) {
+                          setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+                        }
+                        setShowPromptBuilder(true);
+                      }
+                    }}
                     className={`flex-1 min-w-[110px] px-3 py-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 select-none ${
                       isTabActive
                         ? "bg-sky-500/15 text-sky-300 border border-sky-500/30 shadow-sm"
@@ -5120,7 +5130,7 @@ ${videos || "(לא הוגדר)"}
 
             {agentPanelTab === "prompt" && (
             <>
-            {/* The brain of the agent (Prompt) callout */}
+            {/* Fallback shown only if the prompt builder overlay was closed while this tab stays selected */}
             <div className="pt-4 mt-2 border-t border-slate-850 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-sky-500/10 rounded-xl border border-sky-500/20 shadow-inner overflow-hidden flex-shrink-0">
@@ -5129,7 +5139,6 @@ ${videos || "(לא הוגדר)"}
                 <div className="text-right">
                   <h3 className="text-xs font-black text-white flex items-center gap-2">
                     <span>השכל של הסוכן (פרומפט) 🧠</span>
-                    <span className="text-[9px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-2 py-0.5 rounded-full font-bold">הצג הכל</span>
                   </h3>
                   <p className="text-[11px] text-slate-400 mt-0.5 font-medium font-sans">ערוך ואפיין את 9 חלקי הפרומפט המקצועיים ליצירת ההתנהגות המדויקת של הסוכן</p>
                 </div>
@@ -5148,7 +5157,7 @@ ${videos || "(לא הוגדר)"}
                 className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-black rounded-xl text-xs transition duration-200 cursor-pointer shadow-md shadow-sky-500/10 flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-3.5 h-3.5 text-sky-200 shrink-0" />
-                <span>השכל של הסוכן (פרומפט) 🪄</span>
+                <span>פתח שוב 🪄</span>
               </button>
             </div>
             </>
