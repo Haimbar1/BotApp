@@ -525,6 +525,7 @@ export default function App() {
   const [chats, setChats] = useState<any[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [isChatsLoading, setIsChatsLoading] = useState<boolean>(false);
+  const [agentPanelTab, setAgentPanelTab] = useState<"general" | "whatsapp" | "prompt" | "chats">("chats");
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
   const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
@@ -4730,6 +4731,36 @@ ${videos || "(לא הוגדר)"}
               )}
             </AnimatePresence>
 
+            {/* Agent Panel Tabs */}
+            <div className="flex items-center gap-1.5 bg-[#0a0b10] border border-slate-850 rounded-xl p-1.5 overflow-x-auto" dir="rtl">
+              {[
+                { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare },
+                { key: "general" as const, label: "מידע כללי", icon: FileText },
+                { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone },
+                { key: "prompt" as const, label: "השכל של הסוכן (פרומפט)", icon: Sparkles }
+              ].map(tab => {
+                const TabIcon = tab.icon;
+                const isTabActive = agentPanelTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setAgentPanelTab(tab.key)}
+                    className={`flex-1 min-w-[110px] px-3 py-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 select-none ${
+                      isTabActive
+                        ? "bg-sky-500/15 text-sky-300 border border-sky-500/30 shadow-sm"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-[#12141c] border border-transparent"
+                    }`}
+                  >
+                    <TabIcon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {agentPanelTab === "general" && (
+            <>
             {/* Responsive grid for input elements */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-850/50 pb-5">
               
@@ -5048,6 +5079,11 @@ ${videos || "(לא הוגדר)"}
 
             </div>
 
+            </>
+            )}
+
+            {agentPanelTab === "whatsapp" && (
+            <>
             {/* WhatsApp Business API Connection Card */}
             <div className="pt-4 mt-2 border-t border-slate-850 flex flex-col sm:flex-row items-center justify-between gap-4 bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20">
               <div className="flex items-center gap-3">
@@ -5079,6 +5115,11 @@ ${videos || "(לא הוגדר)"}
               </button>
             </div>
 
+            </>
+            )}
+
+            {agentPanelTab === "prompt" && (
+            <>
             {/* The brain of the agent (Prompt) callout */}
             <div className="pt-4 mt-2 border-t border-slate-850 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -5110,10 +5151,13 @@ ${videos || "(לא הוגדר)"}
                 <span>השכל של הסוכן (פרומפט) 🪄</span>
               </button>
             </div>
+            </>
+            )}
 
           </div>
 
           {/* LIVE CHATS VIEW PANEL */}
+          {agentPanelTab === "chats" && (
           <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-6 flex flex-col gap-5">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-4">
               <div className="flex items-center gap-2.5">
@@ -5399,6 +5443,7 @@ ${videos || "(לא הוגדר)"}
               </div>
             )}
           </div>
+          )}
         </>
       )}
     </section>
