@@ -162,6 +162,7 @@ interface AgentConfig {
   status?: string;
   name?: string;
   agentType?: "sales" | "support";
+  sendPulseBotId?: string;
   whatsappConfig?: {
     phoneNumberId?: string;
     systemUserAccessToken?: string;
@@ -462,6 +463,7 @@ export default function App() {
   const [whatsappInstance, setWhatsappInstance] = useState("");
   const [businessPrompt, setBusinessPrompt] = useState("");
   const [key, setKey] = useState("");
+  const [sendPulseBotId, setSendPulseBotId] = useState("");
   const [leadFollowUpDays, setLeadFollowUpDays] = useState("3");
   const [agentEmail, setAgentEmail] = useState("");
   const [status, setStatus] = useState<string>("Not Active");
@@ -2099,6 +2101,7 @@ ${videos || "(לא הוגדר)"}
     setBotId(agent.botId || "");
     setWhatsappInstance(agent.whatsappInstance || "");
     setKey(agent.key || "");
+    setSendPulseBotId(agent.sendPulseBotId || "");
     setLeadFollowUpDays(agent.leadFollowUpDays || "3");
     setAgentEmail(agent.agentEmail || "");
     setStatus(agent.status || "Not Active");
@@ -2258,6 +2261,7 @@ ${videos || "(לא הוגדר)"}
     else if (field === "whatsappInstance") setWhatsappInstance(value);
     else if (field === "businessPrompt") setBusinessPrompt(value);
     else if (field === "key") setKey(value);
+    else if (field === "sendPulseBotId") setSendPulseBotId(value);
     else if (field === "leadFollowUpDays") setLeadFollowUpDays(value);
     else if (field === "agentEmail") setAgentEmail(value);
     else if (field === "status") setStatus(value);
@@ -2666,6 +2670,7 @@ ${videos || "(לא הוגדר)"}
       : businessPrompt;
       
     const currentKey = agentOverride ? agentOverride.key : key;
+    const currentSendPulseBotId = agentOverride ? (agentOverride.sendPulseBotId || "") : sendPulseBotId;
     const currentLeadFollowUpDays = agentOverride ? agentOverride.leadFollowUpDays : leadFollowUpDays;
     const currentAgentEmail = agentOverride ? agentOverride.agentEmail : agentEmail;
     const currentStatus = agentOverride ? (agentOverride.status || "Not Active") : (status || "Not Active");
@@ -2690,89 +2695,39 @@ ${videos || "(לא הוגדר)"}
       : agentType;
     
     const payload = {
-      // Direct core fields requested
-      ownerName: currentOwnerName,
-      businessName: currentBusinessName,
-      ownerPhone: currentOwnerPhone,
-      botId: currentBotId,
-      name: currentName,
-      agentType: currentAgentType,
-      "שם": currentName,
-      "סוג": currentAgentType === "support" ? "תמיכה טכנית" : "מכירות",
-      "שם הבוט": currentName,
-      "סוג הבוט": currentAgentType === "support" ? "תמיכה טכנית" : "מכירות",
-      whatsappInstance: currentWhatsappInstance,
-      businessPrompt: currentBusinessPrompt,
-      key: currentKey,
-      leadFollowUpDays: currentLeadFollowUpDays,
-      agentEmail: currentAgentEmail,
-      "קהל יעד": currentKidsCourses,
-      "קבל יעד": currentKidsCourses,
-      Status: currentStatus,
-      status: currentStatus,
-      "סטטוס": currentStatus === "Active" ? "פעיל" : "לא פעיל",
-      "מצב": currentStatus,
-      "מצב בוט": currentStatus,
-      
-      // Separate prompt parts & requested field mappings
-      botIdentity: currentBotIdentity,
-      Services: currentCoursesInfo,
-      services: currentCoursesInfo,
-      coursesInfo: currentCoursesInfo,
-      Audiences: currentKidsCourses,
-      audiences: currentKidsCourses,
-      KidsCourses: currentKidsCourses,
-      kidsCourses: currentKidsCourses,
-      conversationFlow: currentConversationFlow,
-      writingStyle: currentWritingStyle,
-      faqAnswers: currentFaqAnswers,
-      whatNotToDo: currentWhatNotToDo,
-      syllabusLinks: currentSyllabusLinks,
-      humanEscalation: currentHumanEscalation,
-      imagesInfo: currentImagesInfo,
-      images: currentImagesInfo,
-      videosInfo: currentVideosInfo,
-      videos: currentVideosInfo,
-      
-      // Hebrew mapping for database filter compatibility
-      "שם בעל העסק": currentOwnerName,
-      "שם העסק": currentBusinessName,
-      "טלפון בעל העסק": currentOwnerPhone,
+      "Name": currentName,
+      "Type": currentAgentType === "support" ? "תמיכה טכנית" : "מכירות",
+      "Status": currentStatus,
+      "Owner Name": currentOwnerName,
+      "Business Name": currentBusinessName,
+      "Owner Phone": currentOwnerPhone,
       "Bot ID": currentBotId,
-      "שם ואטסאפ instance": currentWhatsappInstance,
-      "פרומפט עיסקי": currentBusinessPrompt,
+      "WhatsApp Instance Name": currentWhatsappInstance,
       "Key": currentKey,
-      "זמן למעקב אחרי ליד בימים": currentLeadFollowUpDays,
-      "אימייל משויך לסוכן": currentAgentEmail,
+      "Bot Identity": currentBotIdentity,
+      "Sale Products ": currentCoursesInfo,
+      "Conversation Flow": currentConversationFlow,
+      "Tone": currentWritingStyle,
+      "FAQ": currentFaqAnswers,
+      "Not allowed ": currentWhatNotToDo,
+      "Broshures Links": currentSyllabusLinks,
+      "Escalation To Human ": currentHumanEscalation,
+      "Audience ": currentKidsCourses,
+      "Services ": currentKidsCourses,
+      "Days to Flow up": currentLeadFollowUpDays,
+      "email": currentAgentEmail,
+      "Pics": currentImagesInfo,
+      "Video": currentVideosInfo,
+      "SendPulse Bot ID": currentSendPulseBotId,
 
-      // Hebrew mapping for separate prompt parts
-      "זהות הבוט": currentBotIdentity,
-      "מה אני מוכר — קורסים": currentCoursesInfo,
-      "קורסי ילדים": currentKidsCourses,
-      "קהל יעד וסיגמנטים מיוחדים": currentKidsCourses,
-      "זרימת שיחה": currentConversationFlow,
-      "טון ואופן כתיבה": currentWritingStyle,
-      "תשובות לשאלות נפוצות": currentFaqAnswers,
-      "מה לא לעשות": currentWhatNotToDo,
-      "לינקים לסילבוסים": currentSyllabusLinks,
-      "אסקלציה לאנוש": currentHumanEscalation,
-      "תמונות וגלריה": currentImagesInfo,
-      "סרטוני וידאו": currentVideosInfo,
-
-      // Metadata properties & event parameters
+      // Metadata properties & event parameters (kept for n8n workflow logic)
       event: resolvedIsNewBot ? "create_bot" : "update_bot",
       eventType: resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
-      event_type: resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
-      action: resolvedIsNewBot ? "create_bot" : "update_bot",
-      "אירוע": resolvedIsNewBot ? "יצירת בוט חדש" : "עדכון בוט",
-      "סוג אירוע": resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
+      isNewBot: resolvedIsNewBot,
       timestamp: new Date().toISOString(),
       source: "עסק חכם - סוכנים דיגיטליים",
       systemId: "ais-agent-configurator",
-      isNewBot: resolvedIsNewBot,
-      IsNewBot: resolvedIsNewBot,
-      "בוט חדש": resolvedIsNewBot,
-      
+
       // Webhook URL option to bypass hardcoding
       webhookUrl: webhookUrl || undefined
     };
@@ -2939,6 +2894,7 @@ ${videos || "(לא הוגדר)"}
         ]);
         const pulledBusinessPrompt = getVal(["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
         const pulledKey = getVal(["key", "Key", "מפתח"]);
+        const pulledSendPulseBotId = getVal(["sendPulseBotId", "SendPulse Bot ID"]);
         const pulledLeadFollowUpDays = getVal(["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
         const pulledAgentEmail = getVal(["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]);
         const pulledStatusRaw = getVal(["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
@@ -3033,6 +2989,7 @@ ${videos || "(לא הוגדר)"}
         setWhatsappInstance(pulledWhatsappInstance);
         setBusinessPrompt(compiled);
         setKey(pulledKey);
+        setSendPulseBotId(pulledSendPulseBotId);
         setLeadFollowUpDays(pulledLeadFollowUpDays);
         setStatus(pulledStatus);
         setName(pulledName);
@@ -3065,6 +3022,7 @@ ${videos || "(לא הוגדר)"}
               whatsappInstance: pulledWhatsappInstance,
               businessPrompt: compiled,
               key: pulledKey,
+              sendPulseBotId: pulledSendPulseBotId,
               leadFollowUpDays: pulledLeadFollowUpDays,
               agentEmail: pulledAgentEmail || agent.agentEmail || (sessionUser?.email || ""),
               status: pulledStatus,
@@ -3179,6 +3137,7 @@ ${videos || "(לא הוגדר)"}
           ]);
           const pulledBusinessPrompt = getVal(item, ["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
           const pulledKey = getVal(item, ["key", "Key", "מפתח"]);
+          const pulledSendPulseBotId = getVal(item, ["sendPulseBotId", "SendPulse Bot ID"]);
           const pulledLeadFollowUpDays = getVal(item, ["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
           const pulledAgentEmail = getVal(item, ["agentEmail", "mail", "email", "אימייל משויך לסוכן", "אימייל משויך", "אימייל"]) || "haim.bar@gmail.com";
           const pulledStatusRaw = getVal(item, ["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
@@ -3269,6 +3228,7 @@ ${videos || "(לא הוגדר)"}
             whatsappInstance: pulledWhatsappInstance,
             businessPrompt: compiled,
             key: pulledKey,
+            sendPulseBotId: pulledSendPulseBotId,
             leadFollowUpDays: pulledLeadFollowUpDays,
             agentEmail: pulledAgentEmail,
             status: pulledStatus,
@@ -4990,6 +4950,25 @@ ${videos || "(לא הוגדר)"}
                   placeholder="לדוגמה: marketing_whatsapp"
                   value={whatsappInstance}
                   onChange={(e) => handleFieldChange("whatsappInstance", e.target.value)}
+                  disabled={sessionUser?.email !== "haim.bar@gmail.com"}
+                  className={`w-full px-3.5 py-2 border rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition placeholder-slate-650 ${
+                    sessionUser?.email === "haim.bar@gmail.com"
+                      ? "bg-[#161821] border-slate-800 text-white"
+                      : "bg-[#1C1D29] border-slate-900 text-slate-500 cursor-not-allowed"
+                  }`}
+                />
+              </div>
+
+              {/* SendPulse Bot ID */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                  SendPulse Bot ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="מזהה הבוט ב-SendPulse"
+                  value={sendPulseBotId}
+                  onChange={(e) => handleFieldChange("sendPulseBotId", e.target.value)}
                   disabled={sessionUser?.email !== "haim.bar@gmail.com"}
                   className={`w-full px-3.5 py-2 border rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition placeholder-slate-650 ${
                     sessionUser?.email === "haim.bar@gmail.com"
