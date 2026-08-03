@@ -528,7 +528,6 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [isChatsLoading, setIsChatsLoading] = useState<boolean>(false);
   const [agentPanelTab, setAgentPanelTab] = useState<"general" | "whatsapp" | "prompt" | "chats">("chats");
-  const [debugRawChatItem, setDebugRawChatItem] = useState<string>("");
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
   const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
@@ -722,11 +721,6 @@ export default function App() {
               return String(rawContent);
             };
 
-            if (records.length > 0) {
-              const rawSample = JSON.stringify(records[0], null, 2);
-              console.log("[DEBUG] דוגמה לפריט שיחה גולמי מה-webhook:", rawSample);
-              setDebugRawChatItem(rawSample);
-            }
             const liveChats = records.map((item: any, idx: number) => {
               if (!item) return null;
               const sId = item.session_id || item.sessionId || item.SessionId || "";
@@ -5183,40 +5177,6 @@ ${videos || "(לא הוגדר)"}
               </div>
             </div>
 
-            {/* Temporary debug panel: shows the raw chat item so we can find the real timestamp field name */}
-            {debugRawChatItem && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex flex-col gap-2" dir="ltr">
-                <div className="flex items-center justify-between gap-2" dir="rtl">
-                  <span className="text-[11px] font-black text-amber-400">🐛 דיבאג זמני - פריט שיחה גולמי (העתק/צלם ושלח)</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(debugRawChatItem);
-                        alert("הועתק! עכשיו תדביק ותשלח לי בצ'אט");
-                      }}
-                      className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded text-[10px] font-bold cursor-pointer"
-                    >
-                      העתק
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDebugRawChatItem("")}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded text-[10px] font-bold cursor-pointer"
-                    >
-                      סגור
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  readOnly
-                  value={debugRawChatItem}
-                  onFocus={(e) => e.target.select()}
-                  className="w-full h-40 bg-[#0a0b10] border border-amber-500/20 rounded-lg p-2 text-[10px] text-amber-100 font-mono resize-none"
-                />
-              </div>
-            )}
-
             {/* Layout for Chats */}
             {isChatsLoading && chats.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 gap-3 text-slate-400">
@@ -5312,7 +5272,7 @@ ${videos || "(לא הוגדר)"}
                                   const hours = String(d.getHours()).padStart(2, "0");
                                   const minutes = String(d.getMinutes()).padStart(2, "0");
                                   return `${day}/${month} ${hours}:${minutes}`;
-                                })() : ""}
+                                })() : (session.lastMessage?.id ? `#${session.lastMessage.id}` : "")}
                               </span>
                             </div>
 
@@ -5377,7 +5337,7 @@ ${videos || "(לא הוגדר)"}
                                     <span className="text-slate-300 font-bold">
                                       {(() => {
                                         const d = new Date(msg.timestamp);
-                                        if (isNaN(d.getTime())) return msg.timestamp;
+                                        if (isNaN(d.getTime())) return msg.id ? `#${msg.id}` : (msg.timestamp || "");
                                         const day = String(d.getDate()).padStart(2, "0");
                                         const month = String(d.getMonth() + 1).padStart(2, "0");
                                         const year = d.getFullYear();
