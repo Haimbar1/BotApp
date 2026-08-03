@@ -721,6 +721,9 @@ export default function App() {
               return String(rawContent);
             };
 
+            if (records.length > 0) {
+              console.log("[DEBUG] דוגמה לפריט שיחה גולמי מה-webhook:", JSON.stringify(records[0], null, 2));
+            }
             const liveChats = records.map((item: any, idx: number) => {
               if (!item) return null;
               const sId = item.session_id || item.sessionId || item.SessionId || "";
