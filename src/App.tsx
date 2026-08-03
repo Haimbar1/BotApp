@@ -772,7 +772,7 @@ export default function App() {
                   type: finalType,
                   content: finalContent
                 },
-                timestamp: item.created_at || item.timestamp || item.time || new Date().toISOString()
+                timestamp: item.created_at || item.createdAt || item.timestamp || item.time || item.date || item.sent_at || item.sentAt || item.ts || item.inserted_at || item.insertedAt || item.updated_at || item.updatedAt || item.message_time || item.created || ""
               };
             }).filter(Boolean);
 
@@ -5204,7 +5204,7 @@ ${videos || "(לא הוגדר)"}
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 border border-slate-850 rounded-xl overflow-hidden min-h-[500px] max-h-[650px] bg-[#07080c]">
+              <div className="grid grid-cols-1 md:grid-cols-3 grid-rows-[300px_1fr] md:grid-rows-1 border border-slate-850 rounded-xl overflow-hidden min-h-[500px] max-h-[650px] bg-[#07080c]">
                 
                 {/* Conversations Sidebar (1/3 width) */}
                 <div className="border-l border-slate-850 bg-[#090a0f] flex flex-col h-full overflow-hidden">
