@@ -723,7 +723,7 @@ export default function App() {
 
             const liveChats = records.map((item: any, idx: number) => {
               if (!item) return null;
-              const sId = item.session_id || item.sessionId || item.SessionId || "";
+              const sId = String(item.session_id || item.sessionId || item.SessionId || "").replace(/^=+/, "");
               
               let itemPhone = item.phone || "";
               let itemBotId = item.botId || item.bot_id || "";
@@ -5139,6 +5139,7 @@ ${videos || "(לא הוגדר)"}
                     <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">פעיל 🟢</span>
                   </h2>
                   <p className="text-[11px] text-slate-400 mt-0.5 font-medium">עקוב אחר השיחות של הבוט עם הלקוחות, פתח פרטים טכניים ונהל היסטוריה</p>
+                  <p className="text-[10px] text-slate-500 mt-1 font-mono">נטענו {chats.length} הודעות גולמיות · {chatSessions.length} שיחות מקובצות</p>
                 </div>
               </div>
 
