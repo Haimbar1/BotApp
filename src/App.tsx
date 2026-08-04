@@ -872,20 +872,36 @@ export default function App() {
       session.lastMessage = lastMsg;
       session.lastTimestamp = lastMsg ? lastMsg.timestamp : "";
 
-      // Look for a user's name in the conversation
+      // Look for a user's real name (and phone, if available) in the conversation.
+      // Prefer this over the raw session-id-derived phone/UUID default.
+      const nameFieldRegex = /(?:^|\n)\s*Name:\s*(.+?)\s*(?:\n|$)/i;
+      const phoneFieldRegex = /(?:^|\n)\s*Phone:\s*(.+?)\s*(?:\n|$)/i;
+      const isJunkValue = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown";
+
       for (const msg of session.messages) {
         if (msg.message?.type === "human") {
-          const parsed = parseChatMessageContent(msg.message?.content || "", "human");
-          if (parsed.raw && parsed.raw.name) {
-            session.name = parsed.raw.name;
-            break;
+          const content = msg.message?.content || "";
+          const parsed = parseChatMessageContent(content, "human");
+
+          let foundName = (parsed.raw?.name || parsed.raw?.Name || "").toString().trim();
+          let foundPhone = (parsed.raw?.phone || parsed.raw?.Phone || "").toString().trim();
+
+          // Fallback: plain-text "Name:"/"Phone:" lines when the content isn't valid JSON
+          if (!foundName) {
+            const m = content.match(nameFieldRegex);
+            if (m) foundName = m[1].trim();
           }
+          if (!foundPhone) {
+            const m = content.match(phoneFieldRegex);
+            if (m) foundPhone = m[1].trim();
+          }
+
+          if (!isJunkValue(foundName)) session.name = foundName;
+          if (!isJunkValue(foundPhone)) session.phone = foundPhone;
         } else if (msg.message?.type === "ai") {
           const parsed = parseChatMessageContent(msg.message?.content || "", "ai");
-          if (parsed.raw && (parsed.raw.Human || parsed.raw.human)) {
-            session.name = parsed.raw.Human || parsed.raw.human;
-            break;
-          }
+          const foundName = (parsed.raw && (parsed.raw.Human || parsed.raw.human) || "").toString().trim();
+          if (!isJunkValue(foundName)) session.name = foundName;
         }
       }
 
