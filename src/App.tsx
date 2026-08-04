@@ -531,19 +531,26 @@ export default function App() {
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
   const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
-  const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>(() => {
+  const [deletedSessionCutoffs, setDeletedSessionCutoffs] = useState<Record<string, number>>(() => {
     try {
-      const saved = localStorage.getItem("deleted_session_ids");
-      return saved ? JSON.parse(saved) : [];
+      const saved = localStorage.getItem("deleted_session_cutoffs");
+      return saved ? JSON.parse(saved) : {};
     } catch {
-      return [];
+      return {};
     }
   });
 
-  const isSessionDeleted = (sId: string) => {
+  // A message is considered "cleared" only if its id is at or below the cutoff recorded
+  // for its exact session at the moment the user cleared that conversation.
+  // This way, a NEW message arriving later in the same session_id still shows up,
+  // instead of that phone/session being hidden forever.
+  const isMessageDeleted = (sId: string, msgId: any) => {
     if (!sId) return false;
-    const phone = sId.split("_")[0];
-    return deletedSessionIds.some(d => d === sId || (phone && d.startsWith(phone)) || (phone && d === phone));
+    const cutoff = deletedSessionCutoffs[sId];
+    if (cutoff === undefined) return false;
+    const numericId = typeof msgId === "number" ? msgId : parseInt(String(msgId), 10);
+    if (isNaN(numericId)) return false;
+    return numericId <= cutoff;
   };
 
   // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
@@ -776,7 +783,7 @@ export default function App() {
               };
             }).filter(Boolean);
 
-            const filteredChats = liveChats.filter((c: any) => c && c.sessionId && !isSessionDeleted(c.sessionId));
+            const filteredChats = liveChats.filter((c: any) => c && c.sessionId && !isMessageDeleted(c.sessionId, c.id));
             setChats(filteredChats);
           } else {
             console.error("[CHATS] Failed to fetch chats through fetch-config proxy:", result.message);
@@ -795,7 +802,7 @@ export default function App() {
           if (active) {
             if (result.success) {
               const rawList = result.data || [];
-              setChats(rawList.filter((c: any) => c && (c.sessionId || c.session_id) && !isSessionDeleted(c.sessionId || c.session_id)));
+              setChats(rawList.filter((c: any) => c && (c.sessionId || c.session_id) && !isMessageDeleted(c.sessionId || c.session_id, c.id)));
             } else {
               setChats([]);
             }
@@ -907,26 +914,37 @@ export default function App() {
   const handleClearSessionChats = async (sessionId: string) => {
     if (!sessionId) return;
 
-    const phone = sessionId.split("_")[0];
+    // Find the highest message id currently in this exact session — everything up to
+    // and including this id is considered "cleared". Any NEW message that arrives later
+    // (higher id) in the same session will still show up normally.
+    const maxIdInSession = chats
+      .filter(c => (c.sessionId || c.session_id) === sessionId)
+      .reduce((max, c) => {
+        const n = typeof c.id === "number" ? c.id : parseInt(String(c.id), 10);
+        return !isNaN(n) && n > max ? n : max;
+      }, -Infinity);
 
-    // Immediately purge from UI state & persist deletion mark
-    setDeletedSessionIds(prev => {
-      const updated = Array.from(new Set([...prev, sessionId, phone].filter(Boolean)));
+    const cutoff = maxIdInSession === -Infinity ? Number.MAX_SAFE_INTEGER : maxIdInSession;
+
+    // Immediately purge from UI state & persist the cutoff
+    setDeletedSessionCutoffs(prev => {
+      const updated = { ...prev, [sessionId]: cutoff };
       try {
-        localStorage.setItem("deleted_session_ids", JSON.stringify(updated));
+        localStorage.setItem("deleted_session_cutoffs", JSON.stringify(updated));
       } catch (e) {
-        console.error("Failed to save deleted session IDs:", e);
+        console.error("Failed to save deleted session cutoffs:", e);
       }
       return updated;
     });
 
     setChats(prev => prev.filter(c => {
       const cSid = c.sessionId || c.session_id || "";
-      const cPhone = cSid.split("_")[0];
-      return cSid !== sessionId && cPhone !== phone;
+      if (cSid !== sessionId) return true;
+      const n = typeof c.id === "number" ? c.id : parseInt(String(c.id), 10);
+      return !isNaN(n) && n > cutoff;
     }));
 
-    if (selectedSessionId === sessionId || selectedSessionId.startsWith(phone)) {
+    if (selectedSessionId === sessionId) {
       setSelectedSessionId("");
     }
 
