@@ -4618,47 +4618,6 @@ ${videos || "(לא הוגדר)"}
             <>
               {/* Main Configuration Card Form */}
               <div className="bg-[#0C0D12] rounded-xl shadow-lg border border-slate-800 p-6 flex flex-col gap-5">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-4">
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-5 h-5 text-sky-400" />
-                <div>
-                  <h2 className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
-                    <span>פרטי סוכן:</span>
-                    <span className="text-sky-450 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/15">
-                      {name || `${businessName || "[שם העסק]"} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`}
-                    </span>
-                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/15 text-[10px]">
-                      {agentType === "support" ? "🛠️ תמיכה טכנית ושירות" : "💼 שיווק ומכירות 🚀"}
-                    </span>
-                  </h2>
-                  <p className="text-[11px] text-slate-400 font-medium font-sans mt-0.5">מלא את הפרטים ליצירת התאמה דינמית בפרומפטים ובחיבור הנתונים</p>
-                </div>
-              </div>
-
-              {/* Highly visible save button on the Main Configuration Form */}
-              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                <button
-                  type="button"
-                  disabled={isSyncing}
-                  onClick={async () => {
-                    // Save immediately to server-side JSON database
-                    await saveAgentsToServer(agents, sessionToken, false);
-                    // Trigger webhook synchronization
-                    await handleSyncToWebhook();
-                  }}
-                  className={`px-4 py-2 rounded-xl text-xs font-black transition duration-200 cursor-pointer flex items-center gap-2 border shadow-lg w-full sm:w-auto justify-center select-none ${
-                    dirtyAgents[activeId]
-                      ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse shadow-emerald-500/15"
-                      : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
-                  }`}
-                >
-                  <Save className={`w-3.5 h-3.5 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
-                  <span>
-                    {isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור שינויים 💾" : "השינויים שמורים ✓"}
-                  </span>
-                </button>
-              </div>
-            </div>
 
             {/* Sync Feedback messages panel */}
             <AnimatePresence>
@@ -4694,41 +4653,61 @@ ${videos || "(לא הוגדר)"}
             </AnimatePresence>
 
             {/* Agent Panel Tabs */}
-            <div className="flex items-center gap-1.5 bg-[#0a0b10] border border-slate-850 rounded-xl p-1.5 overflow-x-auto" dir="rtl">
-              {[
-                { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare },
-                { key: "general" as const, label: "מידע כללי", icon: FileText },
-                { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone },
-                { key: "prompt" as const, label: "השכל של הסוכן (פרומפט)", icon: Sparkles }
-              ].map(tab => {
-                const TabIcon = tab.icon;
-                const isTabActive = agentPanelTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => {
-                      setAgentPanelTab(tab.key);
-                      if (tab.key === "prompt") {
-                        setActiveModalTab("botIdentity");
-                        const currentAgent = agents.find(a => a.id === activeId);
-                        if (currentAgent) {
-                          setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+            <div className="flex items-center justify-between gap-3 border-b border-slate-850" dir="rtl">
+              <div className="flex items-center gap-1 overflow-x-auto">
+                {[
+                  { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare },
+                  { key: "general" as const, label: "פרטי הסוכן", icon: FileText },
+                  { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone },
+                  { key: "prompt" as const, label: "השכל של הסוכן (פרומפט)", icon: Sparkles }
+                ].map(tab => {
+                  const TabIcon = tab.icon;
+                  const isTabActive = agentPanelTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => {
+                        setAgentPanelTab(tab.key);
+                        if (tab.key === "prompt") {
+                          setActiveModalTab("botIdentity");
+                          const currentAgent = agents.find(a => a.id === activeId);
+                          if (currentAgent) {
+                            setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+                          }
+                          setShowPromptBuilder(true);
                         }
-                        setShowPromptBuilder(true);
-                      }
-                    }}
-                    className={`flex-1 min-w-[110px] px-3 py-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 select-none ${
-                      isTabActive
-                        ? "bg-sky-500/15 text-sky-300 border border-sky-500/30 shadow-sm"
-                        : "text-slate-400 hover:text-slate-200 hover:bg-[#12141c] border border-transparent"
-                    }`}
-                  >
-                    <TabIcon className="w-3.5 h-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
+                      }}
+                      className={`shrink-0 px-3.5 py-2.5 text-[11px] font-black transition-colors cursor-pointer flex items-center gap-1.5 select-none border-b-2 -mb-px ${
+                        isTabActive
+                          ? "text-sky-300 border-sky-400"
+                          : "text-slate-400 hover:text-slate-200 border-transparent"
+                      }`}
+                    >
+                      <TabIcon className="w-3.5 h-3.5" />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Compact save control */}
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={async () => {
+                  await saveAgentsToServer(agents, sessionToken, false);
+                  await handleSyncToWebhook();
+                }}
+                className={`shrink-0 mb-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition duration-200 cursor-pointer flex items-center gap-1.5 border select-none ${
+                  dirtyAgents[activeId]
+                    ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse"
+                    : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
+                }`}
+              >
+                <Save className={`w-3 h-3 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
+                <span>{isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור 💾" : "שמור ✓"}</span>
+              </button>
             </div>
 
             {agentPanelTab === "general" && (
