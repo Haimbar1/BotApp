@@ -874,8 +874,8 @@ export default function App() {
 
       // Look for a user's real name (and phone, if available) in the conversation.
       // Prefer this over the raw session-id-derived phone/UUID default.
-      const nameFieldRegex = /(?:^|\n)\s*Name:\s*(.+?)\s*(?:\n|$)/i;
-      const phoneFieldRegex = /(?:^|\n)\s*Phone:\s*(.+?)\s*(?:\n|$)/i;
+      const nameFieldRegex = /(?:^|\n)[ \t]*Name:[ \t]*(.+?)[ \t]*(?:\n|$)/i;
+      const phoneFieldRegex = /(?:^|\n)[ \t]*Phone:[ \t]*(.+?)[ \t]*(?:\n|$)/i;
       const isJunkValue = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown";
 
       for (const msg of session.messages) {
