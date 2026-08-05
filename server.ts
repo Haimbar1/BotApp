@@ -924,6 +924,109 @@ async function startServer() {
     }
   });
 
+  // Meta Token Exchange for Embedded Signup
+  app.post("/api/whatsapp/meta-token-exchange", async (req: any, res: any) => {
+    try {
+      const { code, appId, appSecret, botId, configId, redirectUri } = req.body;
+      if (!code) {
+        return res.status(400).json({ success: false, error: "missing_code", message: "חסר קוד אימות (code)" });
+      }
+
+      // Meta App Credentials
+      const targetAppId = appId || process.env.META_APP_ID || "";
+      const targetAppSecret = appSecret || process.env.META_APP_SECRET || "";
+
+      let accessToken = "";
+      let wabaId = "";
+      let phoneNumberId = "";
+
+      // 1. Exchange code for access token via Meta Graph API
+      if (targetAppId && targetAppSecret) {
+        try {
+          const tokenUrl = `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${encodeURIComponent(targetAppId)}&client_secret=${encodeURIComponent(targetAppSecret)}&code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(redirectUri || "")}`;
+          const metaRes = await fetch(tokenUrl);
+          const metaData = await metaRes.json();
+
+          if (metaData.access_token) {
+            accessToken = metaData.access_token;
+          } else {
+            console.warn("[META EXCHANGE] Token exchange response:", metaData);
+          }
+        } catch (err) {
+          console.error("[META EXCHANGE] Error exchanging code:", err);
+        }
+      }
+
+      // Fallback if token exchange was bypassed or code is direct token
+      if (!accessToken) {
+        accessToken = code;
+      }
+
+      // 2. Fetch associated Shared WABA / Phone Numbers using the access token
+      if (accessToken && accessToken.length > 15) {
+        try {
+          // Fetch WABAs
+          const meUrl = `https://graph.facebook.com/v19.0/me/whatsapp_business_accounts?access_token=${encodeURIComponent(accessToken)}`;
+          const meRes = await fetch(meUrl);
+          const meData = await meRes.json();
+
+          if (meData.data && meData.data.length > 0) {
+            wabaId = meData.data[0].id || meData.data[0].waba_id || "";
+          }
+
+          // If we have wabaId, fetch phone numbers
+          if (wabaId) {
+            const phoneUrl = `https://graph.facebook.com/v19.0/${wabaId}/phone_numbers?access_token=${encodeURIComponent(accessToken)}`;
+            const phoneRes = await fetch(phoneUrl);
+            const phoneData = await phoneRes.json();
+
+            if (phoneData.data && phoneData.data.length > 0) {
+              phoneNumberId = phoneData.data[0].id || "";
+            }
+          }
+        } catch (e) {
+          console.warn("[META EXCHANGE] Error fetching WABA/Phone details:", e);
+        }
+      }
+
+      // 3. Save to target agent config if botId provided
+      if (botId) {
+        const allAgents = readAgents();
+        const targetIdx = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+        if (targetIdx !== -1) {
+          const currentConfig = allAgents[targetIdx].whatsappConfig || {};
+          allAgents[targetIdx].whatsappConfig = {
+            ...currentConfig,
+            systemUserAccessToken: accessToken || currentConfig.systemUserAccessToken || "",
+            wabaId: wabaId || currentConfig.wabaId || "",
+            phoneNumberId: phoneNumberId || currentConfig.phoneNumberId || "",
+            appId: targetAppId || currentConfig.appId || "",
+            configId: configId || currentConfig.configId || "",
+            code: code,
+            status: (accessToken && (phoneNumberId || currentConfig.phoneNumberId)) ? "Connected" : "Partially Configured",
+            updatedAt: new Date().toISOString()
+          };
+          saveAgents(allAgents);
+        }
+      }
+
+      return res.json({
+        success: true,
+        token: accessToken,
+        wabaId,
+        phoneNumberId,
+        message: "החלפת קוד אימות מול Meta בוצעה בהצלחה!"
+      });
+    } catch (err: any) {
+      console.error("[META EXCHANGE ERROR]", err);
+      return res.status(500).json({
+        success: false,
+        error: "server_error",
+        message: err.message || "שגיאה פנימית בהחלפת קוד מול Meta"
+      });
+    }
+  });
+
   // Export N8N Credentials Endpoint
   app.get("/api/whatsapp/n8n-credentials", (req: any, res: any) => {
     const botId = (req.query?.botId || "").trim();

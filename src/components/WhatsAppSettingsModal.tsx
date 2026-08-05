@@ -22,6 +22,7 @@ import {
   Bug
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { connectWhatsAppBusiness } from "../lib/meta/whatsapp";
 
 interface WhatsAppConfig {
   phoneNumberId: string;
@@ -30,6 +31,8 @@ interface WhatsAppConfig {
   phoneNumber: string;
   code: string;
   appId?: string;
+  configId?: string;
+  appSecret?: string;
   status?: string;
   connectionType?: "official_meta" | "unofficial_qr";
   evolutionInstanceName?: string;
@@ -66,7 +69,9 @@ export default function WhatsAppSettingsModal({
   const [wabaId, setWabaId] = useState("");
   const [phoneNumber, setPhoneNumber] = useState(initialOwnerPhone);
   const [code, setCode] = useState("");
-  const [appId, setAppId] = useState("789012345678901");
+  const [appId, setAppId] = useState("");
+  const [configId, setConfigId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [showAdvancedMeta, setShowAdvancedMeta] = useState(false);
 
@@ -135,6 +140,8 @@ export default function WhatsAppSettingsModal({
         setPhoneNumber(data.config.phoneNumber || initialOwnerPhone || "");
         setCode(data.config.code || "");
         if (data.config.appId) setAppId(data.config.appId);
+        if (data.config.configId) setConfigId(data.config.configId);
+        if (data.config.appSecret) setAppSecret(data.config.appSecret);
         if (data.config.evolutionApiUrl) setEvolutionApiUrl(data.config.evolutionApiUrl);
         if (data.config.evolutionGlobalKey) setEvolutionGlobalKey(data.config.evolutionGlobalKey);
 
@@ -159,59 +166,69 @@ export default function WhatsAppSettingsModal({
   };
 
   // 1. Launch Facebook Embedded Signup
-  const handleLaunchFacebookSignup = () => {
+  const handleLaunchFacebookSignup = async () => {
     setFeedback(null);
     setSelectedMethod("official_meta");
 
     const cleanAppId = appId.trim();
-    if (!cleanAppId || cleanAppId === "789012345678901") {
+    const cleanConfigId = configId.trim() || "whatsapp_business_signup";
+
+    if (!cleanAppId) {
       setShowAdvancedMeta(true);
       setFeedback({
         type: "error",
-        message: "כדי להתחבר בלחיצה דרך Facebook, יש להזין מזהה אפליקציה (Meta App ID) תקין ב'הגדרות מתקדמות'. לחלופין, מומלץ להזין ישירות את Phone Number ID ו-Access Token בטופס למטה."
+        message: "כדי להתחבר בלחיצה דרך Facebook, יש להזין מזהה אפליקציה (Meta App ID) ב'הגדרות מתקדמות'."
       });
       return;
     }
 
-    if (typeof window !== "undefined" && (window as any).FB) {
-      try {
-        (window as any).FB.login(
-          (response: any) => {
-            if (response.authResponse) {
-              const userCode = response.authResponse.code || response.authResponse.accessToken;
-              if (userCode) setCode(userCode);
-              setFeedback({
-                type: "success",
-                message: "אימות Facebook הושלם בהצלחה! הקוד נשמר. לחץ על 'שמור הגדרות'."
-              });
-            }
-          },
-          {
-            config_id: "whatsapp_business_signup",
-            response_type: "code",
-            override_default_response_type: true,
-            scope: "whatsapp_business_management,whatsapp_business_messaging"
-          }
-        );
-        return;
-      } catch (e) {
-        console.warn("FB.login fallback:", e);
+    try {
+      setFeedback({
+        type: "success",
+        message: "מתחבר מול Meta Embedded Signup... אנא השלם את השלבים בחלון שנפתח."
+      });
+
+      const result = await connectWhatsAppBusiness({
+        appId: cleanAppId,
+        configId: cleanConfigId,
+        appSecret: appSecret.trim(),
+        botId,
+        sessionToken,
+        onSessionInfo: (data) => {
+          if (data.wabaId) setWabaId(data.wabaId);
+          if (data.phoneNumberId) setPhoneNumberId(data.phoneNumberId);
+        }
+      });
+
+      if (result.token) setSystemUserAccessToken(result.token);
+      if (result.wabaId) setWabaId(result.wabaId);
+      if (result.phoneNumberId) setPhoneNumberId(result.phoneNumberId);
+
+      setStatus("Connected");
+      setFeedback({
+        type: "success",
+        message: "חיבור Meta Embedded Signup הושלם בהצלחה! הפרטים והטוקן עודכנו."
+      });
+
+      if (onConfigSaved) {
+        onConfigSaved({
+          phoneNumberId: result.phoneNumberId || phoneNumberId,
+          systemUserAccessToken: result.token || systemUserAccessToken,
+          wabaId: result.wabaId || wabaId,
+          phoneNumber: phoneNumber,
+          code: "",
+          appId: cleanAppId,
+          configId: cleanConfigId,
+          appSecret: appSecret,
+          status: "Connected",
+          connectionType: "official_meta"
+        });
       }
-    }
-
-    // Fallback Popup
-    const width = 600;
-    const height = 700;
-    const left = (window.innerWidth - width) / 2;
-    const top = (window.innerHeight - height) / 2;
-    const redirectUri = encodeURIComponent(`${window.location.origin}/auth/callback`);
-    const fbOAuthUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${cleanAppId}&redirect_uri=${redirectUri}&scope=whatsapp_business_management,whatsapp_business_messaging&response_type=code`;
-
-    const popup = window.open(fbOAuthUrl, "facebook_signup", `width=${width},height=${height},top=${top},left=${left}`);
-    if (!popup) {
+    } catch (err: any) {
+      console.error("[META SIGNUP ERROR]", err);
       setFeedback({
         type: "error",
-        message: "אנא אפשר חלונות קופצים בדפדפן כדי להתחבר ל-Facebook."
+        message: err.message || "שגיאה בתהליך התחברות Meta Embedded Signup"
       });
     }
   };
@@ -420,6 +437,8 @@ export default function WhatsAppSettingsModal({
         phoneNumber: phoneNumber.trim(),
         code: code.trim(),
         appId: appId.trim(),
+        configId: configId.trim(),
+        appSecret: appSecret.trim(),
         connectionType: selectedMethod,
         status: calculatedStatus
       };
@@ -641,11 +660,36 @@ export default function WhatsAppSettingsModal({
                         type="text"
                         value={appId}
                         onChange={(e) => setAppId(e.target.value)}
-                        placeholder="789012345678901"
+                        placeholder="1950695432176191"
                         className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-700 rounded-lg font-mono text-xs text-white focus:outline-none focus:border-sky-400"
                         dir="ltr"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">Configuration ID (config_id):</label>
+                      <input
+                        type="text"
+                        value={configId}
+                        onChange={(e) => setConfigId(e.target.value)}
+                        placeholder="whatsapp_business_signup"
+                        className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-700 rounded-lg font-mono text-xs text-white focus:outline-none focus:border-sky-400"
+                        dir="ltr"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">Meta App Secret (סוד אפליקציה):</label>
+                      <input
+                        type="password"
+                        value={appSecret}
+                        onChange={(e) => setAppSecret(e.target.value)}
+                        placeholder="••••••••••••••••"
+                        className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-700 rounded-lg font-mono text-xs text-white focus:outline-none focus:border-sky-400"
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-300 mb-1">Phone Number ID:</label>
                       <input
