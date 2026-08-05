@@ -163,6 +163,16 @@ export default function WhatsAppSettingsModal({
     setFeedback(null);
     setSelectedMethod("official_meta");
 
+    const cleanAppId = appId.trim();
+    if (!cleanAppId || cleanAppId === "789012345678901") {
+      setShowAdvancedMeta(true);
+      setFeedback({
+        type: "error",
+        message: "כדי להתחבר בלחיצה דרך Facebook, יש להזין מזהה אפליקציה (Meta App ID) תקין ב'הגדרות מתקדמות'. לחלופין, מומלץ להזין ישירות את Phone Number ID ו-Access Token בטופס למטה."
+      });
+      return;
+    }
+
     if (typeof window !== "undefined" && (window as any).FB) {
       try {
         (window as any).FB.login(
@@ -194,13 +204,15 @@ export default function WhatsAppSettingsModal({
     const height = 700;
     const left = (window.innerWidth - width) / 2;
     const top = (window.innerHeight - height) / 2;
-    const targetAppId = appId.trim() || "789012345678901";
     const redirectUri = encodeURIComponent(`${window.location.origin}/auth/callback`);
-    const fbOAuthUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${targetAppId}&redirect_uri=${redirectUri}&scope=whatsapp_business_management,whatsapp_business_messaging&response_type=code`;
+    const fbOAuthUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${cleanAppId}&redirect_uri=${redirectUri}&scope=whatsapp_business_management,whatsapp_business_messaging&response_type=code`;
 
     const popup = window.open(fbOAuthUrl, "facebook_signup", `width=${width},height=${height},top=${top},left=${left}`);
     if (!popup) {
-      alert("אנא אפשר חלונות קופצים בדפדפן כדי להתחבר ל-Facebook.");
+      setFeedback({
+        type: "error",
+        message: "אנא אפשר חלונות קופצים בדפדפן כדי להתחבר ל-Facebook."
+      });
     }
   };
 
@@ -622,7 +634,18 @@ export default function WhatsAppSettingsModal({
                   className="overflow-hidden pt-3 border-t border-slate-800 space-y-3"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">Meta App ID (אפליקציה):</label>
+                      <input
+                        type="text"
+                        value={appId}
+                        onChange={(e) => setAppId(e.target.value)}
+                        placeholder="789012345678901"
+                        className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-700 rounded-lg font-mono text-xs text-white focus:outline-none focus:border-sky-400"
+                        dir="ltr"
+                      />
+                    </div>
                     <div>
                       <label className="block text-[11px] font-bold text-slate-300 mb-1">Phone Number ID:</label>
                       <input
@@ -635,7 +658,7 @@ export default function WhatsAppSettingsModal({
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-300 mb-1">WABA ID:</label>
+                      <label className="block text-[11px] font-bold text-slate-300 mb-1">WABA ID (חשבון עסקי):</label>
                       <input
                         type="text"
                         value={wabaId}
