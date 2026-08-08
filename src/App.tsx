@@ -39,7 +39,8 @@ import {
   Paperclip,
   Sun,
   Moon,
-  Sliders
+  Sliders,
+  Code
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
@@ -1042,6 +1043,45 @@ export default function App() {
 
   // AI Bot Creator / Wizard State variables
   const [showWizardModal, setShowWizardModal] = useState<boolean>(false);
+
+  // Webi Bot Embed Code Modal state
+  const [showEmbedModal, setShowEmbedModal] = useState<boolean>(false);
+  const [embedTargetAgent, setEmbedTargetAgent] = useState<AgentConfig | null>(null);
+  const [embedCopied, setEmbedCopied] = useState<boolean>(false);
+
+  // Sync the active agent with the live web chat widget bubble in the UI
+  useEffect(() => {
+    if (!isAuthenticated || agents.length === 0) return;
+    const currentActiveAgent = agents.find(a => a.id === activeId) || agents[0];
+    if (!currentActiveAgent) return;
+
+    const bId = currentActiveAgent.botId || `bot_${currentActiveAgent.id}`;
+    const bTitle = currentActiveAgent.businessName || currentActiveAgent.name || "בוט עסק חכם";
+    const waNum = currentActiveAgent.ownerPhone || "972552502584";
+
+    (window as any).OpticsBotConfig = {
+      botId: bId,
+      title: bTitle,
+      whatsappNumber: waNum,
+      webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
+    };
+
+    if (typeof (window as any).OpticsBotWidgetUpdate === "function") {
+      (window as any).OpticsBotWidgetUpdate((window as any).OpticsBotConfig);
+    } else {
+      const existingScript = document.getElementById("optics-bot-widget-script");
+      if (!existingScript) {
+        const script = document.createElement("script");
+        script.id = "optics-bot-widget-script";
+        script.src = "/bot-widget.js";
+        script.async = true;
+        script.setAttribute("data-bot-id", bId);
+        script.setAttribute("data-title", bTitle);
+        script.setAttribute("data-whatsapp", waNum);
+        document.body.appendChild(script);
+      }
+    }
+  }, [activeId, agents, isAuthenticated]);
 
   // Safe Delete Agent state variables
   const [agentIdToDelete, setAgentIdToDelete] = useState<string | null>(null);
@@ -4518,23 +4558,34 @@ ${videos || "(לא הוגדר)"}
                         </div>
                       </div>
 
-                      <div className="mt-2.5 flex items-center gap-3 text-[9px] text-slate-550 font-mono flex-wrap">
-                        <span className="flex items-center gap-1">
-                          <Bot className="w-3 h-3 text-slate-500" />
-                          {agent.botId || "N/A"}
-                        </span>
-                        {agent.ownerPhone && (
+                      <div className="mt-2.5 flex items-center justify-between gap-2 text-[9px] text-slate-550 font-mono flex-wrap pt-2 border-t border-slate-850/60">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="flex items-center gap-1">
-                            <Smartphone className="w-3 h-3 text-slate-500" />
-                            {agent.ownerPhone}
+                            <Bot className="w-3 h-3 text-slate-500" />
+                            {agent.botId || "N/A"}
                           </span>
-                        )}
-                        {agent.agentEmail && (
-                          <span className="flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px] text-[8.5px] text-indigo-400" title={agent.agentEmail}>
-                            <Mail className="w-2.5 h-2.5 text-indigo-500 flex-shrink-0" />
-                            {agent.agentEmail}
-                          </span>
-                        )}
+                          {agent.ownerPhone && (
+                            <span className="flex items-center gap-1">
+                              <Smartphone className="w-3 h-3 text-slate-500" />
+                              {agent.ownerPhone}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEmbedTargetAgent(agent);
+                            setShowEmbedModal(true);
+                            setEmbedCopied(false);
+                          }}
+                          className="px-2 py-0.5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded-md text-[9px] font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="קח קוד להטמעה בדף/אתר האינטרנט שלך"
+                        >
+                          <Code className="w-2.5 h-2.5 text-sky-400" />
+                          <span>קוד הטמעה 🌐</span>
+                        </button>
                       </div>
                     </div>
                   );
@@ -4725,23 +4776,42 @@ ${videos || "(לא הוגדר)"}
                 })}
               </div>
 
-              {/* Compact save control */}
-              <button
-                type="button"
-                disabled={isSyncing}
-                onClick={async () => {
-                  await saveAgentsToServer(agents, sessionToken, false);
-                  await handleSyncToWebhook();
-                }}
-                className={`shrink-0 mb-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition duration-200 cursor-pointer flex items-center gap-1.5 border select-none ${
-                  dirtyAgents[activeId]
-                    ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse"
-                    : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
-                }`}
-              >
-                <Save className={`w-3 h-3 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
-                <span>{isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור 💾" : "שמור ✓"}</span>
-              </button>
+              {/* Workspace Action Controls */}
+              <div className="flex items-center gap-2 mb-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentAgent = agents.find(a => a.id === activeId);
+                    if (currentAgent) {
+                      setEmbedTargetAgent(currentAgent);
+                      setShowEmbedModal(true);
+                      setEmbedCopied(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-black bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 transition duration-200 cursor-pointer flex items-center gap-1.5 select-none"
+                  title="קח קוד להטמעה של בוט Webi באתר שלך"
+                >
+                  <Code className="w-3 h-3 text-indigo-400" />
+                  <span>קוד הטמעה לאתר 🌐</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={async () => {
+                    await saveAgentsToServer(agents, sessionToken, false);
+                    await handleSyncToWebhook();
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition duration-200 cursor-pointer flex items-center gap-1.5 border select-none ${
+                    dirtyAgents[activeId]
+                      ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse"
+                      : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
+                  }`}
+                >
+                  <Save className={`w-3 h-3 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
+                  <span>{isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור 💾" : "שמור ✓"}</span>
+                </button>
+              </div>
             </div>
 
             {agentPanelTab === "general" && (
@@ -6954,6 +7024,102 @@ ${videos || "(לא הוגדר)"}
           }));
         }}
       />
+
+      {/* Webi Embed Code Modal */}
+      <AnimatePresence>
+        {showEmbedModal && embedTargetAgent && (
+          <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 shadow-2xl" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#0e0f17] border border-sky-500/30 rounded-2xl w-full max-w-lg p-6 flex flex-col gap-5 shadow-2xl overflow-hidden font-sans text-right relative"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-sky-500/10 rounded-xl border border-sky-500/20 text-sky-400">
+                    <Code className="w-5 h-5 text-sky-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white">
+                      קוד הטמעה לבוט Webi 🌐
+                    </h3>
+                    <p className="text-[11px] text-slate-400 font-medium">
+                      {embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט"} ({embedTargetAgent.botId || `bot_${embedTargetAgent.id}`})
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmbedModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Instructions */}
+              <div className="bg-[#141622] p-3.5 rounded-xl border border-slate-800 text-xs text-slate-300 leading-relaxed flex flex-col gap-1.5">
+                <p className="font-bold text-sky-300">💡 הוראות הטמעה קלות בדיוק בדקה:</p>
+                <p className="text-slate-400">
+                  העתק את קטע הקוד שלמטה והדבק אותו בתוך דפי האתר שלך (לפני תגית הסגירה <code className="text-amber-400 dir-ltr font-mono">&lt;/body&gt;</code> או באזור הסקריפטים של האתר). הבוט יופיע אוטומטית כבועה מרחפת בפינת המסך!
+                </p>
+              </div>
+
+              {/* Code Snippet Box */}
+              <div className="relative bg-[#07080e] border border-slate-800 rounded-xl p-4 font-mono text-xs text-emerald-400 dir-ltr text-left overflow-x-auto select-all">
+                <pre className="whitespace-pre-wrap break-all">{`<!-- סקריפט בועת הצ'אט - SmartEsek Webi Bot -->
+<script 
+  src="https://app.smartesek.com/bot-widget.js" 
+  data-bot-id="${embedTargetAgent.botId || `bot_${embedTargetAgent.id}`}"
+  data-title="${embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט"}"
+  async>
+</script>`}</pre>
+              </div>
+
+              {/* Copy & Action Controls */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const embedCode = `<!-- סקריפט בועת הצ'אט - SmartEsek Webi Bot -->\n<script \n  src="https://app.smartesek.com/bot-widget.js" \n  data-bot-id="${embedTargetAgent.botId || `bot_${embedTargetAgent.id}`}"\n  data-title="${embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט"}"\n  async>\n</script>`;
+                    navigator.clipboard.writeText(embedCode);
+                    setEmbedCopied(true);
+                    setTimeout(() => setEmbedCopied(false), 3000);
+                  }}
+                  className={`flex-1 py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg ${
+                    embedCopied
+                      ? "bg-emerald-500 text-slate-950 font-black"
+                      : "bg-sky-500 hover:bg-sky-400 text-slate-950 font-black"
+                  }`}
+                >
+                  {embedCopied ? (
+                    <>
+                      <Check className="w-4 h-4 text-slate-950" />
+                      <span>הקוד הועתק בהצלחה! ✓</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4 text-slate-950" />
+                      <span>העתק קוד להטמעה 📋</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmbedModal(false)}
+                  className="px-4 py-3 bg-slate-850 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  סגור
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* System Admin Firebase Storage Config Modal */}
       <FirebaseConfigModal

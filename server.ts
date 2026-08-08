@@ -109,6 +109,13 @@ async function startServer() {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
 
+  // Serve public assets statically (such as /bot-widget.js)
+  const PUBLIC_DIR = path.join(process.cwd(), "public");
+  if (!fs.existsSync(PUBLIC_DIR)) {
+    fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+  }
+  app.use(express.static(PUBLIC_DIR));
+
   // Serve uploaded files statically at /uploads
   app.use("/uploads", express.static(UPLOADS_DIR));
 
@@ -925,7 +932,7 @@ async function startServer() {
   });
 
   // Meta Token Exchange for Embedded Signup
-  app.post("/api/whatsapp/meta-token-exchange", async (req: any, res: any) => {
+  const handleMetaTokenExchange = async (req: any, res: any) => {
     try {
       const { code, appId, appSecret, botId, configId, redirectUri } = req.body;
       if (!code) {
@@ -933,7 +940,7 @@ async function startServer() {
       }
 
       // Meta App Credentials
-      const targetAppId = appId || process.env.META_APP_ID || "";
+      const targetAppId = appId || process.env.META_APP_ID || "1950695432176191";
       const targetAppSecret = appSecret || process.env.META_APP_SECRET || "";
 
       let accessToken = "";
@@ -1025,7 +1032,10 @@ async function startServer() {
         message: err.message || "שגיאה פנימית בהחלפת קוד מול Meta"
       });
     }
-  });
+  };
+
+  app.post("/api/whatsapp/meta-token-exchange", handleMetaTokenExchange);
+  app.post("/api/meta/exchange-code", handleMetaTokenExchange);
 
   // Export N8N Credentials Endpoint
   app.get("/api/whatsapp/n8n-credentials", (req: any, res: any) => {
