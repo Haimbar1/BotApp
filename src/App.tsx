@@ -554,6 +554,22 @@ export default function App() {
     return numericId <= cutoff;
   };
 
+  // Phone display formatter e.g. 0547866119 -> 054-7866119
+  const formatPhoneDisplay = (phoneStr: string) => {
+    if (!phoneStr) return "";
+    let p = phoneStr.trim();
+    if (p.startsWith("+972")) p = "0" + p.slice(4);
+    else if (p.startsWith("972") && p.length > 9) p = "0" + p.slice(3);
+
+    if (/^05\d{8}$/.test(p)) {
+      return `${p.slice(0, 3)}-${p.slice(3)}`;
+    }
+    if (/^0[23489]\d{7}$/.test(p)) {
+      return `${p.slice(0, 2)}-${p.slice(2)}`;
+    }
+    return p;
+  };
+
   // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
   const parseChatMessageContent = (content: string, type: "human" | "ai") => {
     if (!content) return { text: "", raw: null, summary: "", action: "", details: {}, imageUrl: "" };
@@ -5560,25 +5576,26 @@ ${videos || "(לא הוגדר)"}
 
                         const hasName = Boolean(session.name && !isJunkVal(session.name));
                         const hasPhone = Boolean(session.phone && !isJunkVal(session.phone));
+                        const formattedPhone = hasPhone ? formatPhoneDisplay(session.phone) : "";
 
-                        // Primary Title: First name if available, else Phone if available, else Session ID
-                        const displayTitle = hasName ? session.name : (hasPhone ? session.phone : session.sessionId);
+                        // Primary Title: Name if available, else formatted Phone, else short Session ID
+                        const displayTitle = hasName ? session.name : (hasPhone ? formattedPhone : `שיחה ${session.sessionId.slice(0, 8)}`);
 
                         return (
                           <div
                             key={session.sessionId}
                             onClick={() => setSelectedSessionId(session.sessionId)}
-                            className={`p-3 transition-all cursor-pointer flex flex-col gap-1 text-right select-none ${
+                            className={`p-3.5 transition-all cursor-pointer flex flex-col gap-1.5 text-right select-none ${
                               isActive 
-                                ? "bg-sky-500/10 border-r-4 border-r-sky-500 text-sky-200 font-bold" 
-                                : "hover:bg-[#131622]/50 text-slate-300"
+                                ? "bg-[#181c2b] border-r-4 border-r-emerald-500 text-white shadow-md" 
+                                : "hover:bg-[#131622] text-slate-200"
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-black truncate max-w-[140px]" title={displayTitle}>
-                                {displayTitle}
+                              <span className="text-xs font-black text-slate-100 truncate max-w-[140px]" title={displayTitle}>
+                                {hasName ? `👤 ${session.name}` : (hasPhone ? `📞 ${formattedPhone}` : displayTitle)}
                               </span>
-                              <span className="text-[9px] text-slate-400 font-mono font-bold bg-slate-900/80 border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
+                              <span className="text-[9px] text-slate-300 font-mono font-bold bg-[#0d0e15] border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
                                 {session.lastTimestamp ? (() => {
                                   const d = new Date(session.lastTimestamp);
                                   if (isNaN(d.getTime())) return session.lastTimestamp;
@@ -5591,18 +5608,12 @@ ${videos || "(לא הוגדר)"}
                               </span>
                             </div>
 
-                            {/* Subline with Phone number if name is shown */}
+                            {/* Clean Phone Number subline if both Name and Phone are present */}
                             {hasName && hasPhone && (
-                              <span className="text-[9.5px] text-sky-400/90 font-mono text-right truncate font-bold">
-                                📞 {session.phone}
-                              </span>
-                            )}
-
-                            {/* Subline with Session ID if phone/name present */}
-                            {(hasName || hasPhone) && (
-                              <span className="text-[8.5px] text-slate-500 font-mono text-right truncate dir-ltr">
-                                🆔 {session.sessionId}
-                              </span>
+                              <div className="flex items-center justify-end gap-1.5 text-[11px] font-mono font-bold text-slate-200 dir-ltr">
+                                <span className="text-emerald-400">{formattedPhone}</span>
+                                <span className="text-slate-400 text-[10px]">📞</span>
+                              </div>
                             )}
 
                             <div className="flex items-center justify-between gap-2 mt-0.5">
@@ -5617,7 +5628,7 @@ ${videos || "(לא הוגדר)"}
                                   e.stopPropagation();
                                   handleClearSessionChats(session.sessionId);
                                 }}
-                                className="p-1 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 rounded transition cursor-pointer shrink-0"
+                                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition cursor-pointer shrink-0"
                                 title="מחק שיחה זו"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -5636,8 +5647,36 @@ ${videos || "(לא הוגדר)"}
                       const activeSession = chatSessions.find(s => s.sessionId === selectedSessionId);
                       if (!activeSession) return null;
 
+                      const isJunkVal = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown" || v.startsWith("web_");
+                      const hasName = Boolean(activeSession.name && !isJunkVal(activeSession.name));
+                      const hasPhone = Boolean(activeSession.phone && !isJunkVal(activeSession.phone));
+                      const formattedPhone = hasPhone ? formatPhoneDisplay(activeSession.phone) : "";
+
                       return (
                         <div className="flex flex-col h-full overflow-hidden">
+
+                          {/* Thread Header Bar */}
+                          <div className="p-3 px-4 bg-[#0d0f18] border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-slate-100 font-extrabold text-sm shrink-0 shadow-sm">
+                                {hasName ? activeSession.name.charAt(0).toUpperCase() : "👤"}
+                              </div>
+                              <div className="text-right">
+                                <h3 className="text-xs font-black text-white flex items-center gap-2">
+                                  <span>{hasName ? activeSession.name : (hasPhone ? formattedPhone : "לקוח")}</span>
+                                </h3>
+                                {hasName && hasPhone && (
+                                  <p className="text-[11px] text-emerald-400 font-mono font-bold mt-0.5 flex items-center gap-1 dir-ltr text-right">
+                                    <span>{formattedPhone}</span>
+                                    <span className="text-slate-400">📞</span>
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono bg-[#11131f] px-2.5 py-1 rounded-lg border border-slate-800 dir-ltr">
+                              ID: {activeSession.sessionId}
+                            </div>
+                          </div>
 
                           {/* Message List */}
                           <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3.5 custom-scrollbar bg-[#07080d]/40">
