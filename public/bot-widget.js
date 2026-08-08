@@ -8,10 +8,36 @@
   var userConfig = window.OpticsBotConfig || {};
   var botId = userConfig.botId || (currentScript ? currentScript.getAttribute('data-bot-id') : null) || 'bot_generic_252';
   var webhookUrl = userConfig.webhookUrl || (currentScript ? currentScript.getAttribute('data-webhook-url') : null) || 'https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a';
-  var botTitle = userConfig.title || (currentScript ? currentScript.getAttribute('data-title') : null) || 'אופטיקה הטובה אמירים';
+  var botTitle = userConfig.title || (currentScript ? currentScript.getAttribute('data-title') : null) || 'האופטיקה הטובה - מושב אמירים';
+  var botSubtitle = userConfig.subtitle || (currentScript ? currentScript.getAttribute('data-subtitle') : null) || '';
   var whatsappNumber = userConfig.whatsappNumber || (currentScript ? currentScript.getAttribute('data-whatsapp') : null) || '972552502584';
   var themeColor = userConfig.themeColor || (currentScript ? currentScript.getAttribute('data-theme-color') : null) || '#0047AB';
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
+
+  var parseTitleAndSubtitle = function(rawTitle, rawSub) {
+    var main = (rawTitle || '').trim();
+    var sub = (rawSub || '').trim();
+
+    if (!main) main = 'האופטיקה הטובה';
+
+    if (!sub) {
+      if (main.indexOf('-') !== -1) {
+        var parts = main.split('-');
+        main = parts[0].trim();
+        sub = parts.slice(1).join('-').trim();
+      } else if (main.indexOf('אמירים') !== -1) {
+        main = main.replace('אמירים', '').trim();
+        sub = 'מושב אמירים';
+      } else {
+        sub = 'מושב אמירים';
+      }
+    }
+
+    if (!main) main = 'האופטיקה הטובה';
+    if (!sub) sub = 'מושב אמירים';
+
+    return { main: main, sub: sub };
+  };
 
   if (window.__OpticsBotWidgetLoaded) {
     if (typeof window.OpticsBotWidgetUpdate === 'function') {
@@ -395,9 +421,9 @@
       height: 580px;
       max-height: calc(100vh - 100px);
       background: #ffffff;
-      border-radius: 20px;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.18);
-      border: 1px solid #e2e8f0;
+      border-radius: 22px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.22);
+      border: 1px solid #cbd5e1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -411,44 +437,57 @@
       visibility: hidden;
     }
     .obw-header {
-      background: linear-gradient(135deg, ${themeColor} 0%, #002D6B 100%);
+      background: linear-gradient(135deg, #0056b3 0%, #003e8a 100%);
       color: #ffffff;
-      padding: 14px 16px;
+      padding: 16px 18px;
       display: flex;
       align-items: center;
-      justify-content: center;
+      justify-content: space-between;
       position: relative;
+      direction: rtl;
     }
     .obw-header-info {
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 10px;
-      text-align: center;
-      width: 100%;
+      gap: 12px;
+      text-align: right;
     }
     .obw-avatar {
-      width: 36px;
-      height: 36px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
-      background: rgba(255,255,255,0.2);
+      background: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+      flex-shrink: 0;
+    }
+    .obw-avatar svg {
+      width: 26px;
+      height: 26px;
+      stroke: #0056b3;
+    }
+    .obw-title-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      text-align: right;
     }
     .obw-title {
-      font-weight: 800;
-      font-size: 14px;
+      font-weight: 900;
+      font-size: 19px;
       margin: 0;
-      line-height: 1.2;
-      text-align: center;
+      line-height: 1.15;
+      color: #ffffff;
+      letter-spacing: -0.3px;
     }
     .obw-subtitle {
-      font-size: 11px;
-      opacity: 0.85;
-      margin: 2px 0 0 0;
-      text-align: center;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.9);
+      margin: 3px 0 0 0;
+      line-height: 1.15;
     }
     .obw-close-btn {
       position: absolute;
@@ -458,12 +497,20 @@
       background: transparent;
       border: none;
       color: #ffffff;
-      font-size: 20px;
+      font-size: 22px;
       cursor: pointer;
-      opacity: 0.85;
-      padding: 4px 8px;
-      border-radius: 8px;
+      opacity: 0.9;
+      padding: 6px;
+      border-radius: 50%;
       line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+    }
+    .obw-close-btn:hover {
+      opacity: 1;
+      background: rgba(255,255,255,0.2);
     }
     .obw-close-btn:hover {
       opacity: 1;
@@ -711,6 +758,8 @@
   document.head.appendChild(styleEl);
 
   // 4. Build Widget HTML markup
+  var headerTitles = parseTitleAndSubtitle(botTitle, botSubtitle);
+
   var widgetContainer = document.createElement('div');
   widgetContainer.id = 'obw-widget-container';
   widgetContainer.innerHTML = `
@@ -724,13 +773,20 @@
     <div class="obw-window obw-hidden" id="obw-window">
       <div class="obw-header">
         <div class="obw-header-info">
-          <div class="obw-avatar">👓</div>
-          <div>
-            <div class="obw-title">${botTitle}</div>
-            <div class="obw-subtitle">בוט מענה חכם ומהיר 24/7</div>
+          <div class="obw-avatar">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0056b3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="12" r="4"/>
+              <circle cx="18" cy="12" r="4"/>
+              <line x1="10" y1="12" x2="14" y2="12"/>
+              <path d="M2 12h0.5M21.5 12h0.5"/>
+            </svg>
+          </div>
+          <div class="obw-title-group">
+            <div class="obw-title" id="obw-header-main-title">${headerTitles.main}</div>
+            <div class="obw-subtitle" id="obw-header-sub-title">${headerTitles.sub}</div>
           </div>
         </div>
-        <button class="obw-close-btn" id="obw-close">✕</button>
+        <button class="obw-close-btn" id="obw-close" aria-label="סגור חלון">✕</button>
       </div>
 
       <div class="obw-wa-banner">
@@ -1276,12 +1332,16 @@
     if (!newConfig) return;
     if (newConfig.botId) botId = newConfig.botId;
     if (newConfig.title) botTitle = newConfig.title;
+    if (newConfig.subtitle !== undefined) botSubtitle = newConfig.subtitle;
     if (newConfig.whatsappNumber) whatsappNumber = newConfig.whatsappNumber;
     if (newConfig.webhookUrl) webhookUrl = newConfig.webhookUrl;
     if (newConfig.conversationFlow !== undefined) conversationFlow = newConfig.conversationFlow;
 
-    var titleEl = document.querySelector('#obw-widget-container .obw-title');
-    if (titleEl) titleEl.textContent = botTitle;
+    var parsedTitles = parseTitleAndSubtitle(botTitle, botSubtitle);
+    var mainTitleEl = document.querySelector('#obw-widget-container #obw-header-main-title');
+    if (mainTitleEl) mainTitleEl.textContent = parsedTitles.main;
+    var subTitleEl = document.querySelector('#obw-widget-container #obw-header-sub-title');
+    if (subTitleEl) subTitleEl.textContent = parsedTitles.sub;
 
     var waLink = document.querySelector('#obw-widget-container .obw-wa-link');
     if (waLink) {
