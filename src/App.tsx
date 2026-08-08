@@ -556,7 +556,7 @@ export default function App() {
 
   // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
   const parseChatMessageContent = (content: string, type: "human" | "ai") => {
-    if (!content) return { text: "", raw: null, summary: "", action: "", details: {} };
+    if (!content) return { text: "", raw: null, summary: "", action: "", details: {}, imageUrl: "" };
 
     let cleaned = content.trim();
     
@@ -572,21 +572,101 @@ export default function App() {
     try {
       const parsed = JSON.parse(cleaned);
       if (type === "human") {
+        let humanText = parsed.chatInput || parsed.message || parsed.content || parsed.text || cleaned;
+        if (typeof humanText === "object") humanText = JSON.stringify(humanText);
         return {
-          text: parsed.chatInput || parsed.content || cleaned,
+          text: humanText,
           raw: parsed,
           summary: "",
           action: "",
-          details: parsed
+          details: parsed,
+          imageUrl: ""
         };
       } else {
         // AI type
+        let text = "";
+        let imageUrl = "";
+        let summary = "";
+        let action = "";
+
+        const nodes = Array.isArray(parsed) ? parsed : [parsed];
+
+        for (const node of nodes) {
+          if (!node || typeof node !== "object") continue;
+
+          if (node.action) action = node.action;
+          if (node.summary) summary = node.summary;
+          if (node.crm_data && node.crm_data.summary) summary = node.crm_data.summary;
+
+          if (node.whatsapp_payload && node.whatsapp_payload.message) {
+            const msg = node.whatsapp_payload.message;
+
+            if (msg.type === "image" || msg.image) {
+              if (typeof msg.image === "string") {
+                imageUrl = msg.image;
+              } else if (msg.image && typeof msg.image === "object") {
+                imageUrl = msg.image.link || msg.image.url || imageUrl;
+                if (msg.image.caption && !text) {
+                  text = msg.image.caption;
+                }
+              }
+              if (msg.caption && !text) text = msg.caption;
+            }
+
+            if (msg.interactive) {
+              const parts = [];
+              if (msg.interactive.header?.text) parts.push(msg.interactive.header.text);
+              if (msg.interactive.body?.text) parts.push(msg.interactive.body.text);
+              if (msg.interactive.footer?.text) parts.push(msg.interactive.footer.text);
+              if (parts.length > 0 && !text) text = parts.join("\n\n");
+            }
+
+            if (msg.text?.body && !text) {
+              text = msg.text.body;
+            }
+            if (msg.body && !text) {
+              text = typeof msg.body === "string" ? msg.body : JSON.stringify(msg.body);
+            }
+          }
+
+          if (!text) {
+            if (node.caption) text = node.caption;
+            else if (node.image && typeof node.image === "object" && node.image.caption) text = node.image.caption;
+            else if (node.reply) text = typeof node.reply === "string" ? node.reply : JSON.stringify(node.reply);
+            else if (node.text) text = typeof node.text === "string" ? node.text : JSON.stringify(node.text);
+            else if (node.content) text = typeof node.content === "string" ? node.content : JSON.stringify(node.content);
+            else if (node.message) {
+              if (typeof node.message === "string") text = node.message;
+              else if (typeof node.message === "object") {
+                if (node.message.caption) text = node.message.caption;
+                else if (node.message.image && node.message.image.caption) text = node.message.image.caption;
+                else if (node.message.text) text = typeof node.message.text === "string" ? node.message.text : JSON.stringify(node.message.text);
+                else if (node.message.body) text = typeof node.message.body === "string" ? node.message.body : JSON.stringify(node.message.body);
+              }
+            }
+          }
+
+          if (!imageUrl) {
+            if (node.image) {
+              if (typeof node.image === "string") imageUrl = node.image;
+              else if (typeof node.image === "object") imageUrl = node.image.link || node.image.url || "";
+            } else if (node.imageUrl) {
+              imageUrl = node.imageUrl;
+            }
+          }
+        }
+
+        if (!text) {
+          text = parsed.reply || parsed.text || parsed.content || cleaned;
+        }
+
         return {
-          text: parsed.reply || parsed.text || parsed.content || cleaned,
+          text,
           raw: parsed,
-          summary: parsed.summary || "",
-          action: parsed.action || parsed.Action || "",
-          details: parsed
+          summary: summary || parsed.summary || "",
+          action: action || parsed.action || parsed.Action || "",
+          details: parsed,
+          imageUrl
         };
       }
     } catch (e) {
@@ -596,7 +676,8 @@ export default function App() {
         raw: null,
         summary: "",
         action: "",
-        details: {}
+        details: {},
+        imageUrl: ""
       };
     }
   };
@@ -652,6 +733,116 @@ export default function App() {
     const renderedOther = otherLines.map((line, idx) => <span key={`other-${idx}`}>{line}</span>);
 
     return [...renderedFields, ...renderedOther];
+  };
+
+  // Renders AI message text with inline styled buttons replacing raw URLs and their intro phrases
+  const renderFormattedAIMessageText = (rawText: string) => {
+    if (!rawText) return null;
+
+    const urlRegex = /(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i;
+    if (!urlRegex.test(rawText)) {
+      return (
+        <p className="whitespace-pre-wrap select-text break-words text-right leading-relaxed" dir="rtl">
+          {rawText}
+        </p>
+      );
+    }
+
+    const lines = rawText.split("\n");
+
+    return (
+      <div className="flex flex-col gap-1.5 w-full select-text break-words text-right leading-relaxed" dir="rtl">
+        {lines.map((line, lineIdx) => {
+          if (!urlRegex.test(line)) {
+            return (
+              <p key={lineIdx} className="whitespace-pre-wrap">
+                {line}
+              </p>
+            );
+          }
+
+          const elements: React.ReactNode[] = [];
+          let lastIndex = 0;
+          const pattern = /(?:([^\n\r:\-•*]{1,40}[:\-•*]?)?\s*)?(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/gi;
+          let match;
+
+          while ((match = pattern.exec(line)) !== null) {
+            const matchStart = match.index;
+            const fullMatchStr = match[0];
+            const rawPrefix = match[1];
+            const matchUrl = match[2];
+
+            let plainTextBefore = "";
+            let label = "";
+
+            if (rawPrefix) {
+              const lastPunct = rawPrefix.search(/[,\.\!\?\;\n][^,\.\!\?\;\n]*$/);
+              if (lastPunct !== -1) {
+                plainTextBefore = rawPrefix.substring(0, lastPunct + 1) + " ";
+                label = rawPrefix.substring(lastPunct + 1).trim();
+              } else {
+                label = rawPrefix.trim();
+              }
+            }
+
+            label = label.replace(/[:\-•*]+$/, "").trim();
+
+            if (!label || label.length > 35 || /[\.\!\?]$/.test(label)) {
+              if (/waze\.com/i.test(matchUrl)) {
+                label = "🚗 לניווט ב-Waze";
+              } else if (/wa\.me|whatsapp\.com/i.test(matchUrl)) {
+                label = "💬 פנייה ב-WhatsApp";
+              } else if (/pdf|doc|file/i.test(matchUrl)) {
+                label = "📥 הורדת קובץ";
+              } else {
+                label = "🌐 מעבר לקישור";
+              }
+            } else {
+              if (/ניווט|וויז|waze|מפה|כתובת/i.test(label) && !/[\u{1F300}-\u{1F9FF}]/u.test(label)) {
+                label = "🚗 " + label;
+              } else if (/תור|פגישה|יומן|קביעה/i.test(label) && !/[\u{1F300}-\u{1F9FF}]/u.test(label)) {
+                label = "📅 " + label;
+              } else if (/ווטסאפ|whatsapp|שיחה|קשר/i.test(label) && !/[\u{1F300}-\u{1F9FF}]/u.test(label)) {
+                label = "💬 " + label;
+              } else if (!/[\u{1F300}-\u{1F9FF}]/u.test(label)) {
+                label = "🔗 " + label;
+              }
+            }
+
+            const targetUrl = matchUrl.startsWith("wa.me") ? "https://" + matchUrl : matchUrl;
+
+            if (plainTextBefore) {
+              elements.push(<span key={`txt-${matchStart}`}>{plainTextBefore}</span>);
+            }
+
+            elements.push(
+              <a
+                key={`btn-${matchStart}`}
+                href={targetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 my-1 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition cursor-pointer border border-blue-400/30 no-underline shrink-0"
+              >
+                <span>{label}</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            );
+
+            lastIndex = matchStart + fullMatchStr.length;
+          }
+
+          if (lastIndex < line.length) {
+            elements.push(<span key={`tail-${lastIndex}`}>{line.substring(lastIndex)}</span>);
+          }
+
+          return (
+            <div key={lineIdx} className="flex flex-wrap items-center gap-1.5 my-0.5">
+              {elements}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   // Fetch chats for the currently active bot
@@ -847,19 +1038,26 @@ export default function App() {
       if (!sId) continue;
 
       if (!sessionsMap[sId]) {
-        // Extract phone number for user-friendly name
         const firstUnderscore = sId.indexOf("_");
-        const phone = firstUnderscore !== -1 ? sId.substring(0, firstUnderscore) : sId;
-        const botId = firstUnderscore !== -1 ? sId.substring(firstUnderscore + 1) : sId;
+        let initialPhone = "";
+        let initialBotId = sId;
+
+        if (firstUnderscore !== -1) {
+          const prefix = sId.substring(0, firstUnderscore);
+          initialBotId = sId.substring(firstUnderscore + 1);
+          if (prefix !== "web" && (prefix.startsWith("0") || prefix.startsWith("972") || prefix.startsWith("+") || /^\d{7,15}$/.test(prefix))) {
+            initialPhone = prefix;
+          }
+        }
 
         sessionsMap[sId] = {
           sessionId: sId,
-          phone,
-          botId,
+          phone: initialPhone,
+          botId: initialBotId,
           messages: [],
           lastMessage: null,
           lastTimestamp: "",
-          name: phone
+          name: ""
         };
       }
 
@@ -873,35 +1071,51 @@ export default function App() {
       session.lastMessage = lastMsg;
       session.lastTimestamp = lastMsg ? lastMsg.timestamp : "";
 
-      // Look for a user's real name (and phone, if available) in the conversation.
-      // Prefer this over the raw session-id-derived phone/UUID default.
-      const nameFieldRegex = /(?:^|\n)[ \t]*Name:[ \t]*(.+?)[ \t]*(?:\n|$)/i;
-      const phoneFieldRegex = /(?:^|\n)[ \t]*Phone:[ \t]*(.+?)[ \t]*(?:\n|$)/i;
-      const isJunkValue = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown";
+      const isJunkValue = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown" || v.startsWith("web_");
 
       for (const msg of session.messages) {
+        // Check msg top-level fields
+        if (msg.userName && !isJunkValue(msg.userName)) session.name = String(msg.userName).trim();
+        if (msg.name && !isJunkValue(msg.name)) session.name = String(msg.name).trim();
+        if (msg.userPhone && !isJunkValue(msg.userPhone)) session.phone = String(msg.userPhone).trim();
+        if (msg.phone && !isJunkValue(msg.phone)) session.phone = String(msg.phone).trim();
+
         if (msg.message?.type === "human") {
           const content = msg.message?.content || "";
           const parsed = parseChatMessageContent(content, "human");
 
-          let foundName = (parsed.raw?.name || parsed.raw?.Name || "").toString().trim();
-          let foundPhone = (parsed.raw?.phone || parsed.raw?.Phone || "").toString().trim();
+          let foundName = (parsed.raw?.userName || parsed.raw?.name || parsed.raw?.Name || "").toString().trim();
+          let foundPhone = (parsed.raw?.userPhone || parsed.raw?.phone || parsed.raw?.Phone || "").toString().trim();
 
-          // Fallback: plain-text "Name:"/"Phone:" lines when the content isn't valid JSON
           if (!foundName) {
-            const m = content.match(nameFieldRegex);
+            const m = content.match(/(?:^|\n)[ \t]*(?:Name|userName|שם):[ \t]*(.+?)[ \t]*(?:\n|$)/i);
             if (m) foundName = m[1].trim();
           }
           if (!foundPhone) {
-            const m = content.match(phoneFieldRegex);
+            const m = content.match(/(?:^|\n)[ \t]*(?:Phone|userPhone|טלפון):[ \t]*(.+?)[ \t]*(?:\n|$)/i);
             if (m) foundPhone = m[1].trim();
+          }
+
+          // Plain text phone detection in message e.g. "חיים 0547866119"
+          if (!foundPhone) {
+            const pm = content.match(/(?:05[0-9][- ]?[0-9]{7}|0[23489][- ]?[0-9]{7}|\+?972[- ]?5[0-9][- ]?[0-9]{7})/);
+            if (pm) foundPhone = pm[0].replace(/[- ]/g, "").trim();
+          }
+
+          // Plain text name detection when message contains phone number
+          if (!foundName && foundPhone) {
+            const textWithoutPhone = content.replace(/(?:05[0-9][- ]?[0-9]{7}|0[23489][- ]?[0-9]{7}|\+?972[- ]?5[0-9][- ]?[0-9]{7})/g, "").trim();
+            const cleanCandidate = textWithoutPhone.replace(/^[,\.\!\?\"\':\-]+|[,\.\!\?\"\':\-]+$/g, "").trim();
+            if (cleanCandidate && !/\d/.test(cleanCandidate) && !/http/i.test(cleanCandidate) && cleanCandidate.length >= 2 && cleanCandidate.length <= 30) {
+              foundName = cleanCandidate;
+            }
           }
 
           if (!isJunkValue(foundName)) session.name = foundName;
           if (!isJunkValue(foundPhone)) session.phone = foundPhone;
         } else if (msg.message?.type === "ai") {
           const parsed = parseChatMessageContent(msg.message?.content || "", "ai");
-          const foundName = (parsed.raw && (parsed.raw.Human || parsed.raw.human) || "").toString().trim();
+          const foundName = (parsed.raw && (parsed.raw.Human || parsed.raw.human || parsed.raw.userName || parsed.raw.name) || "").toString().trim();
           if (!isJunkValue(foundName)) session.name = foundName;
         }
       }
@@ -1058,11 +1272,13 @@ export default function App() {
     const bId = currentActiveAgent.botId || `bot_${currentActiveAgent.id}`;
     const bTitle = currentActiveAgent.businessName || currentActiveAgent.name || "בוט עסק חכם";
     const waNum = currentActiveAgent.ownerPhone || "972552502584";
+    const flowText = currentActiveAgent.conversationFlow || "";
 
     (window as any).OpticsBotConfig = {
       botId: bId,
       title: bTitle,
       whatsappNumber: waNum,
+      conversationFlow: flowText,
       webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
     };
 
@@ -1078,6 +1294,9 @@ export default function App() {
         script.setAttribute("data-bot-id", bId);
         script.setAttribute("data-title", bTitle);
         script.setAttribute("data-whatsapp", waNum);
+        if (flowText) {
+          script.setAttribute("data-conversation-flow", flowText);
+        }
         document.body.appendChild(script);
       }
     }
@@ -5323,15 +5542,27 @@ ${videos || "(לא הוגדר)"}
                   <div className="flex-1 overflow-y-auto divide-y divide-slate-900 custom-scrollbar">
                     {chatSessions
                       .filter(session => {
-                        const term = chatsSearchTerm.trim();
+                        const term = chatsSearchTerm.trim().toLowerCase();
                         if (!term) return true;
-                        return session.phone.includes(term) || session.name.toLowerCase().includes(term.toLowerCase());
+                        return (
+                          session.phone.toLowerCase().includes(term) ||
+                          session.name.toLowerCase().includes(term) ||
+                          session.sessionId.toLowerCase().includes(term)
+                        );
                       })
                       .map(session => {
                         const isActive = selectedSessionId === session.sessionId;
                         const parsedLast = session.lastMessage 
                           ? parseChatMessageContent(session.lastMessage.message?.content || "", session.lastMessage.message?.type)
                           : { text: "אין הודעות" };
+
+                        const isJunkVal = (v: string) => !v || v === "לא ידוע" || v === "מערכת" || v.toLowerCase() === "unknown" || v.startsWith("web_");
+
+                        const hasName = Boolean(session.name && !isJunkVal(session.name));
+                        const hasPhone = Boolean(session.phone && !isJunkVal(session.phone));
+
+                        // Primary Title: First name if available, else Phone if available, else Session ID
+                        const displayTitle = hasName ? session.name : (hasPhone ? session.phone : session.sessionId);
 
                         return (
                           <div
@@ -5344,10 +5575,10 @@ ${videos || "(לא הוגדר)"}
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-black truncate max-w-[130px]" title={session.name}>
-                                {session.name || session.phone}
+                              <span className="text-xs font-black truncate max-w-[140px]" title={displayTitle}>
+                                {displayTitle}
                               </span>
-                              <span className="text-[9px] text-slate-400 font-mono font-bold bg-slate-900/80 border border-slate-800 px-1.5 py-0.5 rounded">
+                              <span className="text-[9px] text-slate-400 font-mono font-bold bg-slate-900/80 border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
                                 {session.lastTimestamp ? (() => {
                                   const d = new Date(session.lastTimestamp);
                                   if (isNaN(d.getTime())) return session.lastTimestamp;
@@ -5360,13 +5591,21 @@ ${videos || "(לא הוגדר)"}
                               </span>
                             </div>
 
-                            {session.name !== session.phone && (
-                              <span className="text-[9px] text-slate-500 font-mono text-right truncate">
+                            {/* Subline with Phone number if name is shown */}
+                            {hasName && hasPhone && (
+                              <span className="text-[9.5px] text-sky-400/90 font-mono text-right truncate font-bold">
                                 📞 {session.phone}
                               </span>
                             )}
 
-                            <div className="flex items-center justify-between gap-2">
+                            {/* Subline with Session ID if phone/name present */}
+                            {(hasName || hasPhone) && (
+                              <span className="text-[8.5px] text-slate-500 font-mono text-right truncate dir-ltr">
+                                🆔 {session.sessionId}
+                              </span>
+                            )}
+
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
                               <p className="text-[10px] text-slate-400 truncate flex-1 text-right leading-normal">
                                 {parsedLast.text}
                               </p>
@@ -5441,10 +5680,15 @@ ${videos || "(לא הוגדר)"}
                                         : "bg-[#1d2235]/60 border-slate-700/30 text-slate-100 rounded-tr-none"
                                     }`}
                                   >
+                                    {parsed.imageUrl && (
+                                      <div className="mb-2.5 rounded-xl overflow-hidden border border-slate-700/50 bg-black/40 p-1">
+                                        <a href={parsed.imageUrl} target="_blank" rel="noopener noreferrer" title="לחץ להגדלת התמונה בחלון חדש">
+                                          <img src={parsed.imageUrl} alt="מדיה מצורפת" className="max-w-xs max-h-64 object-cover rounded-lg hover:opacity-90 transition cursor-pointer" />
+                                        </a>
+                                      </div>
+                                    )}
                                     {isAI ? (
-                                      <p className="whitespace-pre-wrap select-text break-words text-right leading-relaxed" dir="rtl">
-                                        {parsed.text}
-                                      </p>
+                                      renderFormattedAIMessageText(parsed.text)
                                     ) : (
                                       <div className="flex flex-col gap-1 select-text break-words text-right leading-relaxed" dir="rtl">
                                         {renderHumanMessageLines(parsed.text)}
