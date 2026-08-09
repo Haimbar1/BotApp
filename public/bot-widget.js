@@ -1089,6 +1089,43 @@
         return;
       }
 
+      // 0. Structured "output" field: an AI-generated string, often wrapped in a
+      // ```json ... ``` code fence, containing { reply, list_options: { options: [...] }, ... }
+      if (typeof node.output === 'string' && node.output.trim()) {
+        var outputStr = node.output.trim();
+        var fenceMatch = outputStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        var jsonCandidate = fenceMatch ? fenceMatch[1] : outputStr;
+        try {
+          var outputObj = JSON.parse(jsonCandidate);
+          if (outputObj && typeof outputObj === 'object') {
+            if (outputObj.reply && !replyText) {
+              replyText = outputObj.reply;
+            }
+            // list_options can be { options: [...] } or a bare array
+            var lo = outputObj.list_options;
+            var loOptions = Array.isArray(lo) ? lo : (lo && Array.isArray(lo.options) ? lo.options : null);
+            if (loOptions) {
+              loOptions.forEach(function(opt) { addCandidateButton(opt); });
+            }
+            // Also support a flat "options" or "buttons" array directly on the output object
+            if (Array.isArray(outputObj.options)) {
+              outputObj.options.forEach(function(opt) { addCandidateButton(opt); });
+            }
+            if (Array.isArray(outputObj.buttons)) {
+              outputObj.buttons.forEach(function(opt) { addCandidateButton(opt); });
+            }
+            // IMAGE step: look for an image link on the parsed output object itself
+            if (!imageUrl && (outputObj.image || outputObj.image_url || outputObj.imageUrl)) {
+              var outImg = outputObj.image || outputObj.image_url || outputObj.imageUrl;
+              imageUrl = typeof outImg === 'string' ? outImg : (outImg.link || outImg.url);
+            }
+          }
+        } catch (e) {
+          // Not valid JSON after stripping fences — leave replyText untouched here,
+          // the generic extraction below may still pick something usable up.
+        }
+      }
+
       // 1. WhatsApp interactive payload
       if (node.whatsapp_payload && node.whatsapp_payload.message) {
         var msg = node.whatsapp_payload.message;
@@ -1205,7 +1242,7 @@
       }
 
       if (!imageUrl) {
-        var topImg = node.image || node.imageUrl;
+        var topImg = node.image || node.imageUrl || node.image_url || node.imageLink || node.picture;
         if (typeof topImg === 'string') imageUrl = topImg;
         else if (topImg && typeof topImg === 'object') imageUrl = topImg.link || topImg.url;
       }
