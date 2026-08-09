@@ -995,7 +995,7 @@
             b.className = 'obw-btn-action';
             b.textContent = formattedTitle;
             b.onclick = function() {
-              handleSendMessage(btn.title, btn.id);
+              handleSendMessage(btn.rawTitle || btn.title, btn.id);
             };
             btnsDiv.appendChild(b);
           }
@@ -1021,14 +1021,119 @@
     messagesBox.scrollTop = messagesBox.scrollHeight;
   };
 
-  // Helper parser for n8n response nodes
+  // Robust n8n response parser
+  // Supports:
+  // - n8n arrays: [{ json: {...} }]
+  // - output/reply/response containing JSON as a string
+  // - ```json ... ``` and `json ... ` wrappers
+  // - reply + list_options.options
+  // - buttons / rows / sections / choices
+  // - WhatsApp payloads (text, image, interactive)
+  // - direct image/imageUrl fields
+  // - URLs inside reply text
   var parseN8nResponse = function(rawData) {
     var replyText = '';
     var imageUrl = null;
     var buttons = [];
 
+    var cleanString = function(value) {
+      if (typeof value !== 'string') return value;
+      return value.trim();
+    };
+
+    var tryParseJsonString = function(value) {
+      if (typeof value !== 'string') return value;
+
+      var original = value.trim();
+      if (!original) return value;
+
+      var candidates = [];
+
+      var addCandidate = function(s) {
+        if (typeof s !== 'string') return;
+        s = s.trim();
+        if (s && candidates.indexOf(s) === -1) candidates.push(s);
+      };
+
+      addCandidate(original);
+
+      // Remove common Markdown code fences/backticks.
+      var stripped = original
+        .replace(/^```(?:json|javascript|js)?\s*/i, '')
+        .replace(/\s*```\s*$/i, '')
+        .trim();
+
+      stripped = stripped
+        .replace(/^`(?:json|javascript|js)?\s*/i, '')
+        .replace(/\s*`\s*$/i, '')
+        .trim();
+
+      addCandidate(stripped);
+
+      // Remove a leading "json" marker.
+      addCandidate(stripped.replace(/^json\s*/i, '').trim());
+
+      // Extract the outermost JSON object/array if there is surrounding text.
+      var firstObj = stripped.indexOf('{');
+      var lastObj = stripped.lastIndexOf('}');
+      if (firstObj !== -1 && lastObj > firstObj) {
+        addCandidate(stripped.substring(firstObj, lastObj + 1));
+      }
+
+      var firstArr = stripped.indexOf('[');
+      var lastArr = stripped.lastIndexOf(']');
+      if (firstArr !== -1 && lastArr > firstArr) {
+        addCandidate(stripped.substring(firstArr, lastArr + 1));
+      }
+
+      // Also try a decoded version for strings containing escaped JSON.
+      var decoded = stripped
+        .replace(/\r\n/g, '\n')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+
+      addCandidate(decoded);
+
+      var firstDecodedObj = decoded.indexOf('{');
+      var lastDecodedObj = decoded.lastIndexOf('}');
+      if (firstDecodedObj !== -1 && lastDecodedObj > firstDecodedObj) {
+        addCandidate(decoded.substring(firstDecodedObj, lastDecodedObj + 1));
+      }
+
+      for (var i = 0; i < candidates.length; i++) {
+        try {
+          var parsed = JSON.parse(candidates[i]);
+          if (parsed && (typeof parsed === 'object' || Array.isArray(parsed))) {
+            return parsed;
+          }
+        } catch (e) {}
+      }
+
+      return value;
+    };
+
+    var normalizeNode = function(value) {
+      var current = value;
+      var guard = 0;
+
+      // Unwrap JSON strings repeatedly, e.g.
+      // { output: "`json {...}`" } -> { ... }
+      while (typeof current === 'string' && guard < 4) {
+        var parsed = tryParseJsonString(current);
+        if (parsed === current) break;
+        current = parsed;
+        guard++;
+      }
+
+      return current;
+    };
+
     var addCandidateButton = function(btnObj) {
       if (!btnObj) return;
+
       var bTitle = '';
       var bId = null;
       var bUrl = null;
@@ -1036,32 +1141,103 @@
       if (typeof btnObj === 'string') {
         bTitle = btnObj.trim();
       } else if (typeof btnObj === 'object') {
-        bTitle = btnObj.title || btnObj.text || btnObj.label || btnObj.name || btnObj.value || (btnObj.reply && btnObj.reply.title) || (btnObj.header && btnObj.header.text) || (btnObj.action && btnObj.action.label);
-        bId = btnObj.id || btnObj.row_id || btnObj.key || (btnObj.reply && btnObj.reply.id);
-        bUrl = btnObj.url || btnObj.link || btnObj.href || btnObj.uri || (btnObj.action && (btnObj.action.url || btnObj.action.link)) || (btnObj.parameters && (btnObj.parameters.url || btnObj.parameters.link));
+        bTitle =
+          btnObj.title ||
+          btnObj.text ||
+          btnObj.label ||
+          btnObj.name ||
+          btnObj.value ||
+          btnObj.description ||
+          (btnObj.reply && (btnObj.reply.title || btnObj.reply.text)) ||
+          (btnObj.header && btnObj.header.text) ||
+          (btnObj.action && (btnObj.action.label || btnObj.action.text));
+
+        bId =
+          btnObj.id ||
+          btnObj.row_id ||
+          btnObj.key ||
+          btnObj.value_id ||
+          (btnObj.reply && btnObj.reply.id);
+
+        bUrl =
+          btnObj.url ||
+          btnObj.link ||
+          btnObj.href ||
+          btnObj.uri ||
+          (btnObj.action && (btnObj.action.url || btnObj.action.link)) ||
+          (btnObj.parameters && (btnObj.parameters.url || btnObj.parameters.link));
+
+        // WhatsApp button format:
+        // { reply: { id: "...", title: "..." } }
+        if (btnObj.reply && typeof btnObj.reply === 'object') {
+          bId = bId || btnObj.reply.id;
+          bTitle = bTitle || btnObj.reply.title;
+        }
+
+        // WhatsApp URL button format:
+        // { type: "url", url: "...", title: "..." }
+        if (!bUrl && btnObj.type === 'url') {
+          bUrl = btnObj.url || btnObj.link;
+        }
       }
 
       if (typeof bTitle === 'string') {
         bTitle = bTitle.trim();
+
         if (/^https?:\/\//i.test(bTitle) || /^wa\.me\//i.test(bTitle)) {
-          if (!bUrl) bUrl = bTitle.startsWith('wa.me') ? 'https://' + bTitle : bTitle;
+          if (!bUrl) {
+            bUrl = bTitle.startsWith('wa.me') ? 'https://' + bTitle : bTitle;
+          }
           bTitle = 'מעבר לקישור 🌐';
         }
       }
 
       if (bTitle || bUrl) {
         if (!bTitle) bTitle = 'מעבר לקישור';
+
         var exists = buttons.some(function(existing) {
-          return existing.title === bTitle || (bUrl && existing.url === bUrl);
+          return (
+            existing.title === bTitle ||
+            (bUrl && existing.url === bUrl) ||
+            (bId && existing.id === bId)
+          );
         });
+
         if (!exists) {
           buttons.push({
             id: bId || ('btn_' + buttons.length + '_' + Date.now().toString(36)),
-            title: bTitle,
+            title: addButtonEmoji(bTitle, bUrl),
+            rawTitle: bTitle,
             url: bUrl || null
           });
         }
       }
+    };
+
+    var addButtonEmoji = function(title, url) {
+      if (!title) return url ? '🌐 מעבר לקישור' : '🔹 אפשרות';
+
+      var value = String(title).trim();
+
+      if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(value)) {
+        return value;
+      }
+
+      var lower = value.toLowerCase();
+
+      if (url || /http|קישור|לינק|אתר|דף/.test(lower)) return '🌐 ' + value;
+      if (/וואטסאפ|ווטסאפ|whatsapp/.test(lower)) return '📱 ' + value;
+      if (/בדיק|תור|תיאום|פגישה|יומן|תאריך|קביעת/.test(lower)) return '📅 ' + value;
+      if (/מולטיפוקל|עדשות|משקפ|מסגר|קטלוג|מוצר|מחיר|חנות/.test(lower)) return '👓 ' + value;
+      if (/שעות|זמן|פעילות|מתי/.test(lower)) return '⏰ ' + value;
+      if (/מיקום|כתובת|ניווט|מפה|waze|הגעה|דרכי הגעה/.test(lower)) return '📍 ' + value;
+      if (/נציג|אנושי|טלפון|שיחה|שאל/.test(lower)) return '📞 ' + value;
+      if (/אחריות/.test(lower)) return '🛡️ ' + value;
+      if (/איסוף|הזמנה/.test(lower)) return '📦 ' + value;
+      if (/תשלום|אשראי|ביט|קנה/.test(lower)) return '💳 ' + value;
+      if (/מידע|עזרה|שאלה|פרטים/.test(lower)) return '💡 ' + value;
+
+      return '🔹 ' + value;
     };
 
     var parseRowsOrItems = function(arr) {
@@ -1073,202 +1249,375 @@
 
     var parseSections = function(sectionsArr) {
       if (!Array.isArray(sectionsArr)) return;
+
       sectionsArr.forEach(function(sec) {
         if (!sec || typeof sec !== 'object') return;
-        var rows = sec.rows || sec.items || sec.options || sec.list || sec.list_items || sec.choices;
+
+        var rows =
+          sec.rows ||
+          sec.items ||
+          sec.options ||
+          sec.list ||
+          sec.list_items ||
+          sec.choices;
+
         if (Array.isArray(rows)) {
           parseRowsOrItems(rows);
         }
       });
     };
 
-    var items = Array.isArray(rawData) ? rawData : [rawData];
-    items.forEach(function(item) {
-      var node = item.json || item || {};
+    var extractImage = function(obj) {
+      if (!obj || typeof obj !== 'object') return null;
 
-      if (typeof node === 'string') {
-        var str = node.trim();
-        if (str.indexOf('{') !== -1 || str.indexOf('```') !== -1) {
-          try {
-            var s = str;
-            if (s.indexOf('```') !== -1) {
-              s = s.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+      var candidates = [
+        obj.imageUrl,
+        obj.image_url,
+        obj.image,
+        obj.mediaUrl,
+        obj.media_url,
+        obj.picture,
+        obj.photo
+      ];
+
+      for (var i = 0; i < candidates.length; i++) {
+        var candidate = candidates[i];
+
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return candidate.trim();
+        }
+
+        if (candidate && typeof candidate === 'object') {
+          var nested =
+            candidate.url ||
+            candidate.link ||
+            candidate.src ||
+            candidate.href;
+
+          if (typeof nested === 'string' && nested.trim()) {
+            return nested.trim();
+          }
+        }
+      }
+
+      return null;
+    };
+
+    var extractTextFromObject = function(obj) {
+      if (!obj || typeof obj !== 'object') return '';
+
+      var candidates = [
+        obj.reply,
+        obj.body,
+        obj.text,
+        obj.content,
+        obj.caption,
+        obj.message
+      ];
+
+      for (var i = 0; i < candidates.length; i++) {
+        var value = candidates[i];
+
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+
+        if (value && typeof value === 'object') {
+          var nested =
+            value.body ||
+            value.text ||
+            value.content ||
+            value.caption;
+
+          if (typeof nested === 'string' && nested.trim()) {
+            return nested.trim();
+          }
+        }
+      }
+
+      return '';
+    };
+
+    var parseStructuredObject = function(obj) {
+      if (!obj || typeof obj !== 'object') return;
+
+      // First unwrap common nested fields if they themselves contain JSON.
+      var nestedFields = ['output', 'reply', 'response', 'data', 'result'];
+
+      nestedFields.forEach(function(field) {
+        if (typeof obj[field] === 'string') {
+          var parsedNested = normalizeNode(obj[field]);
+
+          if (
+            parsedNested &&
+            typeof parsedNested === 'object' &&
+            parsedNested !== obj[field]
+          ) {
+            parseStructuredObject(parsedNested);
+          }
+        }
+      });
+
+      // Direct reply text.
+      if (!replyText) {
+        var directText =
+          obj.reply ||
+          obj.text ||
+          obj.body ||
+          obj.content ||
+          obj.caption;
+
+        if (typeof directText === 'string') {
+          var parsedDirect = normalizeNode(directText);
+
+          if (parsedDirect && typeof parsedDirect === 'object') {
+            parseStructuredObject(parsedDirect);
+          } else if (directText.trim()) {
+            replyText = directText.trim();
+          }
+        }
+      }
+
+      // Generic message object.
+      if (obj.message) {
+        if (typeof obj.message === 'string' && !replyText) {
+          var parsedMessage = normalizeNode(obj.message);
+
+          if (parsedMessage && typeof parsedMessage === 'object') {
+            parseStructuredObject(parsedMessage);
+          } else {
+            replyText = obj.message.trim();
+          }
+        } else if (obj.message && typeof obj.message === 'object') {
+          parseStructuredObject(obj.message);
+        }
+      }
+
+      // list_options: { list_title, options: [...] }
+      if (obj.list_options) {
+        var listOptions = normalizeNode(obj.list_options);
+
+        if (Array.isArray(listOptions)) {
+          parseRowsOrItems(listOptions);
+        } else if (listOptions && typeof listOptions === 'object') {
+          var optionArray =
+            listOptions.options ||
+            listOptions.items ||
+            listOptions.rows ||
+            listOptions.choices ||
+            listOptions.list_items;
+
+          if (Array.isArray(optionArray)) {
+            parseRowsOrItems(optionArray);
+          }
+
+          // Support list_options.sections: [{ options: [...] }] or [{ rows: [...] }]
+          if (Array.isArray(listOptions.sections)) {
+            parseSections(listOptions.sections);
+          }
+
+          // Some formats put the title as a header.
+          if (!replyText && typeof listOptions.list_title === 'string') {
+            // Do not use list_title as the customer reply.
+            // It is only the button/list title.
+          }
+        }
+      }
+
+      // Common interactive structures.
+      if (Array.isArray(obj.buttons)) parseRowsOrItems(obj.buttons);
+      if (Array.isArray(obj.options)) parseRowsOrItems(obj.options);
+      if (Array.isArray(obj.choices)) parseRowsOrItems(obj.choices);
+      if (Array.isArray(obj.rows)) parseRowsOrItems(obj.rows);
+      if (Array.isArray(obj.items)) parseRowsOrItems(obj.items);
+      if (Array.isArray(obj.list)) parseRowsOrItems(obj.list);
+      if (Array.isArray(obj.sections)) parseSections(obj.sections);
+
+      if (obj.list_options && typeof obj.list_options === 'object') {
+        if (Array.isArray(obj.list_options.sections)) {
+          parseSections(obj.list_options.sections);
+        }
+        if (Array.isArray(obj.list_options.buttons)) {
+          parseRowsOrItems(obj.list_options.buttons);
+        }
+      }
+
+      // WhatsApp payload.
+      if (obj.whatsapp_payload) {
+        var wp = normalizeNode(obj.whatsapp_payload);
+
+        if (wp && typeof wp === 'object') {
+          // Actual structure supplied by the user's webhook:
+          // whatsapp_payload.type = "text"
+          // whatsapp_payload.text.body = "..."
+          if (wp.text && typeof wp.text === 'object') {
+            if (!replyText && typeof wp.text.body === 'string') {
+              replyText = wp.text.body.trim();
             }
-            var firstBrace = s.indexOf('{');
-            var lastBrace = s.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-              s = s.substring(firstBrace, lastBrace + 1);
-            }
-            var sanitizedStr = s.replace(/"(?:[^"\\]|\\.)*"/g, function(match) {
-              return match.replace(/\r\n/g, '\\n').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
-            });
-            var parsedObj = null;
-            try { parsedObj = JSON.parse(s); } catch (eParse1) {
-              parsedObj = JSON.parse(sanitizedStr);
-            }
-            if (parsedObj && typeof parsedObj === 'object') {
-              node = parsedObj;
-            }
-          } catch (err) {
-            var rMatch = str.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/) || str.match(/"reply"\s*:\s*"(.*?)"\s*,\s*"/);
-            if (rMatch && rMatch[1]) {
-              replyText += (replyText ? '\n' : '') + rMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-              var optsMatch = str.match(/"options"\s*:\s*(\[[\s\S]*?\])/);
-              if (optsMatch && optsMatch[1]) {
-                try {
-                  var extractedOpts = JSON.parse(optsMatch[1]);
-                  if (Array.isArray(extractedOpts)) parseRowsOrItems(extractedOpts);
-                } catch (eOpts) {}
+          }
+
+          if (wp.body && typeof wp.body === 'string' && !replyText) {
+            replyText = wp.body.trim();
+          }
+
+          if (wp.caption && typeof wp.caption === 'string' && !replyText) {
+            replyText = wp.caption.trim();
+          }
+
+          // Image directly in whatsapp_payload.
+          var wpImage = extractImage(wp);
+          if (wpImage && !imageUrl) {
+            imageUrl = wpImage;
+          }
+
+          // Support direct whatsapp_payload.interactive (LIST / BUTTON)
+          if (wp.interactive) {
+            var directInteractive = normalizeNode(wp.interactive);
+
+            if (directInteractive && typeof directInteractive === 'object') {
+              if (directInteractive.body && typeof directInteractive.body.text === 'string' && !replyText) {
+                replyText = directInteractive.body.text.trim();
               }
-              return;
+
+              var directAction = directInteractive.action || {};
+
+              if (Array.isArray(directAction.buttons)) {
+                parseRowsOrItems(directAction.buttons);
+              }
+
+              if (Array.isArray(directAction.sections)) {
+                parseSections(directAction.sections);
+              }
+
+              if (Array.isArray(directAction.rows)) {
+                parseRowsOrItems(directAction.rows);
+              }
+            }
+          }
+
+          // WhatsApp interactive message.
+          if (wp.message) {
+            var wpm = normalizeNode(wp.message);
+
+            if (wpm && typeof wpm === 'object') {
+              parseStructuredObject(wpm);
+
+              if (wpm.interactive) {
+                var interactive = normalizeNode(wpm.interactive);
+
+                if (interactive && typeof interactive === 'object') {
+                  if (
+                    interactive.body &&
+                    typeof interactive.body.text === 'string' &&
+                    !replyText
+                  ) {
+                    replyText = interactive.body.text.trim();
+                  }
+
+                  if (
+                    interactive.header &&
+                    typeof interactive.header.text === 'string' &&
+                    !replyText
+                  ) {
+                    replyText = interactive.header.text.trim();
+                  }
+
+                  var action = interactive.action || {};
+
+                  if (Array.isArray(action.buttons)) {
+                    parseRowsOrItems(action.buttons);
+                  }
+
+                  if (Array.isArray(action.sections)) {
+                    parseSections(action.sections);
+                  }
+
+                  if (Array.isArray(action.rows)) {
+                    parseRowsOrItems(action.rows);
+                  }
+                }
+              }
             }
           }
         }
-        if (typeof node === 'string') {
-          replyText += (replyText ? '\n' : '') + node;
+      }
+
+      // Generic image support.
+      var objImage = extractImage(obj);
+      if (objImage && !imageUrl) {
+        imageUrl = objImage;
+      }
+
+      // If output itself is a JSON string, parse it.
+      if (typeof obj.output === 'string') {
+        var parsedOutput = normalizeNode(obj.output);
+
+        if (
+          parsedOutput &&
+          typeof parsedOutput === 'object' &&
+          parsedOutput !== obj.output
+        ) {
+          parseStructuredObject(parsedOutput);
+        } else if (!replyText && obj.output.trim()) {
+          // Only use output as text if it is genuinely plain text,
+          // not a failed JSON string.
+          var looksLikeJson =
+            obj.output.indexOf('{') !== -1 ||
+            obj.output.indexOf('[') !== -1 ||
+            /```|`json/i.test(obj.output);
+
+          if (!looksLikeJson) {
+            replyText = obj.output.trim();
+          }
+        }
+      }
+    };
+
+    var items = Array.isArray(rawData) ? rawData : [rawData];
+
+    items.forEach(function(item) {
+      if (!item) return;
+
+      var node = item;
+
+      // n8n Webhook commonly returns [{ json: {...} }]
+      if (item.json !== undefined) {
+        node = item.json;
+      }
+
+      node = normalizeNode(node);
+
+      // If the entire node is a JSON string, parse it.
+      if (typeof node === 'string') {
+        var parsedNode = normalizeNode(node);
+
+        if (parsedNode && typeof parsedNode === 'object') {
+          node = parsedNode;
+        } else {
+          if (!replyText && node.trim()) {
+            replyText = node.trim();
+          }
           return;
         }
       }
 
-      // 1. WhatsApp interactive payload
-      if (node.whatsapp_payload && node.whatsapp_payload.message) {
-        var msg = node.whatsapp_payload.message;
-        if (msg.interactive) {
-          var parts = [];
-          if (msg.interactive.header && msg.interactive.header.text) parts.push(msg.interactive.header.text);
-          if (msg.interactive.body && msg.interactive.body.text) parts.push(msg.interactive.body.text);
-          if (msg.interactive.footer && msg.interactive.footer.text) parts.push(msg.interactive.footer.text);
-          if (parts.length > 0) replyText = parts.join('\n\n');
-
-          var action = msg.interactive.action || {};
-          if (Array.isArray(action.buttons)) {
-            action.buttons.forEach(function(b) { addCandidateButton(b); });
-          }
-          if (Array.isArray(action.sections)) {
-            parseSections(action.sections);
-          }
-          if (Array.isArray(action.rows)) {
-            parseRowsOrItems(action.rows);
-          }
-        } else if (msg.text && msg.text.body) {
-          replyText = msg.text.body;
-        } else if (msg.body) {
-          replyText = typeof msg.body === 'string' ? msg.body : JSON.stringify(msg.body);
-        }
-
-        // Image check inside whatsapp_payload.message
-        if (msg.type === 'image' || msg.image) {
-          if (typeof msg.image === 'string') {
-            imageUrl = msg.image;
-          } else if (msg.image && typeof msg.image === 'object') {
-            if (!imageUrl) imageUrl = msg.image.link || msg.image.url;
-            if (msg.image.caption && !replyText) {
-              replyText = msg.image.caption;
-            }
-          }
-          if (msg.caption && !replyText) {
-            replyText = msg.caption;
-          }
-        }
-      }
-
-      // 2. Interactive or LIST objects directly on node or sub-objects
-      var candidates = [
-        node,
-        node.message,
-        node.reply,
-        node.output,
-        node.response,
-        node.data,
-        node.interactive,
-        node.list,
-        node.payload
-      ];
-
-      candidates.forEach(function(cand) {
-        if (!cand || typeof cand !== 'object') return;
-
-        // Check sections
-        if (Array.isArray(cand.sections)) {
-          parseSections(cand.sections);
-        }
-        // Check rows
-        if (Array.isArray(cand.rows)) {
-          parseRowsOrItems(cand.rows);
-        }
-        // Check items
-        if (Array.isArray(cand.items)) {
-          parseRowsOrItems(cand.items);
-        }
-        // Check options
-        if (Array.isArray(cand.options)) {
-          parseRowsOrItems(cand.options);
-        }
-        // Check list_options
-        if (cand.list_options) {
-          if (Array.isArray(cand.list_options)) {
-            parseRowsOrItems(cand.list_options);
-          } else if (typeof cand.list_options === 'object') {
-            var loOpts = cand.list_options.options || cand.list_options.items || cand.list_options.rows || cand.list_options.choices;
-            if (Array.isArray(loOpts)) {
-              parseRowsOrItems(loOpts);
-            }
-          }
-        }
-        // Check choices
-        if (Array.isArray(cand.choices)) {
-          parseRowsOrItems(cand.choices);
-        }
-        // Check buttons
-        if (Array.isArray(cand.buttons)) {
-          parseRowsOrItems(cand.buttons);
-        }
-        // Check list if array
-        if (Array.isArray(cand.list)) {
-          parseRowsOrItems(cand.list);
-        }
-      });
-
-      // 3. Text Extraction
-      var msgObj = node.message || node.reply || node.output || node.response || node.data || node.text;
-      if (typeof msgObj === 'string' && !replyText) {
-        replyText = msgObj;
-      } else if (msgObj && typeof msgObj === 'object') {
-        if (msgObj.caption && !replyText) replyText = msgObj.caption;
-        if (msgObj.image && typeof msgObj.image === 'object' && msgObj.image.caption && !replyText) {
-          replyText = msgObj.image.caption;
-        }
-        if (msgObj.text && !replyText) replyText = typeof msgObj.text === 'string' ? msgObj.text : JSON.stringify(msgObj.text);
-        if (msgObj.body && !replyText) replyText = typeof msgObj.body === 'string' ? msgObj.body : JSON.stringify(msgObj.body);
-        if (msgObj.content && !replyText) replyText = typeof msgObj.content === 'string' ? msgObj.content : JSON.stringify(msgObj.content);
-        if (msgObj.title && !replyText) replyText = typeof msgObj.title === 'string' ? msgObj.title : JSON.stringify(msgObj.title);
-        if (msgObj.image && !imageUrl) {
-          imageUrl = typeof msgObj.image === 'string' ? msgObj.image : (msgObj.image.link || msgObj.image.url);
-        }
-      }
-
-      if (!replyText) {
-        if (node.caption) replyText = node.caption;
-        else if (node.image && typeof node.image === 'object' && node.image.caption) replyText = node.image.caption;
-        else {
-          var stringCand = node.reply || node.output || node.text || node.content || node.response || node.title || node.header || node.body || node.message;
-          if (typeof stringCand === 'string') replyText = stringCand;
-        }
-      }
-
-      if (!imageUrl) {
-        var topImg = node.image || node.imageUrl;
-        if (typeof topImg === 'string') imageUrl = topImg;
-        else if (topImg && typeof topImg === 'object') imageUrl = topImg.link || topImg.url;
+      if (node && typeof node === 'object') {
+        parseStructuredObject(node);
       }
     });
 
-    // Automatically convert any URL contained in replyText into a prominent link button if not already present
+    // Convert URLs in the response into buttons.
     if (replyText) {
-      var matchedUrls = replyText.match(/(https?:\/\/[^\s<>'"]+|wa\.me\/[^\s<>'"]+)/gi);
+      var matchedUrls = replyText.match(
+        /(https?:\/\/[^\s<>'"`]+|wa\.me\/[^\s<>'"`]+)/gi
+      );
+
       if (matchedUrls && matchedUrls.length > 0) {
         matchedUrls.forEach(function(rawUrl) {
-          var cleanUrl = rawUrl.startsWith('wa.me') ? 'https://' + rawUrl : rawUrl;
+          var cleanUrl = rawUrl.startsWith('wa.me')
+            ? 'https://' + rawUrl
+            : rawUrl;
+
           addCandidateButton({
             title: 'לחץ למעבר לקישור 🌐',
             url: cleanUrl
@@ -1281,7 +1630,11 @@
       replyText = 'אנא בחר מתוך האפשרויות הבאות:';
     }
 
-    return { replyText: replyText, imageUrl: imageUrl, buttons: buttons };
+    return {
+      replyText: replyText,
+      imageUrl: imageUrl,
+      buttons: buttons
+    };
   };
 
   var handleSendMessage = function(textToSend, buttonId) {
