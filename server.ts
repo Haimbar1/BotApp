@@ -405,7 +405,7 @@ async function startServer() {
 - **שירותיות ואדיבות:** פנה תמיד בנימוס ובגובה העיניים.
 - **מקצועיות:** תשובות מדויקות, קצרות וברורות.
 - **הנעה לפעולה:** תמיד לסיים בשאלה מקדמת שמושכת את הלקוח להמשיך את השיחה.
-- **שפה:** עברית רהוטה ותקינה, שימוש באימוג'ים מתאימים במידה מתונה 🌸.
+- **שפה:** עברית רהוטה ותקינה, שימוש באימוג'ים מתאימים במידה מתונה \u{1F338}.
 
 ---
 
@@ -415,7 +415,7 @@ async function startServer() {
 ---
 
 ## תסריט שיחה בסיסי והנחיות מענה
-1. **פתיח:** כאשר לקוח פונה לראשונה: "שלום! ברוך הבא לבוט גנרי 🌸 שמח שפנית אלינו. איך אוכל לעזור לך היום?"
+1. **פתיח:** כאשר לקוח פונה לראשונה: "שלום! ברוך הבא לבוט גנרי \u{1F338} שמח שפנית אלינו. איך אוכל לעזור לך היום?"
 2. **בירור צרכים:** שאל שאלות ממוקדות כדי להבין מה הלקוח מחפש.
 3. **סגירה ואיסוף לידים:** ברגע שיש עניין, בקש בנימוס לאשר את מספר הטלפון או להשאיר פרטים נחוצים כדי שנציג אנושי יחזור אליהם.
 
@@ -1657,14 +1657,38 @@ async function startServer() {
       }
 
       if (typeof rawContent === "string") {
-        const trimmed = rawContent.trim();
-        // If it's a valid JSON string, preserve it so the frontend can parse rich metadata (name, chatInput, etc.)
-        if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-          try {
-            JSON.parse(trimmed);
-            return trimmed;
-          } catch (e) {
-            // Not valid JSON, treat as plain text
+        let trimmed = rawContent.trim();
+        if (trimmed.includes("```")) {
+          const m = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+          if (m) trimmed = m[1].trim();
+          else trimmed = trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+        }
+
+        const firstBrace = trimmed.indexOf("{");
+        const firstBracket = trimmed.indexOf("[");
+        let start = -1;
+        if (firstBrace !== -1 && firstBracket !== -1) start = Math.min(firstBrace, firstBracket);
+        else if (firstBrace !== -1) start = firstBrace;
+        else if (firstBracket !== -1) start = firstBracket;
+
+        if (start !== -1) {
+          const lastBrace = trimmed.lastIndexOf("}");
+          const lastBracket = trimmed.lastIndexOf("]");
+          const end = Math.max(lastBrace, lastBracket);
+          if (end > start) {
+            const extracted = trimmed.substring(start, end + 1);
+            try {
+              const parsed = JSON.parse(extracted);
+              return JSON.stringify(parsed);
+            } catch (e1) {
+              try {
+                const sanitized = extracted.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+                  return match.replace(/\r\n/g, "\\n").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+                });
+                const parsed = JSON.parse(sanitized);
+                return JSON.stringify(parsed);
+              } catch (e2) {}
+            }
           }
         }
         return rawContent;
@@ -2533,7 +2557,7 @@ async function startServer() {
                   humanEscalation: { type: Type.STRING }
                 },
                 required: [
-                  "businessName", "botIdentity", "coursesInfo", "kidsCourses", "conversationFlow",
+                  "welcomeMessage", "businessName", "botIdentity", "coursesInfo", "kidsCourses", "conversationFlow",
                   "writingStyle", "faqAnswers", "whatNotToDo", "syllabusLinks", "humanEscalation"
                 ]
               }
@@ -2553,69 +2577,34 @@ async function startServer() {
 
       // Build fallback prompts if Gemini was not initialized or failed
       if (!googleAiPromptResponse) {
-        if (activeAgentType === "support") {
-          googleAiPromptResponse = {
-            businessName,
-            botIdentity: `שלום! אני סוכן התמיכה הטכנית הדיגיטלי והמקצועי של ${businessName}. תפקידי הוא לסייע לך לפתור בעיות, לענות לשאלות טכניות ולהדריך אותך צעד אחר צעד בצורה סבלנית ומקצועית תחת ניהולו של ${finalAgentName}.`,
-            coursesInfo: `מגוון הפתרונות, המדריכים הטכניים ומסמכי העזר הזמינים ב-${businessName}. פנה אלינו לקבלת מענה מקצועי ומקיף לכל עניין טכני.`,
-            kidsCourses: `קבצי עזרה מורחבים, מדריכי שימוש, קטלוג תקלות ופתרונות מומלצים למשתמשי המערכת.`,
-            conversationFlow: `זרימת שיחה מומלצת לתמיכה טכנית:\n1. ברכה אדיבה והצגת בוט התמיכה של ${businessName}.\n2. שאלה והבנה של קושי הלקוח או התקלה.\n3. הצגת פתרון מיידי שלב אחר שלב.\n4. קבלת פרטים או העברה של פנייה אל ${finalAgentName} בטלפון במקרה הצורך. חוק בל יעבור: אין לשאול שאלות חוזרות ומיותרות אם אין לך מידע, פנה מיידית לקבלת עזרה אנושית!`,
-            writingStyle: `הנחיות עימוד וניסוח:\n- הודעות מבוססות שלבים (1, 2, 3) ברורים.\n- מעבר שורה כפול בין שלב לשלב לנוחיות קריאה.\n- שימוש באימוג'ים מתאימים כגון 🛠️ או 💻.`,
-            faqAnswers: `שאלות ותשובות נפוצות:\nש: האם יש מדריך למשתמש?\nת: כן, המדריך זמין להורדה מלאה והוא מפורט בסעיף הקישורים.\n\nש: מה לעשות במקרה של שגיאת התחברות?\nת: יש לבצע איפוס סיסמה קצר או ליצור קשר ישיר עם התמיכה של ${finalAgentName}.`,
-            whatNotToDo: `מגבלות לסוכן:\n1. בשום אופן אין לסיים, לחתוך או לעצור את השיחה אם המשתמש מבקש ברושור או מסמך שאין לך!\n2. לא להמציא פתרונות או מחירים שלא יודע.\n3. לא לפתוח בדיון סרק אם אין לך מה להציע, אלא לנתב באדיבות ולהמשיך לענות לשאר שאלות המשתמש.`,
-            syllabusLinks: brochureLinks.length > 0 
-              ? brochureLinks.map(l => `- מסמך/ברושור: ${l}`).join("\n") 
-              : `- מדריך למשתמש הרשמי של ${businessName}: ${url}\n- שאלות נפוצות ותמיכה: ${url}/support`,
-            humanEscalation: `הנחיות הפניה מהירה לגורם אנושי (${finalAgentName}) בטלפון ${ownerPhone}:\n1. הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו (רק הלקוח מסיים).\n2. חוק ברזל: ברגע שמתקבל קושי, בקשה לנציג, או שאילתה לגבי ברושור/מסמך שאינך מחזיק בקישור שלו, ענה באדיבות ובנימוס שהם מוזמנים לפנות ישירות אל ${finalAgentName} במספר ${ownerPhone}. מיד לאחר מכן, שאל באדיבות: "בינתיים, האם יש משהו נוסף שתרצה שאעזור לך בו או שאלה מעניינת נוספת?" כדי להמשיך את השיחה תמיד פתוחה ושירותית!`
-          };
-        } else {
-          googleAiPromptResponse = {
-            businessName,
-            botIdentity: `שלום! אני סוכן המכירות החם והדיגיטלי של ${businessName}. תפקידי הוא לייצג את החברה בצורה המקצועית והאדיבה ביותר ב-WhatsApp תחת ניהולו של ${finalAgentName}.`,
-            coursesInfo: `אנו מציעים מגוון רחב של מוצרים ושירותים איכותיי        // Hebrew mapping for separate 9 prompt parts
-        "זהות הבוט": googleAiPromptResponse.botIdentity,
-        "מה אני מוכר — קורסים": googleAiPromptResponse.coursesInfo,
-        "קורסי ילדים": googleAiPromptResponse.kidsCourses,
-        "קהל יעד וסיגמנטים מיוחדים": googleAiPromptResponse.kidsCourses,
-        "זרימת השיחה": googleAiPromptResponse.conversationFlow,
-        "סגנון כתיבה ועימוד": googleAiPromptResponse.writingStyle,
-        "שאלות ותשובות נפוצות": googleAiPromptResponse.faqAnswers,
-        "מגבלות ומה לא לעשות": googleAiPromptResponse.whatNotToDo,
-        "קישורי סילבוס": googleAiPromptResponse.syllabusLinks,
-        "הפניה לגורם אנושי": googleAiPromptResponse.humanEscalation
-      };
-
-      // Send to webhook
-      try {
-        console.log("[SERVER] Sending payload to webhook:", defaultWebhookUrl);
-        await axios.post(defaultWebhookUrl, payload, { headers: { "Content-Type": "application/json" } });
-      } catch (wErr: any) {
-        console.error("[SERVER] Webhook failed:", wErr.message);
+        googleAiPromptResponse = generateFallbackPrompts(activeAgentType, businessName, finalAgentName, {});
       }
 
-      return res.json({
+      res.json({
         success: true,
-        botId: dynamicBotId,
-        message: "סוכן נוצר בהצלחה!"
+        prompts: googleAiPromptResponse
       });
     } catch (err: any) {
-      console.error("[SERVER] Create agent error:", err);
-      return res.status(500).json({ success: false, error: err.message });
+      console.error("[PUBLIC DEMO] generate-agent-prompt endpoint error:", err);
+      res.status(500).json({
+        success: false,
+        error: "ארעה שגיאה בעיבוד הפרומפטים על ידי שרת ה-AI: " + (err.message || err)
+      });
     }
   });
 
-  function generateFallbackPrompts(templateId: string, businessName: string, ownerName: string, answers: any) {
+function generateFallbackPrompts(templateId: string, businessName: string, ownerName: string, answers: any) {
     const biz = businessName?.trim() || "העסק החכם";
     const own = ownerName?.trim() || "מנהל העסק";
     const aud = answers?.audience || "קהל לקוחות רלוונטיים מתעניינים";
     const tone = answers?.tone || "שירותי, אדיב, מעורר ביטחון, קצר ואינפורמטיבי";
     const rest = answers?.restrictions || "לא למסור מחירים שלא אומתו, לא להבטיח הבטחות כספיות ללא אישור";
     const esc = answers?.escalationTrigger || "כשהמשתמש מבקש נציג אנושי, מתלונן או שואל שאלה מורכבת שחורגת מהמידע הנוכחי";
-    const defaultWelcome = `👋 שלום וברוכים הבאים! 🌟\nשמי סוכן הדיגיטל החכם של ${biz}.\nאיך אוכל לעזור לך היום?\n\nאפשרויות זמינות:\n[🎓 מסלולי לימוד ומידע]\n[💡 שאלות ותשובות נפוצות]\n[📞 תיאום שיחה עם נציג]`;
+    const defaultWelcome = ` שלום וברוכים הבאים ל-${biz}! ✨\nשמי העוזר הדיגיטלי הרשמי של העסק.\nכיצד אוכל לסייע לך היום?\n\n[1. 📝 קבלת מידע ופרטים]\n[2. ❓ שאלות ותשובות נפוצות]\n[3. 📞 שיחה עם נציג אנושי]`;
 
     if (templateId === "support") {
       return {
-        welcomeMessage: defaultWelcome,
+        welcomeMessage: `👋 שלום וברוכים הבאים למרכז התמיכה של ${biz}! 🛠️\nשמי נציג התמיכה הדיגיטלי. אשמח לעזור לך בכל שאלה או נושא.\n\nבמה אוכל לסייע היום?\n[1. 🛠️ עזרה ופתרון תקלות]\n[2. 📖 מדריכים ושאלות נפוצות]\n[3. 📞 פנייה ישירה לנציג אנושי]`,
         botIdentity: `שלום! אני בוט התמיכה והשירות של ${biz}. תפקידי הוא לספק ללקוחות מענה מהיר, אדיב ומקצועי בעברית, תוך ייצוג ערכי העסק ורעיונותיו בהנחיית מנהל התמיכה ${own}. הטון שלי הוא ${tone}.`,
         coursesInfo: `שירותי התמיכה והקורסים של ${biz} כוללים מערכי למידה מתקדמים, ליווי שבועי ועזרה במענה לשאלות מורכבות.\nנשמח להעניק לך את מרב התמיכה והסבלנות הנדרשים.`,
         kidsCourses: `אנו ב-${biz} גאים להציע קורסי תכנות וסדנאות יצירה מיוחדות המותאמות בדיוק לילדים ונוער, כולל תמיכה וסיוע להורים המעורבים בתהליך. במפגשים אנו שמים דגש על פיתוח חשיבה עצמאית.`,
@@ -2628,11 +2617,11 @@ async function startServer() {
       };
     } else if (templateId === "kids") {
       return {
-        welcomeMessage: `👋 שלום להורים היקרים! 🌟\nברוכים הבאים ל-${biz}.\nשמי היועץ החינוכי הדיגיטלי.\n\nאיך אוכל לסייע לכם היום?\n[🎓 חוגים וסדנאות לילדים]\n[💡 שאלות נפוצות של הורים]\n[📞 תיאום שיעור התנסות במתנה]`,
-        botIdentity: `שלום! אני היועץ החינוכי והרכז של ${biz}. התפקיד המקצועי שלי הוא ללוות הורים בבחירת חוגים, סדנאות קיץ ומסע למידה חווייתי לילדים ולנוער, תחת ניהולו המקצועי של ${own}. הטון שלי הוא ${tone}.`,
-        coursesInfo: `אנו ב-${biz} מספקים קורסי פרימיום ייחודיים לצעירים עם פדגוגיה מתקדמת, מעורבות הורים מובנית, ודקות אפיון המבטיחות התאמה לכל תלמיד.`,
+        welcomeMessage: `👋 שלום להורים היקרים! 🌟\nברוכים הבאים ל-${biz}.\nשמי היועץ החינוכי הדיגיטלי. אשמח לסייע לכם למצוא את החוג והמסלול המתאים ביותר לילדכם!\n\n[1. 🧸 קורסים וחוגים לילדים ונוער]\n[2. 📅 תיאום שיעור ניסיון במתנה]\n[3. 📞 שיחה עם רכז החוגים]`,
+        botIdentity: `שלום! אני היועץ החינוכי והרכז של ${biz}. התפקיד המקצועי שלי הוא ללוות הורים בבחירת חוגים, סדנאות קוד ופיתוח לילדים. הטון שלי הוא ${tone}.`,
+        coursesInfo: `אנו ב-${biz} מספקים קורסי פרימיום ייחודיים לצעירים עם פדגוגיה מתקדמת, מעורבות הורים מובנית, ודקות תרגול חווייתיות.`,
         kidsCourses: `קורסים וסדנאות מובילים לילדים ונוער:\n1. עיצוב ופיתוח משחקים ב-Roblox (גילאי 9-13).\n2. יסודות חשיבה חישובית ויצירת אנימציות ב-Scratch (גילאי 7-10).\n3. סדנאות קיץ יצירתיות לפיתוח משחקים תלת-מימדיים.`,
-        conversationFlow: `זרימת שיחה ליועץ החוגים:\n1. התחל בברכה מלבבת להורה ושאל לגיל הילד ותחומי העניין שלו במחשב.\n2. הצג לו את הקורס המתאים ביותר (רובלוקס או סקראץ').\n3. הסבר על היתרונות של רכישת שפת העתיד ועל שיטת הלמידה.\n4. הצע שיעור התנסות חווייתי במתנה, ובקש טלפון לקביעת השיבוץ.`,
+        conversationFlow: `זרימת שיחה ליועץ החוגים:\n1. התחל בברכה מלבבת להורה ושאל לגיל הילד ותחומי העניין שלו במחשב.\n2. הצג בחום את החוג או הקורס המתאים לגיל הילד.\n3. הצע להם שיעור התנסות חווייתי במתנה, ובקש טלפון לקביעת השיבוץ.`,
         writingStyle: `הנחיות ניסוח חיוני להורים:\n- טון חם, מכיל, קשוב ומרגיע.\n- שבירת שורות תכופה ליצירת הודעות נוחות לקריאה בנייד במקום בלוקים ארוכים.\n- שימוש באימוג'ים שמחים וחבריים.`,
         faqAnswers: `שאלות של הורים:\n- האם דרוש רקע מוקדם לחוג?\n- הקורסים מתחילים לחלוטין מאפס, ומלווים על ידי מדריכים מנוסים.\n\nש: מהו מכסת התלמידים בקבוצות?\nת: אנו שומרים על קבוצות קטנות ואיכותיות ללמידה אישית ומוצלחת.`,
         whatNotToDo: `מגבלות בחוגי ילדים:\n1. ${rest}\n2. לעולם אל תיתן הבטחות רפואיות/חינוכיות גורפות או תשובות סותרות ללא התייעצות מול ${own}.`,
@@ -2667,7 +2656,7 @@ async function startServer() {
         humanEscalation: `בכל מקרה של שאלה פיננסית סבוכה, בקשת מנוהל או כשמוגדר: ${esc} – הסבר תחילה באדיבות שישנו פירוט נהדר באתר לגבי הנושא, והפנה באדיבות להמשך פתרון פנומנלי מול ${own} בטלפון. היה חם ושירותי, וזכור: הבוט לעולם אינו מפסיק את השיחה מיוזמתו או מסכים לסיימה לבד. שאל מיד לאחר מכן: "בינתיים, האם יש לך עוד שאלות או נושאים רלוונטיים שתרצה שאשמח לעזור בהם?".`
       };
     }
-  }
+}
 
   // Endpoint to generate full 10-part structured prompt using Gemini
   app.post("/api/ai/generate-agent-prompt", requireAuth, async (req, res) => {
@@ -2701,7 +2690,7 @@ async function startServer() {
 
       const promptToModel = 
         "אתה עוזר פיתוח AI ומומחה אפיון סוכני מכירות ושירות לצ'אט ו-WhatsApp. " +
-        "עליך לבנות פרומפט הנחיות מקצועי ומקיף עבור סוכן מכירות דיגיטלי הבנוי מ-10 חלקים מובנים של מידע.\n\n" +
+        "עליך לבנות פרומפט הנחיות מקצועי ומקיף עבור סוכן דיגיטלי הבנוי מ-10 חלקים מובנים של מידע.\n\n" +
         "להלן פרטי העסק והמאפיינים שסופקו:\n" +
         `- שם העסק: ${businessName || 'לא צוין'}\n` +
         `- שם הבעלים: ${ownerName || 'לא צוין'}\n` +
@@ -2714,19 +2703,19 @@ async function startServer() {
         `חומרי ידע גולמיים וסילבוסים:\n${knowledgeMaterials}\n\n` +
         "משימה: עליך לייצר טקסט פרומפט מלא ועשיר בעברית עבור כל אחד מ-10 החלקים הבאים, מותאם לעסק. " +
         "החזר אובייקט JSON תקין ומדויק בעל 10 המפתחות הבאים:\n" +
-        "1. welcomeMessage: הודעת פתיחה וברכה ראשונית עשירה באימוג'יים, כולל 2-3 אפשרויות בחירה בתוך סוגריים מרובעים כגון [🎓 מסלולי לימוד ומידע] [💡 שאלות נפוצות] [📞 תיאום שיחה] שיהפכו לכפתורים ב-UI.\n" +
+        "1. welcomeMessage: הודעת פתיחה ראשונית חמה ומזמינה בעברית עם אימוג'ים מתאימים, הברכה הראשית, ותפריט אפשרויות/כפתורים מובנה בפורמט [1. כפתור ראשון], [2. כפתור שני], [3. כפתור שלישי] המזמין את הלקוח לפעולה.\n" +
         "2. botIdentity: הגדרת שם הבוט (המצא שם ידידותי בעברית), התפקיד, השיוך ל-{BusinessName} ונימת הדיבור.\n" +
         "3. coursesInfo: תיאור מפורט, קורסים, סילבוסים, מחירים או שירותים שהעסק מציע.\n" +
         "4. kidsCourses: קורסים, סדנאות קיץ, חוגים, קהל יעד מיועד וסיגמנטים מיוחדים. חוק בל יעבור: ציין אך ורק במי קהל היעד שבו אנו כן ממוקדים (מי כן), בשום אופן אל תציין במה או במי אנו לא ממוקדים ומי לא קהל היעד (אל תמנה מה לא או למי לא, כדי למנוע רשימה ארוכה ומייגעת). מיקוד חיובי בלבד!\n" +
         "5. conversationFlow: שלבי התקדמות השיחה ב-WhatsApp, מהברכה ועד השגת הטלפון לקריאה לפעולה.\n" +
         "6. writingStyle: הוראות עימוד וניסוח (קיצור הודעות, רווחים בין שורות, שבירת שורות, סגנון שמושך תשומת לב).\n" +
-        "7. faqAnswers: 3-4 שאלות ותשובות נפוצות פוטנציאליות שמעניינות לקוחות, בפורמט ש: ות:.\n" +
+        "7. faqAnswers: 3-4 שאלות ותשובות נפוצות פוטנציאליות שמעניינות לקוחות, בפורמט ש: ות:\n" +
         "8. whatNotToDo: לפחות 3 דברים שהבוט לעולם לא יגיד, לא יבטיח, ולא יעשה.\n" +
         "9. syllabusLinks: פורמט קישורים של סילבוסים אליהם יוכל לקשר. (לדוגמה: - סילבוס קורס: https://yourdomain.com/syllabus...).\n" +
         "10. humanEscalation: מפורט ומלא של מתי וכיצד לבצע הפניה לגורם אנושי בטלפון {OwnerPhone}. עליך להורות לסוכן: (1) הוא אף פעם לא מפסיק או מסיים את השיחה מיוזמתו, רק הלקוח מסיים. (2) בכל מצב של בקשת נציג, שאלה מורכבת שחורגת מהמידע באתר (כמו דוגמאות API או הצעות סבוכות), או נושא פיננסי מעורפל – עליו קודם כל לכתוב בנימוס כי יש פירוט נהדר באתר והוא שמח לנסות לעזור, אך יש להפנות אותו אל הנציג {OwnerPhone}. לאחר מכן הוא חייב לשאול מיד בהמשכיות: 'בינתיים, האם יש לך שאלות נוספות שתרצה שאשמח לעשות עבורך?' על מנת להמשיך את השיחה תמיד.\n\n" +
         "חשוב מאוד: אל תשתמש במזהים של markdown או תגיות חתוכות בתוך ה-JSON של התשובה. כל ערך במפתח ה-JSON חייב להכיל את הפרומפט המלא, המעוצב והמסוגנן בעברית.";
 
-      console.log("[SERVER] Generating full 10-part structured prompt using gemini-3.5-flash (with robust fallback capabilities)...");
+      console.log("[SERVER] Generating full 10-part structured prompt using gemini-3.5-flash...");
 
       const response = await generateWithFallback(ai, {
         model: "gemini-3.5-flash",
@@ -2749,123 +2738,6 @@ async function startServer() {
             },
             required: [
               "welcomeMessage", "botIdentity", "coursesInfo", "kidsCourses", "conversationFlow",
-              "writingStyle", "faqAnswers", "whatNotToDo", "syllabusLinks", "humanEscalation"
-            ]
-          }
-        }
-      });�ור התנסות חווייתי במתנה, ובקש טלפון לקביעת השיבוץ.`,
-        writingStyle: `הנחיות ניסוח חיוני להורים:\n- טון חם, מכיל, קשוב ומרגיע.\n- שבירת שורות תכופה ליצירת הודעות נוחות לקריאה בנייד במקום בלוקים ארוכים.\n- שימוש באימוג'ים שמחים וחבריים.`,
-        faqAnswers: `שאלות של הורים:\n- האם דרוש רקע מוקדם לחוג?\n- הקורסים מתחילים לחלוטין מאפס, ומלווים על ידי מדריכים מנוסים.\n\nש: מהו מכסת התלמידים בקבוצות?\nת: אנו שומרים על קבוצות קטנות ואיכותיות ללמידה אישית ומוצלחת.`,
-        whatNotToDo: `מגבלות בחוגי ילדים:\n1. ${rest}\n2. לעולם אל תיתן הבטחות רפואיות/חינוכיות גורפות או תשובות סותרות ללא התייעצות מול ${own}.`,
-        syllabusLinks: `- סילבוס קורס פיתוח משחקים ברובלוקס לקבוצות: https://fastway.example.com/syllabus-kids-roblox\n- סילבוס קבוצות צעירות ב-Scratch: https://fastway.example.com/syllabus-kids-scratch`,
-        humanEscalation: `במצבים המוגדרים כ: ${esc}, או כאשר ההורה מתעקש על שיחה טלפונית למחירים מיוחדים – ספר קודם בנימוס שמרבית המידע הרלוונטי נמצא בשמחה באתר והפנה אותו באדיבות רבה אל ${own} בטלפון. עם זאת, זכור חוק בל יעבור: הבוט לעולם אינו מסיים או מפסיק את השיחה מיוזמתו! המשך תמיד בשיחה באדיבות ושאל: "האם יש בינתיים שאלות נוספות או נושאים שתרצה שאענה לך עליהם?".`
-      };
-    } else if (templateId === "qualify") {
-      return {
-        botIdentity: `שלום! אני הסוכן הממיין הרשמי של ${biz}. התפקיד שלי הוא לבדוק התאמת פונים למסלולים שלנו, לקבל מהם פרטי רקע קצרים, ולתאם מולם שיחת אפיון טלפונית מדויקת מול ${own}. הטון שלי הוא ${tone}.`,
-        coursesInfo: `אפיון הצרכים משמש אותנו ב-${biz} כדי לסווג את הפונים למסלול האיכותי ביותר, תוך שמירה על קבוצות ממוקדות ומתואמות המניבות הישגים מדהימים.`,
-        kidsCourses: `במסגרת האפיון לחוגי הילדים, נרצה לדעת האם לילד יש מחשב מתאים בבית ותקשורת אינטרנט תקינה המפשיטה את תהליך הלמידה.`,
-        conversationFlow: `שלבי המיון האפקטיבי:\n1. בירור קצר של שם מלא ומטרת הלימודים.\n2. שאלה לגבי זמינות קורסי בוקר או ערב, ורמת רקע קודם.\n3. אימות מספר טלפון ליצירת קשר.\n4. קביעת מועד שיחת אפיון טכנית אישית עם ${own} או מנהל הקבלה.`,
-        writingStyle: `סגנון תכליתי ומהיר:\n- טון ענייני, מהיר, רשמי, ממוקד ועסקי.\n- שאלות קצרות, אחת בכל פעם, כדי למנוע הצפה של המשתמש בפרטים.\n- שימוש בסמלים ברורים לניווט ושלבים.`,
-        faqAnswers: `שאלות סינון שכיחות:\nש: כמה זמן לוקח האפיון?\nת: בסך הכל 2-3 דקות פה בצ'אט ומעבר לשיחה של 5 דקות.\n\nש: האם סינון מונע ממני להירשם?\nת: לא, מטרתו היא רק להבטיח שאתה משובץ לקבוצה המתאימה בדיוק לקצב שלך.`,
-        whatNotToDo: `מגבלות סינון:\n1. ${rest}\n2. בשום מצב אל תתווכח או תיצור תחושה של 'בחינת קבלה' מלחיצה.\n3. אל תציע מחירים לפני שהגדרת את סוג השיבוץ.`,
-        syllabusLinks: `- שאלון אפיון להורדה מקדימה: https://fastway.example.com/qualify-sheet\n- סיכום פרטי מסלולי הלימוד: https://fastway.example.com/programs`,
-        humanEscalation: `לאחר השלמת אימות הפרטים (שם, טלפון ועניין), או כאשר מוגדר: ${esc} – ענה קודם בנימוס שישנו פירוט רב באתר והעבר את תוצאות השיחה ישירות לטלפון של ${own}. זכור שהבוט לעולם אינו מסיים את השיחה מצידו (רק הלקוח מסיים)! שאל תמיד מיד בסבלנות: "בינתיים, האם יש משהו נוסף שתרצה שאענה עליו בשמחה?".`
-      };
-    } else {
-      // default is sales
-      return {
-        botIdentity: `שלום! אני סוכן השיווק וההרשמה המוביל של ${biz}. התפקיד שלי הוא להציג בפניך את המסלולים הטובים ביותר, לראות אם יש התאמה ואז לקשר אותך באהבה ל${own} מנהל העסק. הטון שלי הוא ${tone}.`,
-        coursesInfo: `הקורסים המקצועיים של ${biz} מציעים את שיטת ההכשרה המתקדמת והעדכנית ביותר כיום המאפשרת פרויקטים מעשיים, ליווי שבועי צמוד בקבוצות בוטיק יוקרתיות ואחוז סיום יוצא דופן.`,
-        kidsCourses: `לילדים ונוער, אנו מציעים קורסי תכנות ופיתוח משחקים ברובלוקס ובסקראץ', המפתחים חשיבה לוגית, סקרנות וביטחון עצמי מגיל צעיר.`,
-        conversationFlow: `זרימת השיחה המומלצת למכירות:\n1. ברך בחיומיות, הצג את עצמך כסוכן של ${biz}.\n2. שאל לשמם ואיזה קורס/חוג הם מחפשים כדי להבין את רצונם.\n3. הצג את היתרונות הבלעדיים שלנו בעסק לפתרון שאלתם.\n4. קרא לפעולה ברורה: השארת מספר טלפון לתיאום שיחת התאמה אישית של 5 דקות מול ${own}.`,
-        writingStyle: `הוראות עימוד וניסוח:\n- הודעות קצרות וקולעות, מרווחות בטוב טעם (שבירת שורות לנייד).\n- שימוש יצירתי באימוג'ים מתאימים ומניעי עניין.\n- טון שירותי, אקטיבי, מעורר סקרנות ומכוון מעשה.`,
-        faqAnswers: `שאלות ותשובות שכיחות:\nש: האם יש קושי במציאת עבודה בסיום?\nת: אנו מספקים ליווי מקצועי, בניית תיק עבודות והכנה המעניקה לבוגרים שלנו נקודת זינוק משמעותית בשוק.\n\nש: מהו תאריך פתיחת הקורס?\nת: מחזורים נפתחים במרווחי זמן קבועים, כדי להתעדכן בשיבוץ המדויק מומלץ לשריין מקום מוקדם.`,
-        whatNotToDo: `מגבלות ואיסורים מכירתיים:\n1. ${rest}\n2. לעולם אל תתווכח על מחיר או תסכים להנחה לא מאושרת מ${own}.\n3. הימנע מלחץ אגרסיבי, שמור על נימוס קלאסי.`,
-        syllabusLinks: `- סילבוס מקיף פיתוח קוד פולסטאק React: https://fastway.example.com/syllabus-fullstack\n- סילבוס פיתוח Unity תלת-מימדי: https://fastway.example.com/syllabus-unity`,
-        humanEscalation: `בכל מקרה של שאלה פיננסית סבוכה, בקשת מנוהל או כשמוגדר: ${esc} – הסבר תחילה באדיבות שישנו פירוט נהדר באתר לגבי הנושא, והפנה באדיבות להמשך פתרון פנומנלי מול ${own} בטלפון. היה חם ושירותי, וזכור: הבוט לעולם אינו מפסיק את השיחה מיוזמתו או מסכים לסיימה לבד. שאל מיד לאחר מכן: "בינתיים, האם יש לך עוד שאלות או נושאים רלוונטיים שתרצה שאשמח לעזור בהם?".`
-      };
-    }
-  }
-
-  // Endpoint to generate full 9-part structured prompt using Gemini
-  app.post("/api/ai/generate-agent-prompt", requireAuth, async (req, res) => {
-    try {
-      const {
-        templateId,
-        businessName,
-        ownerName,
-        pastedText,
-        scrapedText,
-        answers // object of custom answers
-      } = req.body;
-
-      if (!ai) {
-        console.log("[SERVER] GoogleGenAI client NOT initialized. Generating fallback prompts locally.");
-        const fallback = generateFallbackPrompts(templateId, businessName, ownerName, answers);
-        return res.json({
-          success: true,
-          prompts: fallback,
-          isFallback: true,
-          warning: "בוצע מעבר אוטומטי למערכת פרומפטים מורחבת עקב חוסר בחיבור AI."
-        });
-      }
-
-      let templateName = "בוט מכירות והרשמה קלאסי";
-      if (templateId === "support") templateName = "בוט מידע ותמיכת לקוחות ומענה שאלות";
-      else if (templateId === "kids") templateName = "בוט חוגים וסדנאות לילדים ונוער (הורים)";
-      else if (templateId === "qualify") templateName = "בוט סינון, סיווג ואפיון מהיר";
-
-      const knowledgeMaterials = `${pastedText || ''}\n\n${scrapedText || ''}`.trim() || "אין חומר ידע מפורש (בנה פרומפטים מבוססי הנחות הגיוניות ומקצועיות בהתאם לשם העסק ותשובות האפיון)";
-
-      const promptToModel = 
-        "אתה עוזר פיתוח AI ומוมחה אפיון סוכני מכירות ושירות לצ'אט ו-WhatsApp. " +
-        "עליך לבנות פרומפט הנחיות מקצועי ומקיף עבור סוכן מכירות דיגיטלי הבנוי מ-9 חלקים מובנים של מידע.\n\n" +
-        "להלן פרטי העסק והמאפיינים שסופקו:\n" +
-        `- שם העסק: ${businessName || 'לא צוין'}\n` +
-        `- שם הבעלים: ${ownerName || 'לא צוין'}\n` +
-        `- תבנית הבוט: ${templateName}\n` +
-        `- מטרת העל והתוצאה המבוקשת מהשיחה (היעד של הבוט): ${answers?.goal || 'לא צוין'}\n` +
-        `- קהל יעד מיועד: ${answers?.audience || 'לא צוין'}\n` +
-        `- טון וסגנון המועדפים: ${answers?.tone || 'לא צוין'}\n` +
-        `- איסורים וחוקי ברזל: ${answers?.restrictions || 'לא צוין'}\n` +
-        `- מתי להעביר לנציג אנושי: ${answers?.escalationTrigger || 'לא צוין'}\n\n` +
-        `חומרי ידע גולמיים וסילבוסים:\n${knowledgeMaterials}\n\n` +
-        "משימה: עליך לייצר טקסט פרומפט מלא ועשיר בעברית עבור כל אחד מתשעת החלקים הבאים, מותאם לעסק. " +
-        "החזר אובייקט JSON תקין ומדויק בעל 9 המפתחות הבאים:\n" +
-        "1. botIdentity: הגדרת שם הבוט (המצא שם ידידותי בעברית), התפקיד, השיוך ל-{BusinessName} ונימת הדיבור.\n" +
-        "2. coursesInfo: תיאור מפורט, קורסים, סילבוסים, מחירים או שירותים שהעסק מציע.\n" +
-        "3. kidsCourses: קורסים, סדנאות קיץ, חוגים, קהל יעד מיועד וסיגמנטים מיוחדים. חוק בל יעבור: ציין אך ורק במי קהל היעד שבו אנו כן ממוקדים (מי כן), בשום אופן אל תציין במה או במי אנו לא ממוקדים ומי לא קהל היעד (אל תמנה מה לא או למי לא, כדי למנוע רשימה ארוכה ומייגעת). מיקוד חיובי בלבד!\n" +
-        "4. conversationFlow: שלבי התקדמות השיחה ב-WhatsApp, מהברכה ועד השגת הטלפון לקריאה לפעולה.\n" +
-        "5. writingStyle: הוראות עימוד וניסוח (קיצור הודעות, רווחים בין שורות, שבירת שורות, סגנון שמושך תשומת לב).\n" +
-        "6. faqAnswers: 3-4 שאלות ותשובות נפוצות פוטנציאליות שמעניינות לקוחות, בפורמט ש: ות:.\n" +
-        "7. whatNotToDo: לפחות 3 דברים שהבוט לעולם לא יגיד, לא יבטיח, ולא יעשה.\n" +
-        "8. syllabusLinks: פורמט קישורים של סילבוסים אליהם יוכל לקשר. (לדוגמה: - סילבוס קורס: https://yourdomain.com/syllabus...).\n" +
-        "9. humanEscalation: מפורט ומלא של מתי וכיצד לבצע הפניה לגורם אנושי בטלפון {OwnerPhone}. עליך להורות לסוכן: (1) הוא אף פעם לא מפסיק או מסיים את השיחה מיוזמתו, רק הלקוח מסיים. (2) בכל מצב של בקשת נציג, שאלה מורכבת שחורגת מהמידע באתר (כמו דוגמאות API או הצעות סבוכות), או נושא פיננסי מעורפל – עליו קודם כל לכתוב בנימוס כי יש פירוט נהדר באתר והוא שמח לנסות לעזור, אך יש להפנות אותו אל הנציג {OwnerPhone}. לאחר מכן הוא חייב לשאול מיד בהמשכיות: 'בינתיים, האם יש לך שאלות נוספות שתרצה שאשמח לעשות עבורך?' על מנת להמשיך את השיחה תמיד.\n\n" +
-        "חשוב מאוד: אל תשתמש במזהים של markdown או תגיות חתוכות בתוך ה-JSON של התשובה. כל ערך במפתח ה-JSON חייב להכיל את הפרומפט המלא, המעוצב והמסוגנן בעברית.";
-
-      console.log("[SERVER] Generating full 9-part structured prompt using gemini-3.5-flash (with robust fallback capabilities)...");
-
-      const response = await generateWithFallback(ai, {
-        model: "gemini-3.5-flash",
-        contents: promptToModel,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              botIdentity: { type: Type.STRING },
-              coursesInfo: { type: Type.STRING },
-              kidsCourses: { type: Type.STRING },
-              conversationFlow: { type: Type.STRING },
-              writingStyle: { type: Type.STRING },
-              faqAnswers: { type: Type.STRING },
-              whatNotToDo: { type: Type.STRING },
-              syllabusLinks: { type: Type.STRING },
-              humanEscalation: { type: Type.STRING }
-            },
-            required: [
-              "botIdentity", "coursesInfo", "kidsCourses", "conversationFlow",
               "writingStyle", "faqAnswers", "whatNotToDo", "syllabusLinks", "humanEscalation"
             ]
           }
@@ -2905,7 +2777,7 @@ async function startServer() {
     }
   });
 
-  // Endpoint to improve a specific prompt part with targeted instructions and custom emojis
+    // Endpoint to improve a specific prompt part with targeted instructions and custom emojis
   app.post("/api/ai/improve-agent-prompt-part", requireAuth, async (req, res) => {
     try {
       const {
@@ -2948,7 +2820,7 @@ async function startServer() {
         "דרישות קריטיות:\n" +
         "1. שפר ושדרג את הטקסט הנוכחי בהתאם להנחיות המשתמש.\n" +
         "2. דאג שהתוצאה תהיה בעברית תקנית, רהוטה, משכנעת, ומנוסחת בצורה מושלמת עבור סוכן דיגיטלי.\n" +
-        "3. שלב בתוכו אימוג'ים רלוונטיים במיוחד לחלק הזה ובפרט אם התבקשת. אם זה חלק של זרימת שיחה, שלב בצורה יפה אימוג'י של שאלת פתיחה (כמו 👋, ✨, שלום!, 🪐) ושלבי התקדמות (כמו 🆕, 📍, 📞). אם זה שירותים, שלב סמלי למידה, קורסים ומחירים. \n" +
+        "3. שלב בתוכו אימוג'ים רלוונטיים במיוחד לחלק הזה ובפרט אם התבקשת. אם זה חלק של זרימת שיחה, שלב בצורה יפה אימוג'י של שאלת פתיחה (כמו \u{1F44B}, ✨, שלום!, \u{1FA90}) ושלבי התקדמות (כמו \u{1F195}, \u{1F4CD}, \u{1F4DE}). אם זה שירותים, שלב סמלי למידה, קורסים ומחירים. \n" +
         "4. החזר אך ורק את טקסט ההנחיות החדש והמשופר בעברית. אל תכתוב שום מילה מחוץ לפרומפט המשופר (ללא הקדמות כמו 'הנה הטקסט המשופר', ללא תגיות markdown, ללא כותרות, פשוט החזר את הבלוק המשופר עצמו שהבוט אמור לקרוא).\n\n" +
         "התחל לכתוב את הטקסט המשופר כעת:";
 

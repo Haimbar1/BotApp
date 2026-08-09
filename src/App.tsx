@@ -148,6 +148,7 @@ interface AgentConfig {
   key: string;
   leadFollowUpDays?: string;
   lastSyncedAt?: string;
+  welcomeMessage?: string;
   botIdentity?: string;
   coursesInfo?: string;
   kidsCourses?: string;
@@ -181,6 +182,10 @@ const DEFAULT_GET_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/eacd
 const DEFAULT_WEBHOOK_URL = DEFAULT_POST_WEBHOOK_URL;
 
 const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string[] }[]> = {
+  welcomeMessage: [
+    { label: "👋 ברכה ופתיחה", emojis: ["👋", "✨", "🌟", "🌺", "💫", "😃", "🙋‍♂️", "🙋‍♀️", "🎉", "💐"] },
+    { label: "🔘 כפתורים ואפשרויות", emojis: ["1️⃣", "2️⃣", "3️⃣", "📝", "❓", "📞", "🔹", "✅", "💬", "🔍"] }
+  ],
   botIdentity: [
     { label: "🤖 זהות ונציגות", emojis: ["🤖", "🤵", "👩‍💼", "👤", "✨", "👑", "🛡️", "🌟", "💼", "🏢"] },
     { label: "💼 מטרות ועסקים", emojis: ["🎯", "💡", "🚀", "📢", "🤝", "✅", "🏷️", "🔥"] }
@@ -473,6 +478,7 @@ export default function App() {
   const [partFileLoading, setPartFileLoading] = useState(false);
 
   // Split prompt states
+  const [welcomeMessage, setWelcomeMessage] = useState("");
   const [botIdentity, setBotIdentity] = useState("");
   const [coursesInfo, setCoursesInfo] = useState("");
   const [kidsCourses, setKidsCourses] = useState("");
@@ -570,130 +576,275 @@ export default function App() {
     return p;
   };
 
-  // Parse chat message content helper (supports nested stringified JSON and code fence blocks)
+  // Parse chat message content helper (supports nested stringified JSON, code fence blocks, control chars, and WhatsApp interactive list/button options)
   const parseChatMessageContent = (content: string, type: "human" | "ai") => {
-    if (!content) return { text: "", raw: null, summary: "", action: "", details: {}, imageUrl: "" };
+    if (!content) return { text: "", raw: null, summary: "", action: "", details: {}, imageUrl: "", listTitle: "", listOptions: [] as any[] };
 
-    let cleaned = content.trim();
-    
-    // Strip markdown JSON fence if present
-    if (cleaned.startsWith("```json")) {
-      cleaned = cleaned.substring(7);
-    }
-    if (cleaned.endsWith("```")) {
-      cleaned = cleaned.substring(0, cleaned.length - 3);
-    }
-    cleaned = cleaned.trim();
+    const rawContentStr = String(content).trim();
 
+    // Helper to extract JSON substring from markdown fences or surrounding prose
+    const cleanJsonString = (str: string): string => {
+      let s = str.trim();
+      if (s.includes("```")) {
+        const fenceMatch = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        if (fenceMatch) {
+          s = fenceMatch[1].trim();
+        } else {
+          s = s.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+        }
+      }
+
+      const firstBrace = s.indexOf("{");
+      const firstBracket = s.indexOf("[");
+      let start = -1;
+      if (firstBrace !== -1 && firstBracket !== -1) start = Math.min(firstBrace, firstBracket);
+      else if (firstBrace !== -1) start = firstBrace;
+      else if (firstBracket !== -1) start = firstBracket;
+
+      if (start !== -1) {
+        const lastBrace = s.lastIndexOf("}");
+        const lastBracket = s.lastIndexOf("]");
+        const end = Math.max(lastBrace, lastBracket);
+        if (end > start) {
+          s = s.substring(start, end + 1);
+        }
+      }
+      return s;
+    };
+
+    // Helper to escape raw literal newlines/tabs inside JSON string literals
+    const sanitizeJsonString = (str: string): string => {
+      return str.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+        return match
+          .replace(/\r\n/g, "\\n")
+          .replace(/\n/g, "\\n")
+          .replace(/\t/g, "\\t");
+      });
+    };
+
+    const cleaned = cleanJsonString(rawContentStr);
+
+    let parsed: any = null;
     try {
-      const parsed = JSON.parse(cleaned);
-      if (type === "human") {
-        let humanText = parsed.chatInput || parsed.message || parsed.content || parsed.text || cleaned;
-        if (typeof humanText === "object") humanText = JSON.stringify(humanText);
+      parsed = JSON.parse(cleaned);
+    } catch (e1) {
+      try {
+        parsed = JSON.parse(sanitizeJsonString(cleaned));
+      } catch (e2) {
+        parsed = null;
+      }
+    }
+
+    if (!parsed) {
+      // Regex fallback extraction if JSON parsing failed
+      let replyText = "";
+      const replyMatch = cleaned.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/s) || cleaned.match(/"reply"\s*:\s*"(.*?)"\s*,\s*"/s);
+      if (replyMatch && replyMatch[1]) {
+        replyText = replyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+      }
+
+      let actionVal = "";
+      const actionMatch = cleaned.match(/"action"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (actionMatch && actionMatch[1]) actionVal = actionMatch[1];
+
+      let summaryVal = "";
+      const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (summaryMatch && summaryMatch[1]) summaryVal = summaryMatch[1];
+
+      let listTitleVal = "";
+      const listTitleMatch = cleaned.match(/"list_title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (listTitleMatch && listTitleMatch[1]) listTitleVal = listTitleMatch[1];
+
+      let listOptsVal: any[] = [];
+      const optionsMatch = cleaned.match(/"options"\s*:\s*(\[[\s\S]*?\])/);
+      if (optionsMatch && optionsMatch[1]) {
+        try {
+          listOptsVal = JSON.parse(sanitizeJsonString(optionsMatch[1]));
+        } catch (err) {}
+      }
+
+      if (replyText) {
         return {
-          text: humanText,
-          raw: parsed,
-          summary: "",
-          action: "",
-          details: parsed,
-          imageUrl: ""
-        };
-      } else {
-        // AI type
-        let text = "";
-        let imageUrl = "";
-        let summary = "";
-        let action = "";
-
-        const nodes = Array.isArray(parsed) ? parsed : [parsed];
-
-        for (const node of nodes) {
-          if (!node || typeof node !== "object") continue;
-
-          if (node.action) action = node.action;
-          if (node.summary) summary = node.summary;
-          if (node.crm_data && node.crm_data.summary) summary = node.crm_data.summary;
-
-          if (node.whatsapp_payload && node.whatsapp_payload.message) {
-            const msg = node.whatsapp_payload.message;
-
-            if (msg.type === "image" || msg.image) {
-              if (typeof msg.image === "string") {
-                imageUrl = msg.image;
-              } else if (msg.image && typeof msg.image === "object") {
-                imageUrl = msg.image.link || msg.image.url || imageUrl;
-                if (msg.image.caption && !text) {
-                  text = msg.image.caption;
-                }
-              }
-              if (msg.caption && !text) text = msg.caption;
-            }
-
-            if (msg.interactive) {
-              const parts = [];
-              if (msg.interactive.header?.text) parts.push(msg.interactive.header.text);
-              if (msg.interactive.body?.text) parts.push(msg.interactive.body.text);
-              if (msg.interactive.footer?.text) parts.push(msg.interactive.footer.text);
-              if (parts.length > 0 && !text) text = parts.join("\n\n");
-            }
-
-            if (msg.text?.body && !text) {
-              text = msg.text.body;
-            }
-            if (msg.body && !text) {
-              text = typeof msg.body === "string" ? msg.body : JSON.stringify(msg.body);
-            }
-          }
-
-          if (!text) {
-            if (node.caption) text = node.caption;
-            else if (node.image && typeof node.image === "object" && node.image.caption) text = node.image.caption;
-            else if (node.reply) text = typeof node.reply === "string" ? node.reply : JSON.stringify(node.reply);
-            else if (node.text) text = typeof node.text === "string" ? node.text : JSON.stringify(node.text);
-            else if (node.content) text = typeof node.content === "string" ? node.content : JSON.stringify(node.content);
-            else if (node.message) {
-              if (typeof node.message === "string") text = node.message;
-              else if (typeof node.message === "object") {
-                if (node.message.caption) text = node.message.caption;
-                else if (node.message.image && node.message.image.caption) text = node.message.image.caption;
-                else if (node.message.text) text = typeof node.message.text === "string" ? node.message.text : JSON.stringify(node.message.text);
-                else if (node.message.body) text = typeof node.message.body === "string" ? node.message.body : JSON.stringify(node.message.body);
-              }
-            }
-          }
-
-          if (!imageUrl) {
-            if (node.image) {
-              if (typeof node.image === "string") imageUrl = node.image;
-              else if (typeof node.image === "object") imageUrl = node.image.link || node.image.url || "";
-            } else if (node.imageUrl) {
-              imageUrl = node.imageUrl;
-            }
-          }
-        }
-
-        if (!text) {
-          text = parsed.reply || parsed.text || parsed.content || cleaned;
-        }
-
-        return {
-          text,
-          raw: parsed,
-          summary: summary || parsed.summary || "",
-          action: action || parsed.action || parsed.Action || "",
-          details: parsed,
-          imageUrl
+          text: replyText,
+          raw: { reply: replyText, action: actionVal, summary: summaryVal },
+          summary: summaryVal,
+          action: actionVal,
+          details: {},
+          imageUrl: "",
+          listTitle: listTitleVal,
+          listOptions: listOptsVal
         };
       }
-    } catch (e) {
-      // Return as plain text if JSON parse fails
+
+      // Return plain text as fallback
       return {
-        text: content,
+        text: rawContentStr,
         raw: null,
         summary: "",
         action: "",
         details: {},
-        imageUrl: ""
+        imageUrl: "",
+        listTitle: "",
+        listOptions: []
+      };
+    }
+
+    // Handle double-encoded output field if present (e.g. { output: "```json\n{...}\n```" })
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.output) {
+      if (typeof parsed.output === "string") {
+        try {
+          const innerClean = cleanJsonString(parsed.output);
+          const innerParsed = JSON.parse(innerClean) || JSON.parse(sanitizeJsonString(innerClean));
+          parsed = { ...parsed, ...innerParsed };
+        } catch (err) {}
+      } else if (typeof parsed.output === "object") {
+        parsed = { ...parsed, ...parsed.output };
+      }
+    }
+
+    if (type === "human") {
+      let humanText = parsed.chatInput || parsed.message || parsed.content || parsed.text || cleaned;
+      if (typeof humanText === "object") humanText = JSON.stringify(humanText);
+      return {
+        text: humanText,
+        raw: parsed,
+        summary: "",
+        action: "",
+        details: parsed,
+        imageUrl: "",
+        listTitle: "",
+        listOptions: []
+      };
+    } else {
+      // AI type
+      let text = "";
+      let imageUrl = "";
+      let summary = "";
+      let action = "";
+      let listTitle = "";
+      let listOptions: any[] = [];
+
+      const nodes = Array.isArray(parsed) ? parsed : [parsed];
+
+      for (const node of nodes) {
+        if (!node || typeof node !== "object") continue;
+
+        if (node.action) action = node.action;
+        if (node.summary) summary = node.summary;
+        if (node.crm_data && node.crm_data.summary) summary = node.crm_data.summary;
+
+        if (node.list_title) listTitle = node.list_title;
+
+        if (node.list_options) {
+          if (Array.isArray(node.list_options)) {
+            listOptions = node.list_options;
+          } else if (typeof node.list_options === "object") {
+            if (node.list_options.list_title) listTitle = node.list_options.list_title;
+            else if (node.list_options.title) listTitle = node.list_options.title;
+
+            const opts = node.list_options.options || node.list_options.items || node.list_options.rows || node.list_options.choices;
+            if (Array.isArray(opts)) {
+              listOptions = opts;
+            }
+          }
+        } else if (node.options && Array.isArray(node.options)) {
+          listOptions = node.options;
+        }
+
+        if (node.whatsapp_payload && node.whatsapp_payload.message) {
+          const msg = node.whatsapp_payload.message;
+
+          if (msg.type === "image" || msg.image) {
+            if (typeof msg.image === "string") {
+              imageUrl = msg.image;
+            } else if (msg.image && typeof msg.image === "object") {
+              imageUrl = msg.image.link || msg.image.url || imageUrl;
+              if (msg.image.caption && !text) {
+                text = msg.image.caption;
+              }
+            }
+            if (msg.caption && !text) text = msg.caption;
+          }
+
+          if (msg.interactive) {
+            const parts = [];
+            if (msg.interactive.header?.text) parts.push(msg.interactive.header.text);
+            if (msg.interactive.body?.text) parts.push(msg.interactive.body.text);
+            if (msg.interactive.footer?.text) parts.push(msg.interactive.footer.text);
+            if (parts.length > 0 && !text) text = parts.join("\n\n");
+
+            if (msg.interactive.action) {
+              if (msg.interactive.action.button) listTitle = msg.interactive.action.button;
+              if (msg.interactive.action.sections) {
+                const opts: any[] = [];
+                for (const sec of msg.interactive.action.sections) {
+                  if (sec.rows && Array.isArray(sec.rows)) {
+                    for (const r of sec.rows) {
+                      opts.push({ id: r.id, title: r.title, description: r.description });
+                    }
+                  }
+                }
+                if (opts.length > 0) listOptions = opts;
+              } else if (msg.interactive.action.buttons) {
+                const opts: any[] = [];
+                for (const b of msg.interactive.action.buttons) {
+                  if (b.reply) {
+                    opts.push({ id: b.reply.id, title: b.reply.title });
+                  }
+                }
+                if (opts.length > 0) listOptions = opts;
+              }
+            }
+          }
+
+          if (msg.text?.body && !text) {
+            text = msg.text.body;
+          }
+          if (msg.body && !text) {
+            text = typeof msg.body === "string" ? msg.body : JSON.stringify(msg.body);
+          }
+        }
+
+        if (!text) {
+          if (node.caption) text = node.caption;
+          else if (node.image && typeof node.image === "object" && node.image.caption) text = node.image.caption;
+          else if (node.reply) text = typeof node.reply === "string" ? node.reply : JSON.stringify(node.reply);
+          else if (node.text) text = typeof node.text === "string" ? node.text : JSON.stringify(node.text);
+          else if (node.content) text = typeof node.content === "string" ? node.content : JSON.stringify(node.content);
+          else if (node.message) {
+            if (typeof node.message === "string") text = node.message;
+            else if (typeof node.message === "object") {
+              if (node.message.caption) text = node.message.caption;
+              else if (node.message.image && node.message.image.caption) text = node.message.image.caption;
+              else if (node.message.text) text = typeof node.message.text === "string" ? node.message.text : JSON.stringify(node.message.text);
+              else if (node.message.body) text = typeof node.message.body === "string" ? node.message.body : JSON.stringify(node.message.body);
+            }
+          }
+        }
+
+        if (!imageUrl) {
+          if (node.image) {
+            if (typeof node.image === "string") imageUrl = node.image;
+            else if (typeof node.image === "object") imageUrl = node.image.link || node.image.url || "";
+          } else if (node.imageUrl) {
+            imageUrl = node.imageUrl;
+          }
+        }
+      }
+
+      if (!text) {
+        text = parsed.reply || parsed.text || parsed.content || cleaned;
+      }
+
+      return {
+        text,
+        raw: parsed,
+        summary: summary || parsed.summary || "",
+        action: action || parsed.action || parsed.Action || "",
+        details: parsed,
+        imageUrl,
+        listTitle: listTitle || parsed.list_title || "",
+        listOptions: Array.isArray(listOptions) && listOptions.length > 0 ? listOptions : []
       };
     }
   };
@@ -1289,11 +1440,13 @@ export default function App() {
     const bTitle = currentActiveAgent.businessName || currentActiveAgent.name || "בוט עסק חכם";
     const waNum = currentActiveAgent.ownerPhone || "972552502584";
     const flowText = currentActiveAgent.conversationFlow || "";
+    const welcomeMsg = currentActiveAgent.welcomeMessage || "";
 
     (window as any).OpticsBotConfig = {
       botId: bId,
       title: bTitle,
       whatsappNumber: waNum,
+      welcomeMessage: welcomeMsg,
       conversationFlow: flowText,
       webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
     };
@@ -1310,6 +1463,9 @@ export default function App() {
         script.setAttribute("data-bot-id", bId);
         script.setAttribute("data-title", bTitle);
         script.setAttribute("data-whatsapp", waNum);
+        if (welcomeMsg) {
+          script.setAttribute("data-welcome-message", welcomeMsg);
+        }
         if (flowText) {
           script.setAttribute("data-conversation-flow", flowText);
         }
@@ -1567,6 +1723,7 @@ export default function App() {
 
     const defaultPromptsByTemplate: Record<string, any> = {
       sales: {
+        welcomeMessage: `👋 שלום וברוכים הבאים ל-${biz}! 🌟\nשמי הנציג הדיגיטלי הרשמי של העסק. נשמח לסייע ולהתאים עבורכם את המסלול המדויק ביותר!\n\n[1. 📖 קורסים ומסלולי לימוד]\n[2. 🎁 שיחת התאמה וייעוץ בחינם]\n[3. 📞 דבר עם נציג אנושי]`,
         botIdentity: `אני עוזר השירות והמכירות הראשי של ${biz}. התפקיד שלי הוא לייצג את החברה בצורה המקצועית, האדיבה והמובילה ביותר בענף, תחת ניהולו של ${own}.`,
         coursesInfo: `אנו מציעים מגוון קורסים מתקדמים ומעשיים ב${biz}. הקורסים שלנו כוללים ליווי שבועי צמוד, תרגול מעשי 1-על-1 ופרויקטים שמזניקים לתפקיד מעשי בתעשייה.\n1. קורס פיתוח Full-Stack Web App ב-TypeScript ו-React.\n2. קורס פיתוח משחקים ותלת מימד ב-Unity.\n3. קורס יסודות התכנות לחסרי רקע.`,
         kidsCourses: `אקדמיית הילדים והנוער של ${biz}:\n1. קורס יצירת עולמות ותכנות ב-Roblox (לגילאי 9-13).\n2. סדנת פיתוח משחקים צעירים ב-Scratch.\nהקורסים מועברים בקבוצות קטנות עם תשומת לב אישית לכל ילד.`,
@@ -1578,6 +1735,7 @@ export default function App() {
         humanEscalation: `בכל מקרה של בקשה לנציג אנושי, שאלה פתוחה מורכבת שחורגת מהמידע המובנה (כמו API לדוגמה או הצעות מחיר מורכבות) – ענה תחילה בנימוס שישנו פירוט מצוין באתר והרפתקאות מותאמות, והפנה באדיבות רבה אל ${own} בטלפון: ${phone}. זכור: לעולם אל תסיים את השיחה מיוזמתך (רק הלקוח מסיים)! שאל מיד: "בינתיים, האם יש לך שאלות נוספות שתרצה שאשמח לעזור בהן?".`
       },
       support: {
+        welcomeMessage: `👋 שלום וברוכים הבאים למרכז התמיכה והשירות של ${biz}! 🛠️\nשמי הנציג הדיגיטלי. נשמח לעמוד לשירותכם בכל שאלה או נושא!\n\n[1. 🛠️ עזרה ופתרון תקלות]\n[2. 📖 מדריכים ושאלות נפוצות]\n[3. 📞 פנייה לנציג אנושי]`,
         botIdentity: `אני בוט התמיכה והמענה הראשי של ${biz}. מטרתי היא לעזור ללקוחות למצוא תשובות מדויקות, פשוטות ומהירות, בהנחיית ${own}.`,
         coursesInfo: `שירותי המידע של ${biz} כוללים סיוע טכנולוגי, שאלות רישום ומנהלה, ותיאום מועדי למידה.\nשעות הפעילות שלנו: ימים א'-ה' בין 09:00 ל-18:00.`,
         kidsCourses: `בתחום הילדים, אנו מספקים תמיכה ברישום לקבוצות רובלוקס וסדנאות יצירתיות, החל מגילאי 9 ומעלה, תוך דגש על שירות סבלני ומסביר פנים להורים.`,
@@ -1589,6 +1747,7 @@ export default function App() {
         humanEscalation: `בכל מקרה של בקשה לתמיכה אישית, כעס, או שאלה מורכבת שחורגת מהמידע – ענה תחילה בנימוס שישנו פירוט רב באתר ושמחה לסייע, אך יחד עם זאת הפנה באדיבות למספר של ${own}: ${phone}. עם זאת, הבוט לעולם אינו מפסיק את השיחה מצידו! שאל מיד לאחר מכן: "בינתיים, האם יש משהו נוסף שאוכל לעזור לך בו שתרצה לדעת?".`
       },
       kids: {
+        welcomeMessage: `👋 שלום להורים היקרים! 🌟\nברוכים הבאים ל-${biz}.\nשמי היועץ החינוכי הדיגיטלי. אשמח לסייע לכם למצוא את החוג והמסלול המתאים ביותר לילדכם!\n\n[1. 🧸 קורסים וחוגים לילדים ונוער]\n[2. 📅 תיאום שיעור ניסיון במתנה]\n[3. 📞 שיחה עם רכז החוגים]`,
         botIdentity: `אני בוט החוגים ועוזר ההורים המיוחד של ${biz}. בניהולו של ${own}, תפקידי הוא להמליץ ולעזור להורים למצוא את המסלול החינוכי הטעים ביותר עבור ילדיהם.`,
         coursesInfo: `התכנית הטכנולוגית של ${biz} מעניקה לתלמידים ארגז כלים ייחודי: פתרון בעיות, חשיבה לוגית ויצירתיות גבוהה באמצעות קורסי פיתוח תוכנה ומשחקים מותאמים.`,
         kidsCourses: `רשימת הקורסים המפוארת שלנו לילדים:\n1. קורס Roblox גיימינג ותכנות (גילאי 9-13): לימוד שפת לואה ופיתוח משחקים משלהם.\n2. סדנת פיתוח משחקים בצהרון ב-Scratch (גילאי 7-10).\n3. קורס פיתוח אפליקציות מובייל צעירים.`,
@@ -1600,6 +1759,7 @@ export default function App() {
         humanEscalation: `בכל שלב בו ההורה מעוניין לתאם שיעור ניסיון מיוחד, שאלות כספיות מורכבות או לשוחח ישירות – ענה בנימוס שישנו פירוט מצוין באתר, פתח את הדרך והפנה באדיבות למספר של ${own} בטלפון: ${phone}. זכור: הבוט לעולם אינו מסיים את השיחה לבדו! שאל מיד: "בינתיים, האם יש משהו נוסף שאוכל לסייע לך בו?".`
       },
       qualify: {
+        welcomeMessage: `👋 שלום רב! 🌟\nברוכים הבאים למערכת האפיון והסינון של ${biz}.\n\nכיצד נוכל לסייע לך להתקדם?\n[1. 📋 בדיקת התאמה ואפיון מהיר]\n[2. 🎓 מסלולי הלימוד שלנו]\n[3. 📞 שיחת ייעוץ טלפונית]`,
         botIdentity: `אני עוזר האימות והמיון הראשוני של ${biz}. תפקידי לבצע אפיון צרכים קצר ומקצועי על מנת להתאים לך את המסלול המדויק ביותר, בניהול ${own}.`,
         coursesInfo: `האפיון ב${biz} מיועד למזער זמן בדיקה ולבדוק התאמה למסלולים הממוקדים והמבוקשים שלנו, כדי להבטיח את אחוזי ההצלחה הגבוהים ביותר בקבוצה.`,
         kidsCourses: `במסגרת סינון לחוגי ילדים, אנו מאמתים את הגיל וזמינות ההורה ללוות בשיעור המבוא הראשוני, כדי להבטיח התחלה חלקה ומדרבנת.`,
@@ -1669,6 +1829,7 @@ export default function App() {
       const finalOwnerPhone = wizardOwnerPhone.trim();
       const finalOwnerName = wizardOwnerName.trim() || ownerName || "נציג מכירות";
 
+      const newWelcomeMessage = generatedPrompts?.welcomeMessage || "";
       const newBotIdentity = generatedPrompts?.botIdentity || "";
       const newCoursesInfo = generatedPrompts?.coursesInfo || "";
       const newKidsCourses = generatedPrompts?.kidsCourses || "";
@@ -1683,6 +1844,7 @@ export default function App() {
 
       // Compile dynamic unified businessPrompt based on the generated parts!
       const compiledBusinessPrompt = compilePromptFromParts(
+        newWelcomeMessage,
         newBotIdentity,
         newCoursesInfo,
         newKidsCourses,
@@ -1710,7 +1872,8 @@ export default function App() {
         agentEmail: wizardAgentEmail.trim() || sessionUser?.email || "haim.bar@gmail.com",
         status: "Not Active",
         
-        // 11 parts generated
+        // Parts generated
+        welcomeMessage: newWelcomeMessage,
         botIdentity: newBotIdentity,
         coursesInfo: newCoursesInfo,
         kidsCourses: newKidsCourses,
@@ -1738,6 +1901,7 @@ export default function App() {
       setKey(newAgent.key);
       setAgentEmail(newAgent.agentEmail || "");
       
+      setWelcomeMessage(newAgent.welcomeMessage || "");
       setBotIdentity(newAgent.botIdentity || "");
       setCoursesInfo(newAgent.coursesInfo || "");
       setKidsCourses(newAgent.kidsCourses || "");
@@ -2236,6 +2400,7 @@ export default function App() {
 
   // Helper to compile unified prompt from individual sections
   const compilePromptFromParts = (
+    welcome: string,
     identity: string,
     courses: string,
     kids: string,
@@ -2248,7 +2413,10 @@ export default function App() {
     images: string = "",
     videos: string = ""
   ): string => {
-    return `### זהות הבוט
+    return `### הודעת פתיחה ראשונית
+${welcome || "(לא הוגדרה)"}
+
+### זהות הבוט
 ${identity || "(לא הוגדר)"}
 
 ### מה אני מוכר — קורסים
@@ -2286,6 +2454,7 @@ ${videos || "(לא הוגדר)"}
 
   // Extract separate parts from businessPrompt if possible
   const getOrExtractBypassParts = (agent: AgentConfig) => {
+    const defaultWelcome = `👋 שלום וברוכים הבאים! 🌟\nשמי הנציג הדיגיטלי הרשמי. אשמח לסייע לך בכל שאלה!\n\n[1. 📖 מידע וקורסים]\n[2. 💬 שיחה עם נציג]\n[3. ❓ שאלות נפוצות]`;
     const defaultIdentity = `אתה סוכן מכירות דיגיטלי חכם וידידותי של שחר בר מ-SBS Games בתחום פיתוח המשחקים ב-Unity.`;
     const defaultCourses = `אנו מציעים מגוון קורסים מקצועיים לפיתוח משחקים ביוניטי. קורס הדגל שלנו הוא Unity Pro המקיף.`;
     const defaultKids = `קורסי פיתוח משחקים ייחודיים לילדים ונוער, המשלבים למידה מעשית מבוססת פרויקטים וחשיבה מתמטית.`;
@@ -2308,6 +2477,7 @@ ${videos || "(לא הוגדר)"}
     const defaultVideos = `- סרטון פרויקטים של תלמידים: https://sbsgames.dev/video/showcase.mp4\n- סיור קצר בכיתה: https://sbsgames.dev/video/workspace-tour.mp4`;
 
     if (
+      agent.welcomeMessage ||
       agent.botIdentity ||
       agent.coursesInfo ||
       agent.kidsCourses ||
@@ -2321,6 +2491,7 @@ ${videos || "(לא הוגדר)"}
       agent.videosInfo
     ) {
       return {
+        welcomeMessage: agent.welcomeMessage || "",
         botIdentity: agent.botIdentity || "",
         coursesInfo: agent.coursesInfo || "",
         kidsCourses: agent.kidsCourses || "",
@@ -2338,6 +2509,7 @@ ${videos || "(לא הוגדר)"}
     const prompt = agent.businessPrompt || "";
     if (!prompt) {
       return {
+        welcomeMessage: defaultWelcome,
         botIdentity: defaultIdentity,
         coursesInfo: defaultCourses,
         kidsCourses: defaultKids,
@@ -2388,6 +2560,7 @@ ${videos || "(לא הוגדר)"}
     };
 
     return {
+      welcomeMessage: parseSection(["הודעת פתיחה", "פתיחה ראשונית", "ברכה", "welcome", "firstmessage", "first_message"], defaultWelcome),
       botIdentity: parseSection(["זהות", "תפקיד", "מי הבוט", "identity"], defaultIdentity),
       coursesInfo: parseSection(["קורסים - מבוגרים", "קורסים מבוגרים", "מה אני מוכר", "קורסים", "sell", "courses"], defaultCourses),
       kidsCourses: parseSection(["ילדים", "קורסי ילדים", "קורסים לילדים", "kids"], defaultKids),
@@ -2419,6 +2592,7 @@ ${videos || "(לא הוגדר)"}
     
     // Load individual sections with extraction support or defaults
     const parts = getOrExtractBypassParts(agent);
+    setWelcomeMessage(parts.welcomeMessage);
     setBotIdentity(parts.botIdentity);
     setCoursesInfo(parts.coursesInfo);
     setKidsCourses(parts.kidsCourses);
@@ -2433,6 +2607,7 @@ ${videos || "(לא הוגדר)"}
 
     // Dynamic prompt compiled result
     const compiled = compilePromptFromParts(
+      parts.welcomeMessage,
       parts.botIdentity,
       parts.coursesInfo,
       parts.kidsCourses,
@@ -2453,6 +2628,7 @@ ${videos || "(לא הוגדר)"}
 
   // Update individual prompt section of active configurations
   const handlePromptPartChange = (partKey: keyof AgentConfig, value: string) => {
+    let freshWelcome = partKey === "welcomeMessage" ? value : welcomeMessage;
     let freshIdentity = partKey === "botIdentity" ? value : botIdentity;
     let freshCourses = partKey === "coursesInfo" ? value : coursesInfo;
     let freshKids = partKey === "kidsCourses" ? value : kidsCourses;
@@ -2465,7 +2641,8 @@ ${videos || "(לא הוגדר)"}
     let freshImages = partKey === "imagesInfo" ? value : imagesInfo;
     let freshVideos = partKey === "videosInfo" ? value : videosInfo;
 
-    if (partKey === "botIdentity") setBotIdentity(value);
+    if (partKey === "welcomeMessage") setWelcomeMessage(value);
+    else if (partKey === "botIdentity") setBotIdentity(value);
     else if (partKey === "coursesInfo") setCoursesInfo(value);
     else if (partKey === "kidsCourses") setKidsCourses(value);
     else if (partKey === "conversationFlow") setConversationFlow(value);
@@ -2479,6 +2656,7 @@ ${videos || "(לא הוגדר)"}
 
     // Re-compile businessPrompt dynamically using updated components
     const compiled = compilePromptFromParts(
+      freshWelcome,
       freshIdentity,
       freshCourses,
       freshKids,
@@ -2961,9 +3139,23 @@ ${videos || "(לא הוגדר)"}
     const currentBotId = agentOverride ? agentOverride.botId : botId;
     const currentWhatsappInstance = agentOverride ? agentOverride.whatsappInstance : whatsappInstance;
     
+    const currentWelcomeMessage = agentOverride ? agentOverride.welcomeMessage : welcomeMessage;
+    const currentBotIdentity = agentOverride ? agentOverride.botIdentity : botIdentity;
+    const currentCoursesInfo = agentOverride ? agentOverride.coursesInfo : coursesInfo;
+    const currentKidsCourses = agentOverride ? agentOverride.kidsCourses : kidsCourses;
+    const currentConversationFlow = agentOverride ? agentOverride.conversationFlow : conversationFlow;
+    const currentWritingStyle = agentOverride ? agentOverride.writingStyle : writingStyle;
+    const currentFaqAnswers = agentOverride ? agentOverride.faqAnswers : faqAnswers;
+    const currentWhatNotToDo = agentOverride ? agentOverride.whatNotToDo : whatNotToDo;
+    const currentSyllabusLinks = agentOverride ? agentOverride.syllabusLinks : syllabusLinks;
+    const currentHumanEscalation = agentOverride ? agentOverride.humanEscalation : humanEscalation;
+    const currentImagesInfo = agentOverride ? agentOverride.imagesInfo : imagesInfo;
+    const currentVideosInfo = agentOverride ? agentOverride.videosInfo : videosInfo;
+    
     // Compile dynamic unified businessPrompt if override is active, else use current state
     const currentBusinessPrompt = agentOverride 
       ? compilePromptFromParts(
+          agentOverride.welcomeMessage || "",
           agentOverride.botIdentity || "",
           agentOverride.coursesInfo || "",
           agentOverride.kidsCourses || "",
@@ -2977,31 +3169,19 @@ ${videos || "(לא הוגדר)"}
           agentOverride.videosInfo || ""
         )
       : businessPrompt;
-      
-    const currentKey = agentOverride ? agentOverride.key : key;
-    const currentSendPulseBotId = agentOverride ? (agentOverride.sendPulseBotId || "") : sendPulseBotId;
-    const currentLeadFollowUpDays = agentOverride ? agentOverride.leadFollowUpDays : leadFollowUpDays;
-    const currentAgentEmail = agentOverride ? agentOverride.agentEmail : agentEmail;
-    const currentStatus = agentOverride ? (agentOverride.status || "Not Active") : (status || "Not Active");
-    
-    const currentBotIdentity = agentOverride ? agentOverride.botIdentity : botIdentity;
-    const currentCoursesInfo = agentOverride ? agentOverride.coursesInfo : coursesInfo;
-    const currentKidsCourses = agentOverride ? agentOverride.kidsCourses : kidsCourses;
-    const currentConversationFlow = agentOverride ? agentOverride.conversationFlow : conversationFlow;
-    const currentWritingStyle = agentOverride ? agentOverride.writingStyle : writingStyle;
-    const currentFaqAnswers = agentOverride ? agentOverride.faqAnswers : faqAnswers;
-    const currentWhatNotToDo = agentOverride ? agentOverride.whatNotToDo : whatNotToDo;
-    const currentSyllabusLinks = agentOverride ? agentOverride.syllabusLinks : syllabusLinks;
-    const currentHumanEscalation = agentOverride ? agentOverride.humanEscalation : humanEscalation;
-    const currentImagesInfo = agentOverride ? agentOverride.imagesInfo : imagesInfo;
-    const currentVideosInfo = agentOverride ? agentOverride.videosInfo : videosInfo;
-    
+
     const currentName = agentOverride 
       ? (agentOverride.name || `${currentBusinessName} _ ${agentOverride.agentType === "support" ? "תמיכה טכנית" : "מכירות"}`) 
       : (name || `${currentBusinessName} _ ${agentType === "support" ? "תמיכה טכנית" : "מכירות"}`);
     const currentAgentType = agentOverride 
       ? (agentOverride.agentType || "sales") 
       : agentType;
+    
+    const currentStatus = agentOverride ? (agentOverride.status || "Active") : (status || "Active");
+    const currentKey = agentOverride ? (agentOverride.key || "") : (key || "");
+    const currentLeadFollowUpDays = agentOverride ? (agentOverride.leadFollowUpDays || "") : (leadFollowUpDays || "");
+    const currentAgentEmail = agentOverride ? (agentOverride.agentEmail || "") : (agentEmail || sessionUser?.email || "");
+    const currentSendPulseBotId = agentOverride ? (agentOverride.sendPulseBotId || "") : (sendPulseBotId || "");
     
     const payload = {
       "Name": currentName,
@@ -3013,6 +3193,13 @@ ${videos || "(לא הוגדר)"}
       "Bot ID": currentBotId,
       "WhatsApp Instance Name": currentWhatsappInstance,
       "Key": currentKey,
+      "Welcome Message": currentWelcomeMessage,
+      "הודעת פתיחה": currentWelcomeMessage,
+      "FirstMessage": currentWelcomeMessage,
+      "firstMessage": currentWelcomeMessage,
+      "First Message": currentWelcomeMessage,
+      "first_message": currentWelcomeMessage,
+      "welcomeMessage": currentWelcomeMessage,
       "Bot Identity": currentBotIdentity,
       "Sale Products ": currentCoursesInfo,
       "Conversation Flow": currentConversationFlow,
@@ -3209,6 +3396,7 @@ ${videos || "(לא הוגדר)"}
         const pulledStatusRaw = getVal(["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
         const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
+        const pulledWelcomeMessage = getVal(["FirstMessage", "firstMessage", "First Message", "first_message", "welcomeMessage", "הודעת פתיחה", "Welcome Message"]);
         const pulledBotIdentity = getVal(["botIdentity", "זהות הבוט", "Bot Identity"]);
         const pulledCoursesInfo = getVal(["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר", "Sale Products ", "Sale Products"]);
         const pulledKidsCourses = getVal(["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים", "Audience ", "Audience", "Services ", "Services"]);
@@ -3222,6 +3410,7 @@ ${videos || "(לא הוגדר)"}
         const pulledVideosInfo = getVal(["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו", "Video"]);
 
         // If pulled data has no separate fields, extract from unified businessPrompt
+        let finalWelcomeMessage = pulledWelcomeMessage;
         let finalBotIdentity = pulledBotIdentity;
         let finalCoursesInfo = pulledCoursesInfo;
         let finalKidsCourses = pulledKidsCourses;
@@ -3235,6 +3424,7 @@ ${videos || "(לא הוגדר)"}
         let finalVideosInfo = pulledVideosInfo;
 
         if (
+          !finalWelcomeMessage &&
           !finalBotIdentity &&
           !finalCoursesInfo &&
           !finalKidsCourses &&
@@ -3257,6 +3447,7 @@ ${videos || "(לא הוגדר)"}
             businessPrompt: pulledBusinessPrompt,
             key: pulledKey
           });
+          finalWelcomeMessage = parts.welcomeMessage;
           finalBotIdentity = parts.botIdentity;
           finalCoursesInfo = parts.coursesInfo;
           finalKidsCourses = parts.kidsCourses;
@@ -3271,6 +3462,7 @@ ${videos || "(לא הוגדר)"}
         }
 
         const compiled = compilePromptFromParts(
+          finalWelcomeMessage,
           finalBotIdentity,
           finalCoursesInfo,
           finalKidsCourses,
@@ -3307,6 +3499,7 @@ ${videos || "(לא הוגדר)"}
           setAgentEmail(pulledAgentEmail);
         }
 
+        setWelcomeMessage(finalWelcomeMessage);
         setBotIdentity(finalBotIdentity);
         setCoursesInfo(finalCoursesInfo);
         setKidsCourses(finalKidsCourses);
@@ -3337,6 +3530,7 @@ ${videos || "(לא הוגדר)"}
               status: pulledStatus,
               name: pulledName,
               agentType: pulledAgentType,
+              welcomeMessage: finalWelcomeMessage,
               botIdentity: finalBotIdentity,
               coursesInfo: finalCoursesInfo,
               kidsCourses: finalKidsCourses,
@@ -3452,6 +3646,7 @@ ${videos || "(לא הוגדר)"}
           const pulledStatusRaw = getVal(item, ["status", "Status", "מצב", "סטטוס", "מצב בוט"]);
           const pulledStatus = (pulledStatusRaw.toLowerCase().includes("not") || pulledStatusRaw.includes("לא פעיל")) ? "Not Active" : "Active";
 
+          const pulledWelcomeMessage = getVal(item, ["FirstMessage", "firstMessage", "First Message", "first_message", "welcomeMessage", "הודעת פתיחה", "Welcome Message"]);
           const pulledBotIdentity = getVal(item, ["botIdentity", "זהות הבוט", "Bot Identity"]);
           const pulledCoursesInfo = getVal(item, ["coursesInfo", "מה אני מוכר — קורסים", "מה אני מוכר - קורסים", "מה אני מוכר", "Sale Products ", "Sale Products"]);
           const pulledKidsCourses = getVal(item, ["kidsCourses", "קהל יעד", "קורסי ילדים", "קורסים לילדים", "Audience ", "Audience", "Services ", "Services"]);
@@ -3464,6 +3659,7 @@ ${videos || "(לא הוגדר)"}
           const pulledImagesInfo = getVal(item, ["imagesInfo", "תמונות וגלריה", "image", "images", "gallery", "תמונות", "גלריה", "Pics"]);
           const pulledVideosInfo = getVal(item, ["videosInfo", "סרטוני וידאו", "video", "videos", "סרטונים", "וידאו", "Video"]);
 
+          let finalWelcomeMessage = pulledWelcomeMessage;
           let finalBotIdentity = pulledBotIdentity;
           let finalCoursesInfo = pulledCoursesInfo;
           let finalKidsCourses = pulledKidsCourses;
@@ -3479,6 +3675,7 @@ ${videos || "(לא הוגדר)"}
           const agentId = pulledBotId ? `agent_${pulledBotId}` : `agent_cloud_${Date.now()}_${idx}`;
 
           if (
+            !finalWelcomeMessage &&
             !finalBotIdentity &&
             !finalCoursesInfo &&
             !finalKidsCourses &&
@@ -3501,6 +3698,7 @@ ${videos || "(לא הוגדר)"}
               businessPrompt: pulledBusinessPrompt,
               key: pulledKey
             });
+            finalWelcomeMessage = parts.welcomeMessage;
             finalBotIdentity = parts.botIdentity;
             finalCoursesInfo = parts.coursesInfo;
             finalKidsCourses = parts.kidsCourses;
@@ -3515,6 +3713,7 @@ ${videos || "(לא הוגדר)"}
           }
 
           const compiled = compilePromptFromParts(
+            finalWelcomeMessage,
             finalBotIdentity,
             finalCoursesInfo,
             finalKidsCourses,
@@ -3543,6 +3742,7 @@ ${videos || "(לא הוגדר)"}
             status: pulledStatus,
             name: pulledName,
             agentType: pulledAgentType,
+            welcomeMessage: finalWelcomeMessage,
             botIdentity: finalBotIdentity,
             coursesInfo: finalCoursesInfo,
             kidsCourses: finalKidsCourses,
@@ -5727,7 +5927,32 @@ ${videos || "(לא הוגדר)"}
                                       </div>
                                     )}
                                     {isAI ? (
-                                      renderFormattedAIMessageText(parsed.text)
+                                      <div className="flex flex-col gap-2">
+                                        {renderFormattedAIMessageText(parsed.text)}
+                                        {parsed.listOptions && parsed.listOptions.length > 0 && (
+                                          <div className="mt-2 pt-2 border-t border-sky-500/20 flex flex-col gap-1.5" dir="rtl">
+                                            {parsed.listTitle && (
+                                              <p className="text-[11px] font-bold text-sky-300 mb-1 flex items-center gap-1">
+                                                <span>📋</span>
+                                                <span>{parsed.listTitle}</span>
+                                              </p>
+                                            )}
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {parsed.listOptions.map((opt: any, idx: number) => {
+                                                const optTitle = typeof opt === "string" ? opt : (opt.title || opt.text || opt.label || opt.id || `אפשרות ${idx + 1}`);
+                                                return (
+                                                  <span
+                                                    key={idx}
+                                                    className="px-2.5 py-1 rounded-lg bg-sky-950/80 border border-sky-500/30 text-sky-200 text-[11px] font-medium shadow-sm"
+                                                  >
+                                                    {optTitle}
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
                                     ) : (
                                       <div className="flex flex-col gap-1 select-text break-words text-right leading-relaxed" dir="rtl">
                                         {renderHumanMessageLines(parsed.text)}
@@ -6357,13 +6582,14 @@ ${videos || "(לא הוגדר)"}
                   <div className="p-3.5 border-b border-slate-850/50 flex items-center justify-between bg-[#0e1017]">
                     <div className="flex items-center gap-1.5">
                       <List className="w-4 h-4 text-slate-400" />
-                      <span className="text-[10px] sm:text-[11px] font-black text-slate-200 tracking-wide">📦 רשימת תתי-ההנחיות (9 בלוקים)</span>
+                      <span className="text-[10px] sm:text-[11px] font-black text-slate-200 tracking-wide">📦 רשימת תתי-ההנחיות (12 בלוקים)</span>
                     </div>
                   </div>
 
                   {/* Scrollable tabs */}
                   <div className="flex-1 overflow-y-auto p-2.5 pb-24 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800">
                     {[
+                      { key: "welcomeMessage", title: "הודעת פתיחה ותפריט ראשי", emoji: "👋", desc: "הודעת פתיחה, ברכה ותפריט אפשרויות/כפתורים", value: welcomeMessage },
                       { key: "botIdentity", title: "זהות הבוט ומאפייניו", emoji: "🤖", desc: "שם וזהות הבוט", value: botIdentity },
                       { key: "coursesInfo", title: "מה אני מוכר — שירותים/מוצרים/קורסים", emoji: "📖", desc: "פירוט השירותים או הקורסים של העסק", value: coursesInfo },
                       { key: "kidsCourses", title: "קהל יעד וסיגמנטים מיוחדים", emoji: "👥", desc: "סיגמנטים ספציפיים (לדוגמה: ילדים/מבוגרים/VIP)", value: kidsCourses },
@@ -6438,6 +6664,7 @@ ${videos || "(לא הוגדר)"}
                 <div className={`${mobileWorkspaceTab === 'editor' ? 'flex' : 'hidden'} lg:flex lg:col-span-6 h-full min-h-0 flex-col bg-[#0b0c10] overflow-y-auto border-l border-slate-850`} dir="rtl">
                   {(() => {
                     const secList = [
+                      { key: "welcomeMessage", title: "הודעת פתיחה ותפריט ראשי", placeholder: "הגדר את הודעת הפתיחה, הברכה ותפריט הניווט הראשוני בסגנון כפתורים/רשימה...", starter: "👋 שלום וברוכים הבאים!\nשמי העוזר הדיגיטלי.\n\n[1. 📖 קורסים ומסלולי לימוד]\n[2. 🎁 שיחת ייעוץ במתנה]\n[3. 📞 דבר עם נציג אנושי]" },
                       { key: "botIdentity", title: "זהות הבוט ומאפייניו", placeholder: "הגדר את שם הבוט, התפקיד שלו, הערכים שלו והאופן שבו הוא מציג את עצמו...", starter: "אתה עוזר דיגיטלי ייעודי ונציג שירות ומכירות מקצועי..." },
                       { key: "coursesInfo", title: "מה אני מוכר — שירותים/מוצרים/קורסים", placeholder: "פרט פה את המוצרים והקורסים...", starter: "פירוט הקורסים והשירותים שאנו מציעים..." },
                       { key: "kidsCourses", title: "קהל יעד וסיגמנטים מיוחדים", placeholder: "פרט מיהו קהל היעד...", starter: "קהל היעד המרכזי שלנו כולל..." },
@@ -6452,7 +6679,8 @@ ${videos || "(לא הוגדר)"}
                     ];
 
                     const sec = secList.find(s => s.key === activeModalTab) || secList[0];
-                    const activeVal = sec.key === "botIdentity" ? botIdentity
+                    const activeVal = sec.key === "welcomeMessage" ? welcomeMessage
+                      : sec.key === "botIdentity" ? botIdentity
                       : sec.key === "coursesInfo" ? coursesInfo
                       : sec.key === "kidsCourses" ? kidsCourses
                       : sec.key === "conversationFlow" ? conversationFlow
@@ -6753,6 +6981,7 @@ ${videos || "(לא הוגדר)"}
                    {/* Rendering full combined prompt */}
                    <div className="flex-1 overflow-y-auto p-4 pb-32 font-mono text-xs text-slate-300 space-y-4 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-slate-950/30 text-right" dir="rtl">
                      {[
+                       { key: "welcomeMessage", title: "👋 הודעת פתיחה ותפריט ראשי", text: welcomeMessage },
                        { key: "botIdentity", title: "🤖 זהות הבוט ומאפייניו", text: botIdentity },
                        { key: "coursesInfo", title: "📖 מה אני מוכר — מוצרים/שירותים/קורסים", text: coursesInfo },
                        { key: "kidsCourses", title: "👥 קהל יעד וסיגמנטים מיוחדים", text: kidsCourses },
@@ -7054,7 +7283,7 @@ ${videos || "(לא הוגדר)"}
                   </div>
                   <h4 className="text-sm font-black text-white mt-5">מעבד ומקמפל את הפרומפטים בכישוף AI ג'מיני... 🧙‍♂️</h4>
                   <p className="text-xs text-slate-400 font-bold max-w-sm mt-2 leading-relaxed text-center">
-                    ג'מיני בונה ומעצב כעת את 11 החלקים בהתבסס על ניתוח המידע גולמי, התבנית והחוקים המבוקשים.
+                    ג'מיני בונה ומעצב כעת את 12 החלקים בהתבסס על ניתוח המידע גולמי, התבנית והחוקים המבוקשים.
                   </p>
                 </div>
               )}
@@ -7066,7 +7295,7 @@ ${videos || "(לא הוגדר)"}
                   <div className="flex-1 flex flex-col max-h-[420px] lg:max-h-[65vh] overflow-y-auto border-l border-slate-850 p-5 scrollbar-thin scrollbar-thumb-slate-800 text-right font-sans" dir="rtl">
                     <h4 className="text-xs font-black text-sky-400 pb-2 border-b border-slate-800 mb-3 flex items-center justify-between" dir="rtl">
                       <div className="flex items-center gap-2">
-                        <span>👀 ערוך ובחן את 11 קטעי הפרומפט שנוצרו</span>
+                        <span>👀 ערוך ובחן את 12 קטעי הפרומפט שנוצרו</span>
                         <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-black">שלב 2/2</span>
                       </div>
                       <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-2 py-0.5 rounded-full font-bold font-mono">נוצר בהצלחה!</span>
@@ -7075,6 +7304,7 @@ ${videos || "(לא הוגדר)"}
                     {generatedPrompts && (
                       <div className="space-y-4" dir="rtl">
                         {[
+                          { key: "welcomeMessage", title: "👋 הודעת פתיחה ותפריט ראשי (כפתורים/רשימה)" },
                           { key: "botIdentity", title: "🤖 זהות הבוט ומאפייניו" },
                           { key: "coursesInfo", title: "📖 מה אני מוכר — מוצרים/שירותים/קורסים" },
                           { key: "kidsCourses", title: "👥 קהל יעד וסיגמנטים מיוחדים" },
@@ -7112,7 +7342,7 @@ ${videos || "(לא הוגדר)"}
                       <h5 className="text-[11px] font-black text-white mb-2 text-right">🚀 מה יקרה בלחיצה על הקמה?</h5>
                       <p className="text-[10px] text-slate-400 leading-relaxed font-semibold text-right">
                         1. ייווצר סוכן חדש ברשימה של העסק החכם.<br/>
-                        2. כל 9 הקטעים יטענו כמובנה לחלוטין בפאנל.<br/>
+                        2. כל 12 הקטעים יטענו כמובנה לחלוטין בפאנל.<br/>
                         3. יבוצע סנכרון ישיר לענן עם פרמטר ה-<strong>Bot ID</strong>: <code className="text-sky-300 font-bold">{wizardBotId}</code>.
                       </p>
                     </div>

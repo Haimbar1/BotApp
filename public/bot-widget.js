@@ -12,6 +12,7 @@
   var botSubtitle = userConfig.subtitle || (currentScript ? currentScript.getAttribute('data-subtitle') : null) || '';
   var whatsappNumber = userConfig.whatsappNumber || (currentScript ? currentScript.getAttribute('data-whatsapp') : null) || '972552502584';
   var themeColor = userConfig.themeColor || (currentScript ? currentScript.getAttribute('data-theme-color') : null) || '#0047AB';
+  var welcomeMessage = userConfig.welcomeMessage || userConfig.FirstMessage || userConfig.firstMessage || (currentScript ? currentScript.getAttribute('data-welcome-message') : null) || '';
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
 
   var parseTitleAndSubtitle = function(rawTitle, rawSub) {
@@ -47,6 +48,7 @@
         webhookUrl: webhookUrl,
         whatsappNumber: whatsappNumber,
         themeColor: themeColor,
+        welcomeMessage: welcomeMessage,
         conversationFlow: conversationFlow
       });
     }
@@ -826,8 +828,8 @@
   var isOpen = false;
   var isTyping = false;
 
-  // Initial welcome message from conversation flow
-  var initialFlow = parseConversationFlow(conversationFlow, botTitle);
+  // Initial welcome message from welcomeMessage or conversation flow
+  var initialFlow = parseConversationFlow(welcomeMessage || conversationFlow, botTitle);
   var messages = [
     {
       id: 'welcome_1',
@@ -1085,56 +1087,46 @@
       var node = item.json || item || {};
 
       if (typeof node === 'string') {
-        replyText += (replyText ? '\n' : '') + node;
-        return;
-      }
-
-      // 0. Structured "output" field: an AI-generated string, often wrapped in a
-      // ```json ... ``` code fence, containing { reply, list_options: { options: [...] }, ... }
-      if (typeof node.output === 'string' && node.output.trim()) {
-        var outputStr = node.output.trim();
-        var jsonCandidate = outputStr
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/```\s*$/i, '')
-          .trim();
-        try {
-          var outputObj = JSON.parse(jsonCandidate);
-          if (outputObj && typeof outputObj === 'object') {
-            if (outputObj.reply && !replyText) {
-              replyText = outputObj.reply;
+        var str = node.trim();
+        if (str.indexOf('{') !== -1 || str.indexOf('```') !== -1) {
+          try {
+            var s = str;
+            if (s.indexOf('```') !== -1) {
+              s = s.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
             }
-            // list_options can be { options: [...] } or a bare array
-            var lo = outputObj.list_options;
-            var loOptions = Array.isArray(lo) ? lo : (lo && Array.isArray(lo.options) ? lo.options : null);
-            if (loOptions) {
-              loOptions.forEach(function(opt) { addCandidateButton(opt); });
+            var firstBrace = s.indexOf('{');
+            var lastBrace = s.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+              s = s.substring(firstBrace, lastBrace + 1);
             }
-            // Also support a flat "options" or "buttons" array directly on the output object
-            if (Array.isArray(outputObj.options)) {
-              outputObj.options.forEach(function(opt) { addCandidateButton(opt); });
+            var sanitizedStr = s.replace(/"(?:[^"\\]|\\.)*"/g, function(match) {
+              return match.replace(/\r\n/g, '\\n').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+            });
+            var parsedObj = null;
+            try { parsedObj = JSON.parse(s); } catch (eParse1) {
+              parsedObj = JSON.parse(sanitizedStr);
             }
-            if (Array.isArray(outputObj.buttons)) {
-              outputObj.buttons.forEach(function(opt) { addCandidateButton(opt); });
+            if (parsedObj && typeof parsedObj === 'object') {
+              node = parsedObj;
             }
-            // IMAGE step: look for an image link on the parsed output object itself
-            if (!imageUrl && (outputObj.image || outputObj.image_url || outputObj.imageUrl)) {
-              var outImg = outputObj.image || outputObj.image_url || outputObj.imageUrl;
-              imageUrl = typeof outImg === 'string' ? outImg : (outImg.link || outImg.url);
+          } catch (err) {
+            var rMatch = str.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/) || str.match(/"reply"\s*:\s*"(.*?)"\s*,\s*"/);
+            if (rMatch && rMatch[1]) {
+              replyText += (replyText ? '\n' : '') + rMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+              var optsMatch = str.match(/"options"\s*:\s*(\[[\s\S]*?\])/);
+              if (optsMatch && optsMatch[1]) {
+                try {
+                  var extractedOpts = JSON.parse(optsMatch[1]);
+                  if (Array.isArray(extractedOpts)) parseRowsOrItems(extractedOpts);
+                } catch (eOpts) {}
+              }
+              return;
             }
           }
-        } catch (e) {
-          // Not valid JSON after stripping fences — leave replyText untouched here,
-          // the generic extraction below may still pick something usable up.
         }
-      }
-
-      // 0b. Same structure, but sitting directly on the node (no 'output' wrapper)
-      if (!replyText && node.reply && typeof node.reply === 'string') {
-        replyText = node.reply;
-        var lo2 = node.list_options;
-        var lo2Options = Array.isArray(lo2) ? lo2 : (lo2 && Array.isArray(lo2.options) ? lo2.options : null);
-        if (lo2Options) {
-          lo2Options.forEach(function(opt) { addCandidateButton(opt); });
+        if (typeof node === 'string') {
+          replyText += (replyText ? '\n' : '') + node;
+          return;
         }
       }
 
@@ -1212,6 +1204,17 @@
         if (Array.isArray(cand.options)) {
           parseRowsOrItems(cand.options);
         }
+        // Check list_options
+        if (cand.list_options) {
+          if (Array.isArray(cand.list_options)) {
+            parseRowsOrItems(cand.list_options);
+          } else if (typeof cand.list_options === 'object') {
+            var loOpts = cand.list_options.options || cand.list_options.items || cand.list_options.rows || cand.list_options.choices;
+            if (Array.isArray(loOpts)) {
+              parseRowsOrItems(loOpts);
+            }
+          }
+        }
         // Check choices
         if (Array.isArray(cand.choices)) {
           parseRowsOrItems(cand.choices);
@@ -1254,7 +1257,7 @@
       }
 
       if (!imageUrl) {
-        var topImg = node.image || node.imageUrl || node.image_url || node.imageLink || node.picture;
+        var topImg = node.image || node.imageUrl;
         if (typeof topImg === 'string') imageUrl = topImg;
         else if (topImg && typeof topImg === 'object') imageUrl = topImg.link || topImg.url;
       }
@@ -1384,6 +1387,7 @@
     if (newConfig.subtitle !== undefined) botSubtitle = newConfig.subtitle;
     if (newConfig.whatsappNumber) whatsappNumber = newConfig.whatsappNumber;
     if (newConfig.webhookUrl) webhookUrl = newConfig.webhookUrl;
+    if (newConfig.welcomeMessage !== undefined) welcomeMessage = newConfig.welcomeMessage;
     if (newConfig.conversationFlow !== undefined) conversationFlow = newConfig.conversationFlow;
 
     var parsedTitles = parseTitleAndSubtitle(botTitle, botSubtitle);
@@ -1400,7 +1404,7 @@
     STORAGE_KEY = 'optics_bot_session_' + botId;
     sessionId = getSessionId();
 
-    var updatedFlow = parseConversationFlow(conversationFlow, botTitle);
+    var updatedFlow = parseConversationFlow(welcomeMessage || conversationFlow, botTitle);
 
     messages = [
       {
