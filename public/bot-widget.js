@@ -618,12 +618,38 @@
     }
     .obw-msg-bot {
       align-self: flex-start;
-      background: #ffffff;
-      color: #334155;
-      border: 1px solid #e2e8f0;
+      background: #f5f9ff;
+      color: #24415f;
+      border: 1px solid #c9d9ea;
       border-bottom-right-radius: 4px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      box-shadow: 0 1px 3px rgba(30, 70, 110, 0.07);
+      font-weight: 500;
     }
+    .obw-msg-lead {
+      color: #173f68;
+      font-weight: 650;
+    }
+
+    .obw-msg-bullet {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin: 3px 0;
+      padding-right: 2px;
+    }
+
+    .obw-msg-bullet-mark {
+      flex: 0 0 auto;
+      color: #2f6fa3;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .obw-msg-bullet-text {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
     .obw-msg-user {
       align-self: flex-end;
       max-width: 78%;
@@ -885,8 +911,20 @@
 
       .obw-msg {
         font-size: 12px;
-        line-height: 1.28;
+        line-height: 1.3;
         padding: 6px 9px;
+      }
+
+      .obw-msg-bot {
+        background: #f5f9ff;
+        color: #24415f;
+        border-color: #c9d9ea;
+        font-weight: 500;
+      }
+
+      .obw-msg-lead {
+        color: #173f68;
+        font-weight: 650;
       }
 
       .obw-msg-has-buttons {
@@ -1072,6 +1110,48 @@
         if (!str) return '';
         var lines = str.split('\n');
         var formattedLines = lines.map(function(line) {
+          var trimmedLine = line.trim();
+
+          // Support clean bullet formatting:
+          // - item
+          // • item
+          // * item
+          // ✅ item
+          // numbered items such as 1. item
+          var bulletMatch = trimmedLine.match(
+            /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)]|(?:✅|☑️|✔️|🔹|🔸|👉))\s+(.+)$/u
+          );
+
+          var bulletMark = '';
+          var bulletText = '';
+
+          if (bulletMatch) {
+            var originalMarkMatch = trimmedLine.match(
+              /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)]|(?:✅|☑️|✔️|🔹|🔸|👉))\s+/u
+            );
+
+            bulletMark = originalMarkMatch ? originalMarkMatch[0].trim() : '•';
+            bulletText = bulletMatch[1].trim();
+
+            // Keep numbered markers as-is; normalize plain markdown bullets
+            // to a subtle dot for a cleaner chat appearance.
+            if (/^[-*•▪▫‣▸►]$/.test(bulletMark)) {
+              bulletMark = '•';
+            }
+
+            var formattedBulletText = escapeHtml(bulletText);
+
+            // Turn URLs inside bullet text into the same compact link button.
+            if (/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(bulletText)) {
+              formattedBulletText = formatTextWithInlineButtons(bulletText);
+            }
+
+            return '<div class="obw-msg-bullet">' +
+              '<span class="obw-msg-bullet-mark">' + escapeHtml(bulletMark) + '</span>' +
+              '<span class="obw-msg-bullet-text">' + formattedBulletText + '</span>' +
+              '</div>';
+          }
+
           if (!/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(line)) {
             return escapeHtml(line);
           }
@@ -1123,7 +1203,29 @@
           });
         });
 
-        return formattedLines.join('<br/>');
+        var formatted = formattedLines.join('<br/>');
+
+        // Professional visual hierarchy:
+        // emphasize only the first line/sentence, while keeping the rest
+        // medium-weight and easy to read.
+        if (msg.sender !== 'user' && formattedLines.length > 0) {
+          var firstNonEmptyIndex = -1;
+
+          for (var lineIndex = 0; lineIndex < formattedLines.length; lineIndex++) {
+            if (formattedLines[lineIndex].replace(/<[^>]*>/g, '').trim()) {
+              firstNonEmptyIndex = lineIndex;
+              break;
+            }
+          }
+
+          if (firstNonEmptyIndex === 0) {
+            formattedLines[0] =
+              '<span class="obw-msg-lead">' + formattedLines[0] + '</span>';
+            formatted = formattedLines.join('<br/>');
+          }
+        }
+
+        return formatted;
       };
 
       textSpan.innerHTML = formatTextWithInlineButtons(rawText);
