@@ -1093,8 +1093,10 @@
       // ```json ... ``` code fence, containing { reply, list_options: { options: [...] }, ... }
       if (typeof node.output === 'string' && node.output.trim()) {
         var outputStr = node.output.trim();
-        var fenceMatch = outputStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-        var jsonCandidate = fenceMatch ? fenceMatch[1] : outputStr;
+        var jsonCandidate = outputStr
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
         try {
           var outputObj = JSON.parse(jsonCandidate);
           if (outputObj && typeof outputObj === 'object') {
@@ -1123,6 +1125,16 @@
         } catch (e) {
           // Not valid JSON after stripping fences — leave replyText untouched here,
           // the generic extraction below may still pick something usable up.
+        }
+      }
+
+      // 0b. Same structure, but sitting directly on the node (no 'output' wrapper)
+      if (!replyText && node.reply && typeof node.reply === 'string') {
+        replyText = node.reply;
+        var lo2 = node.list_options;
+        var lo2Options = Array.isArray(lo2) ? lo2 : (lo2 && Array.isArray(lo2.options) ? lo2.options : null);
+        if (lo2Options) {
+          lo2Options.forEach(function(opt) { addCandidateButton(opt); });
         }
       }
 
