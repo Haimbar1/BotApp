@@ -86,11 +86,28 @@
 
   var getUserName = function() {
     var name = getCookie('optics_bot_user_name_' + botId) || getCookie('smartesek_user_name');
+
     if (!name) {
       try {
         name = localStorage.getItem('optics_bot_user_name_' + botId) || localStorage.getItem('smartesek_user_name');
       } catch (e) {}
     }
+
+    // Do not use old menu selections as customer names.
+    var invalidSavedName = /^(?:דרכי\s+הגעה|הגעה|מיקום|כתובת|שעות|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|בדיקת\s+ראייה|תור|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|מסגרות(?:\s+למשקפיים)?|משקפי\s+שמש|משקפים\s+לשחייה|משקפי\s+שחייה|קבלת\s+משקפיים\s+מוכנים|איסוף\s+הזמנה|אחריות|פערי\s+מחירים|מחירים|רוד['’]?י\s+פרוג['’]?קט|שאל\s+נציג\s+אנושי|נציג\s+אנושי|מידע|שאלה|עזרה|תפריט)$/i;
+
+    if (name && invalidSavedName.test(String(name).trim())) {
+      try {
+        localStorage.removeItem('optics_bot_user_name_' + botId);
+        localStorage.removeItem('smartesek_user_name');
+      } catch (e) {}
+      try {
+        setCookie('optics_bot_user_name_' + botId, '', -1);
+        setCookie('smartesek_user_name', '', -1);
+      } catch (e) {}
+      return null;
+    }
+
     return name || null;
   };
 
@@ -137,31 +154,82 @@
     return null;
   };
 
+  // Extract a customer name ONLY when there is a strong indication that
+  // the user actually supplied a name. Never treat a menu/button choice
+  // such as "דרכי הגעה" as a customer name.
   var extractNameFromUserText = function(text) {
     if (!text || typeof text !== 'string') return null;
-    var clean = text.trim();
 
-    // 1. Explicit phrase: "שמי X", "קוראים לי X", "אני X"
-    var nameMatch = clean.match(/(?:קוראים\s*לי|שמי\s*הוא|שמי|אני|השם\s*שלי\s*הוא|מדבר|מדברת)\s+([א-תa-zA-Z]{2,20}(?:\s+[א-תa-zA-Z]{2,20})?)/i);
+    var clean = text.trim();
+    if (!clean) return null;
+
+    // Menu/action phrases that must NEVER become a saved customer name.
+    var forbiddenNamePhrases = /^(?:דרכי\s+הגעה|הגעה|מיקום|כתובת|שעות\s*(?:פתיחה|פעילות)?|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|בדיקת\s+ראייה|תור|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|מסגרות(?:\s+למשקפיים)?|מסגרות\s+למשקפים|משקפי\s+שמש|משקפים\s+לשחייה|משקפי\s+שחייה|קבלת\s+משקפיים\s+מוכנים|איסוף\s+הזמנה|איסוף\s+משקפיים|אחריות|פערי\s+מחירים|מחירים|רוד['’]?י\s+פרוג['’]?קט|שאל\s+נציג\s+אנושי|נציג\s+אנושי|לדבר\s+עם\s+צביקה|מידע|שאלה|עזרה|תפריט|חזרה)$/i;
+
+    if (forbiddenNamePhrases.test(clean)) return null;
+
+    // 1. Strong explicit phrases:
+    // "שמי חיים", "קוראים לי חיים", "אני חיים", "השם שלי הוא חיים".
+    var nameMatch = clean.match(
+      /(?:קוראים\s*לי|שמי\s*הוא|שמי|השם\s*שלי\s*הוא|מדבר|מדברת)\s+([א-תa-zA-Z]{2,20}(?:\s+[א-תa-zA-Z]{2,20})?)/i
+    );
+
     if (nameMatch && nameMatch[1]) {
       var candidate = nameMatch[1].trim();
-      if (candidate.length >= 2 && !/^(רוצה|צריך|אפשר|שלום|היי|בוקר|ערב|תודה|מתי|איפה|כמה|מה|איך)$/i.test(candidate)) {
+
+      // Remove trailing conversational words accidentally captured after a name.
+      candidate = candidate
+        .replace(/\s+(?:ואני|ורוצה|רוצה|צריך|צריכה|מבקש|מבקשת|שואל|שואלת|רק|בעניין).*$/i, '')
+        .trim();
+
+      if (
+        candidate.length >= 2 &&
+        !forbiddenNamePhrases.test(candidate) &&
+        !/^(רוצה|צריך|צריכה|אפשר|שלום|היי|בוקר|ערב|תודה|מתי|איפה|כמה|מה|איך|לקבוע|לקבל|לדעת)$/i.test(candidate)
+      ) {
         return candidate;
       }
     }
 
-    // 2. Text containing a phone number alongside name: e.g. "חיים 0547866119" or "0547866119 חיים בר"
-    var textWithoutPhone = clean.replace(/(?:05[0-9][- ]?[0-9]{7}|0[23489][- ]?[0-9]{7}|\+?972[- ]?5[0-9][- ]?[0-9]{7})/g, '').trim();
+    // "אני X" is handled separately so "אני רוצה..." can never become
+    // the name "רוצה".
+    var iAmMatch = clean.match(/^אני\s+([א-תa-zA-Z]{2,20}(?:\s+[א-תa-zA-Z]{2,20})?)\s*$/i);
+    if (iAmMatch && iAmMatch[1]) {
+      var iAmCandidate = iAmMatch[1].trim();
+
+      if (
+        !forbiddenNamePhrases.test(iAmCandidate) &&
+        !/^(רוצה|צריך|צריכה|מבקש|מבקשת|שואל|שואלת|רוצה\s+ל|צריך\s+ל)$/i.test(iAmCandidate)
+      ) {
+        return iAmCandidate;
+      }
+    }
+
+    // 2. Name + phone / phone + name.
+    var phoneRegex = /(?:05[0-9][- ]?[0-9]{7}|0[23489][- ]?[0-9]{7}|\+?972[- ]?5[0-9][- ]?[0-9]{7})/g;
+    var textWithoutPhone = clean.replace(phoneRegex, '').trim();
     textWithoutPhone = textWithoutPhone.replace(/^[,\.\!\?\"\':\-]+|[,\.\!\?\"\':\-]+$/g, '').trim();
 
-    if (textWithoutPhone && !/\d/.test(textWithoutPhone) && !/http/i.test(textWithoutPhone)) {
+    if (
+      textWithoutPhone &&
+      !/\d/.test(textWithoutPhone) &&
+      !/http/i.test(textWithoutPhone) &&
+      !forbiddenNamePhrases.test(textWithoutPhone)
+    ) {
       var words = textWithoutPhone.split(/\s+/).filter(Boolean);
+
       if (words.length >= 1 && words.length <= 3) {
         var isAllWordsLetters = words.every(function(w) {
           return /^[א-תa-zA-Z]{2,20}$/.test(w);
         });
-        var commonWords = /^(שלום|היי|אפשר|רוצה|תודה|בבקשה|מידע|שאלה|תקשר|תתקשר|תחזור|צד|קורס|מחיר|מתי|איפה|כמה|מה|איך)$/i;
-        if (isAllWordsLetters && !(words.length === 1 && commonWords.test(words[0]))) {
+
+        var commonWords =
+          /^(שלום|היי|אפשר|רוצה|צריך|צריכה|תודה|בבקשה|מידע|שאלה|תקשר|תתקשר|תחזור|מתי|איפה|כמה|מה|איך|לקבוע|בדיקה|תור|הגעה|דרכי|מיקום|כתובת|שעות|מסגרות|משקפים|משקפיים|עדשות|אחריות|מחירים|הזמנה|איסוף|נציג|אנושי)$/i;
+
+        if (
+          isAllWordsLetters &&
+          !(words.length === 1 && commonWords.test(words[0]))
+        ) {
           return words.join(' ');
         }
       }
@@ -269,14 +337,18 @@
 
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
 
+        // Product/service names in the opening message are menu buttons.
+        // These are intentionally recognized without requiring a bullet.
+        var isServiceButton = /^(?:משקפים?\s+לשחייה|משקפי\s+שחייה|מסגרות(?:\s+למשקפיים)?|מסגרות\s+למשקפים|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|קבלת\s+משקפיים\s+מוכנים|משקפי\s+שמש|רוד['’]?י\s+פרוג['’]?קט|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|איסוף\s+הזמנה|דרכי\s+הגעה|אחריות|פערי\s+מחירים(?:\s*\([^)]*\))?|שאל\s+נציג\s+אנושי)$/i.test(cleanLineText);
+
         // Check if line is a bullet or numbered option (e.g. "1. xxx", "- xxx", "• xxx", "🔹 xxx", "אפשרות 1: xxx")
-        var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/i);
+        var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>📅📍📞👓📦🛡️💡])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/iu);
 
         // Check if line is a short action option sitting at the end or as an option line (e.g. "לקבוע בדיקה", "שאלות אחרות")
         var isShortAction = false;
-        if (!bulletMatch && cleanLineText.length > 0 && cleanLineText.length <= 45 && !/[.\!\?]$/.test(cleanLineText)) {
-          var actionKeywords = /(?:לקבוע|קביעת|תיאום|תור|בדיקה|שאלות|אחרות|אחר|בירור|שיחה|נציג|אנושי|מידע|שעות|מיקום|כתובת|קטלוג|מחיר|מחירון|קנה|הזמנה|צור\s*קשר|פרטים|תפריט|עזרה)/i;
-          if (actionKeywords.test(cleanLineText) && !cleanLineText.startsWith('✅')) {
+        if (!bulletMatch && cleanLineText.length > 0 && cleanLineText.length <= 70 && !/[.\!\?]$/.test(cleanLineText)) {
+          var actionKeywords = /(?:לקבוע|קביעת|תיאום|תור|בדיקה|שאלות|אחרות|אחר|בירור|שיחה|נציג|אנושי|מידע|שעות|מיקום|כתובת|קטלוג|מחיר|מחירון|קנה|הזמנה|צור\s*קשר|פרטים|תפריט|עזרה|משקפ|מסגר|עדשות|שחייה|שמש|מוכנים|פרוג['’]?קט|מולטיפוקל|איסוף|אחריות|Waze|ניווט)/i;
+          if ((actionKeywords.test(cleanLineText) || isServiceButton) && !cleanLineText.startsWith('✅')) {
             isShortAction = true;
           }
         }
@@ -416,12 +488,12 @@
     }
     .obw-window {
       position: absolute;
-      bottom: 75px;
+      bottom: 70px;
       right: 0;
-      width: 380px;
-      max-width: calc(100vw - 32px);
-      height: 580px;
-      max-height: calc(100vh - 100px);
+      width: 400px;
+      max-width: calc(100vw - 20px);
+      height: 650px;
+      max-height: calc(100vh - 84px);
       background: #ffffff;
       border-radius: 22px;
       box-shadow: 0 16px 48px rgba(0,0,0,0.22);
@@ -441,7 +513,8 @@
     .obw-header {
       background: linear-gradient(135deg, #0056b3 0%, #003e8a 100%);
       color: #ffffff;
-      padding: 16px 18px;
+      padding: 10px 14px;
+      min-height: 58px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -451,12 +524,12 @@
     .obw-header-info {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       text-align: right;
     }
     .obw-avatar {
-      width: 48px;
-      height: 48px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
       background: #ffffff;
       display: flex;
@@ -471,22 +544,28 @@
       stroke: #0056b3;
     }
     .obw-title-group {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
-      text-align: right;
+      align-items: center;
+      text-align: center;
+      width: max-content;
+      max-width: calc(100% - 130px);
     }
     .obw-title {
-      font-weight: 900;
-      font-size: 19px;
+      font-weight: 700;
+      font-size: 17px;
       margin: 0;
       line-height: 1.15;
       color: #ffffff;
       letter-spacing: -0.3px;
     }
     .obw-subtitle {
-      font-size: 12.5px;
-      font-weight: 500;
+      font-size: 11.5px;
+      font-weight: 400;
       color: rgba(255, 255, 255, 0.9);
       margin: 3px 0 0 0;
       line-height: 1.15;
@@ -520,41 +599,44 @@
     }
     .obw-messages {
       flex: 1;
-      padding: 14px;
+      min-height: 0;
+      padding: 9px 10px;
       overflow-y: auto;
       background: #f8fafc;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 6px;
     }
     .obw-msg {
-      max-width: 85%;
-      padding: 10px 14px;
-      border-radius: 16px;
-      font-size: 13.5px;
-      line-height: 1.45;
+      max-width: 94%;
+      padding: 7px 10px;
+      border-radius: 13px;
+      font-size: 12.5px;
+      line-height: 1.32;
       word-break: break-word;
       white-space: pre-wrap;
     }
     .obw-msg-bot {
       align-self: flex-start;
       background: #ffffff;
-      color: #1e293b;
+      color: #334155;
       border: 1px solid #e2e8f0;
       border-bottom-right-radius: 4px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
     .obw-msg-user {
       align-self: flex-end;
-      background: ${themeColor};
-      color: #ffffff;
+      max-width: 78%;
+      background: #eef4fb;
+      color: #475569;
+      border: 1px solid #dbe5f0;
       border-bottom-left-radius: 4px;
+      padding: 6px 9px;
+      font-size: 12px;
+      font-weight: 400;
     }
     .obw-msg-time {
-      font-size: 10px;
-      opacity: 0.6;
-      margin-top: 4px;
-      text-align: left;
+      display: none !important;
     }
     .obw-msg-image {
       max-width: 100%;
@@ -589,70 +671,79 @@
       box-shadow: 0 5px 14px rgba(37, 99, 235, 0.4) !important;
     }
     .obw-msg-has-buttons {
-      width: 92%;
-      max-width: 92%;
+      width: 96%;
+      max-width: 96%;
     }
     .obw-buttons-container {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 6px;
-      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
       width: 100%;
       box-sizing: border-box;
       direction: rtl;
+      align-items: center;
     }
+
     .obw-btn-action {
-      background: #eff6ff;
-      color: ${themeColor};
-      border: 1px solid #bfdbfe;
-      padding: 8px 10px;
-      border-radius: 12px;
-      font-size: 12.5px;
-      font-weight: 700;
+      background: #ffffff;
+      color: #4b5563;
+      border: 1px solid #cfd4da;
+      padding: 4px 8px;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 400;
       cursor: pointer;
       transition: all 0.15s ease;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       text-align: center;
-      gap: 5px;
-      width: 100%;
+      gap: 4px;
+      width: auto;
+      min-height: 27px;
+      max-width: 100%;
       box-sizing: border-box;
-      line-height: 1.35;
+      line-height: 1.2;
       word-break: break-word;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
+
     .obw-btn-action:hover {
-      background: ${themeColor};
-      color: #ffffff;
-      border-color: ${themeColor};
+      background: #fafafa;
+      color: ${themeColor};
+      border-color: #aeb5bd;
       transform: translateY(-1px);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
-    .obw-btn-action:last-child:nth-child(odd) {
-      grid-column: span 2;
-    }
+
     .obw-btn-link {
-      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-      color: #ffffff !important;
-      border: 1px solid #1e40af !important;
-      padding: 8px 10px !important;
-      border-radius: 12px !important;
-      font-size: 12.5px !important;
-      font-weight: 800 !important;
+      background: #ffffff !important;
+      color: #4b5563 !important;
+      border: 1px solid #cfd4da !important;
+      padding: 4px 8px !important;
+      border-radius: 7px !important;
+      font-size: 11px !important;
+      font-weight: 400 !important;
       text-decoration: none !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
-      gap: 6px !important;
-      box-shadow: 0 3px 10px rgba(37, 99, 235, 0.3) !important;
-      transition: all 0.2s ease !important;
-      width: 100% !important;
+      gap: 4px !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+      transition: all 0.15s ease !important;
+      width: auto !important;
+      min-height: 27px !important;
+      max-width: 100% !important;
       box-sizing: border-box !important;
     }
+
     .obw-btn-link:hover {
-      background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%) !important;
-      color: #ffffff !important;
-      transform: translateY(-1px) scale(1.02) !important;
-      box-shadow: 0 5px 14px rgba(37, 99, 235, 0.45) !important;
+      background: #fafafa !important;
+      color: ${themeColor} !important;
+      border-color: #aeb5bd !important;
+      transform: translateY(-1px) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
     }
     .obw-typing {
       align-self: flex-start;
@@ -680,7 +771,7 @@
       40% { opacity: 1; transform: scale(1.1); }
     }
     .obw-footer {
-      padding: 10px 12px;
+      padding: 7px 9px;
       background: #ffffff;
       border-top: 1px solid #e2e8f0;
       display: flex;
@@ -690,9 +781,9 @@
     .obw-input {
       flex: 1;
       border: 1px solid #cbd5e1;
-      padding: 9px 12px;
-      border-radius: 12px;
-      font-size: 13.5px;
+      padding: 7px 10px;
+      border-radius: 10px;
+      font-size: 12.5px;
       outline: none;
       direction: rtl;
     }
@@ -704,10 +795,10 @@
       background: ${themeColor};
       color: #ffffff;
       border: none;
-      border-radius: 12px;
-      padding: 9px 14px;
-      font-weight: bold;
-      font-size: 13px;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-weight: 600;
+      font-size: 12px;
       cursor: pointer;
       transition: background 0.2s;
     }
@@ -731,9 +822,9 @@
       font-weight: 800;
     }
     .obw-powered-by {
-      background: #f1f5f9;
+      background: #f8fafc;
       border-top: 1px solid #e2e8f0;
-      padding: 6px 12px;
+      padding: 4px 10px;
       text-align: center;
       font-size: 11px;
       color: #64748b;
@@ -753,6 +844,83 @@
       color: #0369a1;
       text-decoration: underline;
     }
+    /* Mobile: use almost the full viewport so the answer and options remain visible. */
+    @media (max-width: 600px) {
+      .obw-window {
+        right: 8px;
+        bottom: 8px;
+        width: calc(100vw - 16px);
+        max-width: calc(100vw - 16px);
+        height: calc(100vh - 16px);
+        max-height: calc(100vh - 16px);
+        border-radius: 18px;
+      }
+
+      .obw-header {
+        min-height: 54px;
+        padding: 8px 10px;
+      }
+
+      .obw-avatar {
+        width: 38px;
+        height: 38px;
+      }
+
+      .obw-title-group {
+        max-width: calc(100% - 105px);
+      }
+
+      .obw-title {
+        font-size: 16px;
+      }
+
+      .obw-subtitle {
+        font-size: 11px;
+      }
+
+      .obw-messages {
+        padding: 7px 8px;
+        gap: 5px;
+      }
+
+      .obw-msg {
+        font-size: 12px;
+        line-height: 1.28;
+        padding: 6px 9px;
+      }
+
+      .obw-msg-has-buttons {
+        width: 97%;
+        max-width: 97%;
+      }
+
+      .obw-buttons-container {
+        gap: 4px;
+        margin-top: 4px;
+      }
+
+      .obw-btn-action,
+      .obw-btn-link {
+        font-size: 10.5px !important;
+        min-height: 26px !important;
+        padding: 4px 7px !important;
+      }
+
+      .obw-footer {
+        padding: 6px 7px;
+      }
+
+      .obw-input {
+        padding: 6px 9px;
+        font-size: 12px;
+      }
+
+      .obw-send-btn {
+        padding: 6px 10px;
+        font-size: 11.5px;
+      }
+    }
+
   `;
 
   var styleEl = document.createElement('style');
@@ -1648,9 +1816,13 @@
       setUserPhone(detectedPhone);
     }
 
-    var detectedName = extractNameFromUserText(userText);
-    if (detectedName) {
-      setUserName(detectedName);
+    // A button/menu selection is NOT a customer name.
+    // Only inspect free-typed customer text for a name.
+    if (!buttonId) {
+      var detectedName = extractNameFromUserText(userText);
+      if (detectedName) {
+        setUserName(detectedName);
+      }
     }
 
     // Upgrade sessionId if user phone is available
