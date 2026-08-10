@@ -333,7 +333,10 @@
         var isServiceButton = /^(?:משקפים?\s+לשחייה|משקפי\s+שחייה|מסגרות(?:\s+למשקפיים)?|מסגרות\s+למשקפים|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|קבלת\s+משקפיים\s+מוכנים|משקפי\s+שמש|רוד['’]?י\s+פרוג['’]?קט|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|איסוף\s+הזמנה|דרכי\s+הגעה|אחריות|פערי\s+מחירים(?:\s*\([^)]*\))?|שאל\s+נציג\s+אנושי)$/i.test(cleanLineText);
 
         // Check if line is a bullet or numbered option (e.g. "1. xxx", "- xxx", "• xxx", "🔹 xxx", "אפשרות 1: xxx")
-        var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>📅📍📞👓📦🛡️💡])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/iu);
+        // Only real list markers create buttons. Semantic emojis such as
+        // 📅 📍 👓 etc. can start a normal sentence and must NOT create
+        // an extra button/line spacing in the opening message.
+        var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/iu);
 
         // Check if line is a short action option sitting at the end or as an option line (e.g. "לקבוע בדיקה", "שאלות אחרות")
         var isShortAction = false;
@@ -388,7 +391,13 @@
       }
 
       if (textLines.length > 0) {
-        welcomeText = textLines.join('\n');
+        // Opening message: remove accidental blank lines produced by the
+        // agent/emoji formatting. Keep each real line, but do not create
+        // large vertical gaps between consecutive lines.
+        welcomeText = textLines
+          .join('\n')
+          .replace(/[ \t]*\n[ \t]*(?:\n[ \t]*)+/g, '\n')
+          .replace(/^[ \t]+|[ \t]+$/g, '');
       }
     }
 
@@ -409,6 +418,94 @@
     });
 
     buttons = uniqueButtons;
+
+    // Hard limit for the opening/conversation-flow menu too.
+    // If there are more than 6 options, prefer options related to the
+    // opening text and preserve the agent's original order for ties.
+    if (buttons.length > 6) {
+      var normalizedWelcome = String(welcomeText || '')
+        .toLowerCase()
+        .replace(/[\u0591-\u05C7]/g, '')
+        .replace(/[^\u0590-\u05ff\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      var welcomeConcepts = [
+        ['בדיקת','בדיקה','ראייה','ראיה','אופטומטריסט','תור','קביעת'],
+        ['מולטיפוקל','עדשות','עדשה'],
+        ['מסגרת','מסגרות','משקפיים','משקפים','דגמים'],
+        ['מגע'],
+        ['אחריות','ציפויים'],
+        ['מיקום','כתובת','הגעה','waze','ניווט','חניה','אמירים'],
+        ['שעות','פתיחה','פעילות','פתוחים'],
+        ['איסוף','הזמנה','מוכנים','קבלה'],
+        ['מחיר','מחירים','זול','זולים','עלות','משתלם','פערי'],
+        ['שמש','שחייה','שחיה'],
+        ['נציג','אנושי','צביקה','טלפון','שיחה']
+      ];
+
+      var scoredWelcomeButtons = buttons.map(function(btn, index) {
+        var title = String(
+          btn && (btn.rawTitle || btn.title || btn.text || '')
+        )
+          .toLowerCase()
+          .replace(/[\u0591-\u05C7]/g, '')
+          .replace(/[^\u0590-\u05ff\w\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        var score = 0;
+
+        if (title && normalizedWelcome.indexOf(title) !== -1) {
+          score += 20;
+        }
+
+        title.split(/\s+/).forEach(function(word) {
+          if (word.length >= 2 && normalizedWelcome.indexOf(word) !== -1) {
+            score += 3;
+          }
+        });
+
+        welcomeConcepts.forEach(function(group) {
+          var titleMatch = group.some(function(word) {
+            return title.indexOf(word) !== -1;
+          });
+          var welcomeMatch = group.some(function(word) {
+            return normalizedWelcome.indexOf(word) !== -1;
+          });
+
+          if (titleMatch && welcomeMatch) score += 7;
+        });
+
+        return { button: btn, score: score, index: index };
+      });
+
+      scoredWelcomeButtons.sort(function(a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.index - b.index;
+      });
+
+      // Never let a link button replace a normal menu option.
+      var welcomeRegularOptions = scoredWelcomeButtons.filter(function(item) {
+        return !(item.button && item.button.url);
+      });
+
+      var welcomeLinkOptions = scoredWelcomeButtons.filter(function(item) {
+        return item.button && item.button.url;
+      });
+
+      var selectedWelcome = welcomeRegularOptions.slice(0, 6);
+
+      if (selectedWelcome.length < 6) {
+        selectedWelcome = selectedWelcome.concat(
+          welcomeLinkOptions.slice(0, 6 - selectedWelcome.length)
+        );
+      }
+
+      buttons = selectedWelcome.slice(0, 6).map(function(item) {
+        return item.button;
+      });
+    }
 
     if (!welcomeText) {
       welcomeText = 'ברוכים הבאים ל-' + (fallbackTitle || 'העסק שלנו') + '. במה אוכל לעזור לך היום?';
@@ -610,24 +707,46 @@
       max-width: 94%;
       padding: 7px 10px;
       border-radius: 13px;
-      font-size: 13px;
-      line-height: 1.4;
+      font-size: 12.5px;
+      line-height: 1.38;
       word-break: break-word;
       white-space: pre-wrap;
+      font-weight: 400;
+      letter-spacing: -0.05px;
     }
     .obw-msg-bot {
       align-self: flex-start;
       background: #ffffff;
-      color: #30435b;
+      color: #46566b;
       border: 2px solid #cfd9f8;
       border-bottom-right-radius: 6px;
       box-shadow: 0 1px 3px rgba(60, 80, 130, 0.05);
-      font-weight: 500;
+      font-weight: 400;
     }
     .obw-msg-lead {
-      color: #243f6f;
-      font-weight: 650;
+      color: #314d73;
+      font-weight: 550;
       letter-spacing: -0.05px;
+    }
+
+    /* Opening/welcome message: compact line rhythm */
+    .obw-msg.obw-opening-msg {
+      line-height: 1.28;
+      font-weight: 400;
+    }
+
+    /* Opening screen: a little extra breathing room before the six options. */
+    .obw-msg.obw-opening-msg .obw-buttons-container {
+      padding-top: 22px;
+    }
+
+    .obw-msg.obw-opening-msg > div {
+      margin: 0;
+      padding: 0;
+    }
+
+    .obw-msg.obw-opening-msg .obw-msg-bullet {
+      margin: 2px 0;
     }
 
     .obw-msg-bullet {
@@ -648,7 +767,7 @@
     .obw-msg-bullet-text {
       flex: 1 1 auto;
       min-width: 0;
-      font-weight: 500;
+      font-weight: 400;
     }
 
     .obw-msg-user {
@@ -705,7 +824,8 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 6px 8px;
-      margin-top: 8px;
+      margin-top: 0;
+      padding-top: 18px;
       width: 100%;
       box-sizing: border-box;
       direction: rtl;
@@ -719,7 +839,7 @@
       padding: 5px 7px;
       border-radius: 15px;
       font-size: 11px;
-      font-weight: 500;
+      font-weight: 400;
       cursor: pointer;
       transition: all 0.15s ease;
       display: inline-flex;
@@ -751,7 +871,7 @@
       padding: 5px 7px !important;
       border-radius: 15px !important;
       font-size: 11px !important;
-      font-weight: 500 !important;
+      font-weight: 400 !important;
       text-decoration: none !important;
       display: inline-flex !important;
       align-items: center !important;
@@ -919,8 +1039,9 @@
 
       .obw-msg {
         font-size: 11.5px;
-        line-height: 1.28;
+        line-height: 1.3;
         padding: 5px 8px;
+        font-weight: 400;
       }
 
       .obw-msg-bot {
@@ -943,7 +1064,8 @@
       .obw-buttons-container {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 5px 7px;
-        margin-top: 6px;
+        margin-top: 0;
+        padding-top: 16px;
       }
 
       .obw-btn-action,
@@ -959,6 +1081,10 @@
         background: #ffffff;
         color: #30435b;
         border-color: #cfd9f8;
+      }
+
+      .obw-msg.obw-opening-msg .obw-buttons-container {
+        padding-top: 20px;
       }
 
       .obw-footer {
@@ -1120,10 +1246,22 @@
     messagesBox.innerHTML = '';
     messages.forEach(function(msg) {
       var msgDiv = document.createElement('div');
-      msgDiv.className = 'obw-msg ' + (msg.sender === 'user' ? 'obw-msg-user' : 'obw-msg-bot');
+      msgDiv.className = 'obw-msg ' +
+        (msg.sender === 'user' ? 'obw-msg-user' : 'obw-msg-bot') +
+        ((msg.sender !== 'user' && messages.indexOf(msg) === 0) ? ' obw-opening-msg' : '');
 
       var textSpan = document.createElement('div');
       var rawText = msg.text || '';
+
+      if (msg.sender !== 'user' && messages.indexOf(msg) === 0) {
+        rawText = String(rawText)
+          .replace(/\r\n/g, '\n')
+          .replace(/\n[ \t]*\n+/g, '\n')
+          .replace(/[ \t]+\n/g, '\n')
+          .replace(/\n[ \t]+/g, '\n')
+          .trim();
+      }
+
       var escapeHtml = function(str) {
         return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
       };
@@ -1141,7 +1279,7 @@
           // ✅ item
           // numbered items such as 1. item
           var bulletMatch = trimmedLine.match(
-            /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)]|(?:✅|☑️|✔️|🔹|🔸|👉))\s+(.+)$/u
+            /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)])\s+(.+)$/u
           );
 
           var bulletMark = '';
@@ -1149,7 +1287,7 @@
 
           if (bulletMatch) {
             var originalMarkMatch = trimmedLine.match(
-              /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)]|(?:✅|☑️|✔️|🔹|🔸|👉))\s+/u
+              /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)])\s+/u
             );
 
             bulletMark = originalMarkMatch ? originalMarkMatch[0].trim() : '•';
@@ -1918,9 +2056,156 @@
       }
     }
 
+    // Limit the UI to a maximum of 6 buttons.
+    // When more than 6 are supplied/discovered, prioritize buttons that are
+    // actually related to the current reply. Original order is used as the
+    // final tie-breaker so the agent's preferred ordering is preserved.
+    var selectRelevantButtons = function(reply, candidateButtons) {
+      if (!Array.isArray(candidateButtons) || candidateButtons.length <= 6) {
+        return candidateButtons || [];
+      }
+
+      var replyTextForScore = String(reply || '').toLowerCase();
+
+      // Normalize Hebrew/Latin text for matching.
+      var normalizeForMatch = function(value) {
+        return String(value || '')
+          .toLowerCase()
+          .replace(/[\u0591-\u05C7]/g, '')
+          .replace(/[^\u0590-\u05ff\w\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+
+      var normalizedReply = normalizeForMatch(replyTextForScore);
+
+      // Common stop words should not make unrelated buttons look relevant.
+      var stopWords = {
+        'של':1,'על':1,'עם':1,'את':1,'אל':1,'או':1,'גם':1,'אם':1,'לא':1,
+        'יש':1,'זה':1,'זו':1,'הוא':1,'היא':1,'אני':1,'אנחנו':1,'אתם':1,
+        'אתן':1,'מה':1,'איך':1,'למה':1,'לכם':1,'לכן':1,'כאן':1,'שם':1,
+        'כדי':1,'אפשר':1,'ניתן':1,'רוצים':1,'רוצה':1,'מידע':1,'עוד':1,
+        'בכל':1,'כל':1,'דרך':1,'דרכי':1,'ישנו':1,'אצלנו':1
+      };
+
+      var replyWords = normalizedReply.split(/\s+/).filter(function(word) {
+        return word.length >= 2 && !stopWords[word];
+      });
+
+      // Related concepts get a stronger score than generic word overlap.
+      var conceptGroups = [
+        { words: ['בדיקת','בדיקה','אופטומטריסט','ראייה','ראיה','תור','קביעת','פגישה'], score: 7 },
+        { words: ['מולטיפוקל','מולטיפוקליים','עדשות','עדשה'], score: 7 },
+        { words: ['מסגרת','מסגרות','משקפיים','משקפים','דגמים'], score: 7 },
+        { words: ['מגע','עדשות'], score: 7 },
+        { words: ['אחריות','אחריותנו','ציפויים'], score: 7 },
+        { words: ['מיקום','כתובת','הגעה','waze','ניווט','חניה','אמירים'], score: 7 },
+        { words: ['שעות','פתיחה','פעילות','פתוחים'], score: 7 },
+        { words: ['איסוף','הזמנה','מוכנים','קבלה'], score: 7 },
+        { words: ['מחיר','מחירים','זול','זולים','עלות','משתלם','פערי'], score: 7 },
+        { words: ['שמש','שחייה','שחיה'], score: 7 },
+        { words: ['נציג','אנושי','צביקה','טלפון','שיחה'], score: 7 }
+      ];
+
+      var getTitleForMatch = function(button) {
+        return normalizeForMatch(
+          button && (button.rawTitle || button.title || button.text || '')
+        );
+      };
+
+      var scoreButton = function(button, index) {
+        var title = getTitleForMatch(button);
+        if (!title) return { button: button, score: -1000, index: index };
+
+        var score = 0;
+
+        // A URL button generated from the current reply is highly relevant.
+        if (button && button.url && normalizedReply.indexOf(normalizeForMatch(button.url)) !== -1) {
+          score += 20;
+        }
+
+        // Exact title/phrase match is the strongest textual signal.
+        if (title.length >= 3 && normalizedReply.indexOf(title) !== -1) {
+          score += 18;
+        }
+
+        var titleWords = title.split(/\s+/).filter(function(word) {
+          return word.length >= 2 && !stopWords[word];
+        });
+
+        titleWords.forEach(function(word) {
+          if (normalizedReply.indexOf(word) !== -1) {
+            score += 4;
+          }
+        });
+
+        // Match broader service concepts even when wording differs.
+        conceptGroups.forEach(function(group) {
+          var titleHasConcept = group.words.some(function(word) {
+            return title.indexOf(word) !== -1;
+          });
+
+          var replyHasConcept = group.words.some(function(word) {
+            return normalizedReply.indexOf(word) !== -1;
+          });
+
+          if (titleHasConcept && replyHasConcept) {
+            score += group.score;
+          }
+        });
+
+        // Small relevance boost for a meaningful word overlap.
+        var overlapCount = titleWords.filter(function(word) {
+          return replyWords.indexOf(word) !== -1;
+        }).length;
+
+        score += Math.min(overlapCount * 2, 8);
+
+        // Preserve original agent order for equal/near-equal relevance.
+        return {
+          button: button,
+          score: score,
+          index: index
+        };
+      };
+
+      var scored = candidateButtons.map(scoreButton);
+
+      scored.sort(function(a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.index - b.index;
+      });
+
+      // Keep the six actual menu options whenever six real options exist.
+      // A URL/link button should not displace a normal option. Links in the
+      // message body are rendered separately and never count toward the six.
+      var regularOptions = scored.filter(function(item) {
+        return !(item.button && item.button.url);
+      });
+
+      var linkOptions = scored.filter(function(item) {
+        return item.button && item.button.url;
+      });
+
+      var selected = regularOptions.slice(0, 6);
+
+      // Only use a URL button to fill a missing slot if fewer than 6 normal
+      // options were actually supplied by the agent.
+      if (selected.length < 6) {
+        selected = selected.concat(linkOptions.slice(0, 6 - selected.length));
+      }
+
+      return selected.slice(0, 6).map(function(item) {
+        return item.button;
+      });
+    };
+
     if (!replyText && buttons.length > 0) {
       replyText = 'אנא בחר מתוך האפשרויות הבאות:';
     }
+
+    // Never show more than 6 options in the widget.
+    buttons = selectRelevantButtons(replyText, buttons);
 
     return {
       replyText: replyText,
