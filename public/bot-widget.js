@@ -15,29 +15,20 @@
   var welcomeMessage = userConfig.welcomeMessage || userConfig.FirstMessage || userConfig.firstMessage || (currentScript ? currentScript.getAttribute('data-welcome-message') : null) || '';
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
 
+  // Header title: show only the bot name.
+  // Do not automatically add a location/subtitle such as "מושב אמירים".
+  // If the bot name itself contains a location, it remains part of the name.
   var parseTitleAndSubtitle = function(rawTitle, rawSub) {
     var main = (rawTitle || '').trim();
-    var sub = (rawSub || '').trim();
 
     if (!main) main = 'האופטיקה הטובה';
 
-    if (!sub) {
-      if (main.indexOf('-') !== -1) {
-        var parts = main.split('-');
-        main = parts[0].trim();
-        sub = parts.slice(1).join('-').trim();
-      } else if (main.indexOf('אמירים') !== -1) {
-        main = main.replace('אמירים', '').trim();
-        sub = 'מושב אמירים';
-      } else {
-        sub = 'מושב אמירים';
-      }
-    }
-
-    if (!main) main = 'האופטיקה הטובה';
-    if (!sub) sub = 'מושב אמירים';
-
-    return { main: main, sub: sub };
+    // Keep the full configured bot name, including "אמירים" if it is
+    // actually part of the configured name.
+    return {
+      main: main,
+      sub: ''
+    };
   };
 
   if (window.__OpticsBotWidgetLoaded) {
@@ -539,9 +530,12 @@
       flex-shrink: 0;
     }
     .obw-avatar svg {
-      width: 26px;
-      height: 26px;
-      stroke: #0056b3;
+      width: 31px;
+      height: 22px;
+    }
+
+    .obw-avatar .obw-glasses-logo {
+      display: block;
     }
     .obw-title-group {
       position: absolute;
@@ -607,27 +601,33 @@
       flex-direction: column;
       gap: 6px;
     }
+    .obw-messages,
+    .obw-messages * {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Hebrew", Arial, sans-serif;
+    }
+
     .obw-msg {
       max-width: 94%;
       padding: 7px 10px;
       border-radius: 13px;
-      font-size: 12.5px;
-      line-height: 1.32;
+      font-size: 13px;
+      line-height: 1.4;
       word-break: break-word;
       white-space: pre-wrap;
     }
     .obw-msg-bot {
       align-self: flex-start;
-      background: #f5f9ff;
-      color: #24415f;
-      border: 1px solid #c9d9ea;
-      border-bottom-right-radius: 4px;
-      box-shadow: 0 1px 3px rgba(30, 70, 110, 0.07);
+      background: #ffffff;
+      color: #30435b;
+      border: 2px solid #cfd9f8;
+      border-bottom-right-radius: 6px;
+      box-shadow: 0 1px 3px rgba(60, 80, 130, 0.05);
       font-weight: 500;
     }
     .obw-msg-lead {
-      color: #173f68;
+      color: #243f6f;
       font-weight: 650;
+      letter-spacing: -0.05px;
     }
 
     .obw-msg-bullet {
@@ -648,6 +648,7 @@
     .obw-msg-bullet-text {
       flex: 1 1 auto;
       min-width: 0;
+      font-weight: 500;
     }
 
     .obw-msg-user {
@@ -701,24 +702,24 @@
       max-width: 96%;
     }
     .obw-buttons-container {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 5px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 8px;
+      margin-top: 8px;
       width: 100%;
       box-sizing: border-box;
       direction: rtl;
-      align-items: center;
+      align-items: stretch;
     }
 
     .obw-btn-action {
       background: #ffffff;
-      color: #4b5563;
-      border: 1px solid #cfd4da;
-      padding: 4px 8px;
-      border-radius: 7px;
+      color: #3158d8;
+      border: 2px solid #7f94f4;
+      padding: 5px 7px;
+      border-radius: 15px;
       font-size: 11px;
-      font-weight: 400;
+      font-weight: 500;
       cursor: pointer;
       transition: all 0.15s ease;
       display: inline-flex;
@@ -726,50 +727,50 @@
       justify-content: center;
       text-align: center;
       gap: 4px;
-      width: auto;
-      min-height: 27px;
+      width: 100%;
+      min-height: 31px;
       max-width: 100%;
       box-sizing: border-box;
       line-height: 1.2;
       word-break: break-word;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      box-shadow: none;
     }
 
     .obw-btn-action:hover {
-      background: #fafafa;
-      color: ${themeColor};
-      border-color: #aeb5bd;
+      background: #f7f9ff;
+      color: #2448c7;
+      border-color: #526fe0;
       transform: translateY(-1px);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 1px 3px rgba(63, 88, 190, 0.12);
     }
 
     .obw-btn-link {
       background: #ffffff !important;
-      color: #4b5563 !important;
-      border: 1px solid #cfd4da !important;
-      padding: 4px 8px !important;
-      border-radius: 7px !important;
+      color: #3158d8 !important;
+      border: 2px solid #7f94f4 !important;
+      padding: 5px 7px !important;
+      border-radius: 15px !important;
       font-size: 11px !important;
-      font-weight: 400 !important;
+      font-weight: 500 !important;
       text-decoration: none !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
       gap: 4px !important;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+      box-shadow: none !important;
       transition: all 0.15s ease !important;
-      width: auto !important;
-      min-height: 27px !important;
+      width: 100% !important;
+      min-height: 31px !important;
       max-width: 100% !important;
       box-sizing: border-box !important;
     }
 
     .obw-btn-link:hover {
-      background: #fafafa !important;
-      color: ${themeColor} !important;
-      border-color: #aeb5bd !important;
+      background: #f7f9ff !important;
+      color: #2448c7 !important;
+      border-color: #526fe0 !important;
       transform: translateY(-1px) !important;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+      box-shadow: 0 1px 3px rgba(63, 88, 190, 0.12) !important;
     }
     .obw-typing {
       align-self: flex-start;
@@ -806,9 +807,9 @@
     }
     .obw-input {
       flex: 1;
-      border: 1px solid #cbd5e1;
+      border: 2px solid #b8c6f4;
       padding: 7px 10px;
-      border-radius: 10px;
+      border-radius: 11px;
       font-size: 12.5px;
       outline: none;
       direction: rtl;
@@ -873,23 +874,29 @@
     /* Mobile: use almost the full viewport so the answer and options remain visible. */
     @media (max-width: 600px) {
       .obw-window {
-        right: 8px;
-        bottom: 8px;
-        width: calc(100vw - 16px);
-        max-width: calc(100vw - 16px);
-        height: calc(100vh - 16px);
-        max-height: calc(100vh - 16px);
+        right: 4%;
+        bottom: 14px;
+        width: 92vw;
+        max-width: 400px;
+        height: 60vh;
+        max-height: 60vh;
+        min-height: 0;
         border-radius: 18px;
       }
 
       .obw-header {
-        min-height: 54px;
-        padding: 8px 10px;
+        min-height: 48px;
+        padding: 6px 9px;
       }
 
       .obw-avatar {
         width: 38px;
         height: 38px;
+      }
+
+      .obw-avatar .obw-glasses-logo {
+        width: 29px;
+        height: 21px;
       }
 
       .obw-title-group {
@@ -905,14 +912,15 @@
       }
 
       .obw-messages {
-        padding: 7px 8px;
-        gap: 5px;
+        padding: 6px 7px;
+        gap: 4px;
+        min-height: 0;
       }
 
       .obw-msg {
-        font-size: 12px;
-        line-height: 1.3;
-        padding: 6px 9px;
+        font-size: 11.5px;
+        line-height: 1.28;
+        padding: 5px 8px;
       }
 
       .obw-msg-bot {
@@ -933,29 +941,38 @@
       }
 
       .obw-buttons-container {
-        gap: 4px;
-        margin-top: 4px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px 7px;
+        margin-top: 6px;
       }
 
       .obw-btn-action,
       .obw-btn-link {
         font-size: 10.5px !important;
-        min-height: 26px !important;
-        padding: 4px 7px !important;
+        min-height: 29px !important;
+        padding: 4px 6px !important;
+        border-width: 2px !important;
+        border-radius: 14px !important;
+      }
+
+      .obw-msg-bot {
+        background: #ffffff;
+        color: #30435b;
+        border-color: #cfd9f8;
       }
 
       .obw-footer {
-        padding: 6px 7px;
+        padding: 5px 6px;
       }
 
       .obw-input {
-        padding: 6px 9px;
-        font-size: 12px;
+        padding: 5px 8px;
+        font-size: 11.5px;
       }
 
       .obw-send-btn {
-        padding: 6px 10px;
-        font-size: 11.5px;
+        padding: 5px 9px;
+        font-size: 11px;
       }
     }
 
@@ -982,16 +999,21 @@
       <div class="obw-header">
         <div class="obw-header-info">
           <div class="obw-avatar">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0056b3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="6" cy="12" r="4"/>
-              <circle cx="18" cy="12" r="4"/>
-              <line x1="10" y1="12" x2="14" y2="12"/>
-              <path d="M2 12h0.5M21.5 12h0.5"/>
+            <!-- Eyeglasses logo -->
+            <svg class="obw-glasses-logo" width="32" height="22" viewBox="0 0 32 22" fill="none" aria-hidden="true">
+              <path d="M2.2 6.2C2.45 4.75 3.55 3.8 5 3.8H11.1C12.65 3.8 13.75 4.75 14.05 6.2L14.65 9.35C14.95 10.95 13.85 12.45 12.25 12.7L8.2 13.35C6.15 13.7 4.45 12.35 4.1 10.35L2.2 6.2Z"
+                    stroke="#1f5ed6" stroke-width="1.9" stroke-linejoin="round"/>
+              <path d="M29.8 6.2C29.55 4.75 28.45 3.8 27 3.8H20.9C19.35 3.8 18.25 4.75 17.95 6.2L17.35 9.35C17.05 10.95 18.15 12.45 19.75 12.7L23.8 13.35C25.85 13.7 27.55 12.35 27.9 10.35L29.8 6.2Z"
+                    stroke="#1f5ed6" stroke-width="1.9" stroke-linejoin="round"/>
+              <path d="M14.1 6.2C14.85 5.45 17.15 5.45 17.9 6.2"
+                    stroke="#1f5ed6" stroke-width="1.9" stroke-linecap="round"/>
+              <path d="M2.6 6.1L1.1 5.1M29.4 6.1L30.9 5.1"
+                    stroke="#1f5ed6" stroke-width="1.9" stroke-linecap="round"/>
             </svg>
           </div>
           <div class="obw-title-group">
             <div class="obw-title" id="obw-header-main-title">${headerTitles.main}</div>
-            <div class="obw-subtitle" id="obw-header-sub-title">${headerTitles.sub}</div>
+            <div class="obw-subtitle" id="obw-header-sub-title" style="${headerTitles.sub ? '' : 'display:none;'}">${headerTitles.sub}</div>
           </div>
         </div>
         <button class="obw-close-btn" id="obw-close" aria-label="סגור חלון">✕</button>
