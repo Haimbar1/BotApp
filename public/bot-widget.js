@@ -835,10 +835,10 @@
     .obw-btn-action {
       background: #ffffff;
       color: #3158d8;
-      border: 1.5px solid #b8c4f7;
-      padding: 8px 10px;
-      border-radius: 14px;
-      font-size: 12px;
+      border: 1px solid #c3cef8;
+      padding: 6px 8px;
+      border-radius: 12px;
+      font-size: 11px;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.15s ease;
@@ -846,14 +846,14 @@
       align-items: center;
       justify-content: center;
       text-align: center;
-      gap: 5px;
+      gap: 4px;
       width: 100%;
-      min-height: 36px;
+      min-height: 30px;
       max-width: 100%;
       box-sizing: border-box;
-      line-height: 1.25;
+      line-height: 1.2;
       word-break: break-word;
-      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.06);
+      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.05);
     }
 
     .obw-btn-action:hover {
@@ -861,26 +861,26 @@
       color: #2448c7;
       border-color: #526fe0;
       transform: translateY(-1px);
-      box-shadow: 0 3px 8px rgba(63, 88, 190, 0.16);
+      box-shadow: 0 2px 6px rgba(63, 88, 190, 0.14);
     }
 
     .obw-btn-link {
       background: #ffffff !important;
       color: #3158d8 !important;
-      border: 1.5px solid #b8c4f7 !important;
-      padding: 8px 10px !important;
-      border-radius: 14px !important;
-      font-size: 12px !important;
+      border: 1px solid #c3cef8 !important;
+      padding: 6px 8px !important;
+      border-radius: 12px !important;
+      font-size: 11px !important;
       font-weight: 500 !important;
       text-decoration: none !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
-      gap: 5px !important;
-      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.06) !important;
+      gap: 4px !important;
+      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.05) !important;
       transition: all 0.15s ease !important;
       width: 100% !important;
-      min-height: 36px !important;
+      min-height: 30px !important;
       max-width: 100% !important;
       box-sizing: border-box !important;
     }
@@ -890,7 +890,7 @@
       color: #2448c7 !important;
       border-color: #526fe0 !important;
       transform: translateY(-1px) !important;
-      box-shadow: 0 3px 8px rgba(63, 88, 190, 0.16) !important;
+      box-shadow: 0 2px 6px rgba(63, 88, 190, 0.14) !important;
     }
     .obw-typing {
       align-self: flex-start;
