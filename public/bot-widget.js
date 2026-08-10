@@ -835,62 +835,62 @@
     .obw-btn-action {
       background: #ffffff;
       color: #3158d8;
-      border: 2px solid #7f94f4;
-      padding: 5px 7px;
-      border-radius: 15px;
-      font-size: 11px;
-      font-weight: 400;
+      border: 1.5px solid #b8c4f7;
+      padding: 8px 10px;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       transition: all 0.15s ease;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       text-align: center;
-      gap: 4px;
+      gap: 5px;
       width: 100%;
-      min-height: 31px;
+      min-height: 36px;
       max-width: 100%;
       box-sizing: border-box;
-      line-height: 1.2;
+      line-height: 1.25;
       word-break: break-word;
-      box-shadow: none;
+      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.06);
     }
 
     .obw-btn-action:hover {
-      background: #f7f9ff;
+      background: #eef2ff;
       color: #2448c7;
       border-color: #526fe0;
       transform: translateY(-1px);
-      box-shadow: 0 1px 3px rgba(63, 88, 190, 0.12);
+      box-shadow: 0 3px 8px rgba(63, 88, 190, 0.16);
     }
 
     .obw-btn-link {
       background: #ffffff !important;
       color: #3158d8 !important;
-      border: 2px solid #7f94f4 !important;
-      padding: 5px 7px !important;
-      border-radius: 15px !important;
-      font-size: 11px !important;
-      font-weight: 400 !important;
+      border: 1.5px solid #b8c4f7 !important;
+      padding: 8px 10px !important;
+      border-radius: 14px !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
       text-decoration: none !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
-      gap: 4px !important;
-      box-shadow: none !important;
+      gap: 5px !important;
+      box-shadow: 0 1px 2px rgba(49, 88, 216, 0.06) !important;
       transition: all 0.15s ease !important;
       width: 100% !important;
-      min-height: 31px !important;
+      min-height: 36px !important;
       max-width: 100% !important;
       box-sizing: border-box !important;
     }
 
     .obw-btn-link:hover {
-      background: #f7f9ff !important;
+      background: #eef2ff !important;
       color: #2448c7 !important;
       border-color: #526fe0 !important;
       transform: translateY(-1px) !important;
-      box-shadow: 0 1px 3px rgba(63, 88, 190, 0.12) !important;
+      box-shadow: 0 3px 8px rgba(63, 88, 190, 0.16) !important;
     }
     .obw-typing {
       align-self: flex-start;
@@ -1217,6 +1217,27 @@
     if (lower.indexOf('שעות') !== -1 || lower.indexOf('זמן') !== -1 || lower.indexOf('פעילות') !== -1 || lower.indexOf('מתי') !== -1) {
       return '⏰ ' + title;
     }
+    if (lower.indexOf('מסגר') !== -1 || lower.indexOf('דגמ') !== -1) {
+      return '👓 ' + title;
+    }
+    if (lower.indexOf('שמש') !== -1 || lower.indexOf('שחייה') !== -1 || lower.indexOf('שחיה') !== -1) {
+      return '🕶️ ' + title;
+    }
+    if (lower.indexOf('מולטיפוקל') !== -1) {
+      return '🔎 ' + title;
+    }
+    if (lower.indexOf('עדשות מגע') !== -1 || lower.indexOf('עדשה') !== -1) {
+      return '👁️ ' + title;
+    }
+    if (lower.indexOf('אחריות') !== -1 || lower.indexOf('ציפוי') !== -1 || lower.indexOf('אחריו') !== -1) {
+      return '🛡️ ' + title;
+    }
+    if (lower.indexOf('מבצע') !== -1 || lower.indexOf('הנחה') !== -1 || lower.indexOf('זול') !== -1 || lower.indexOf('פערי') !== -1) {
+      return '💰 ' + title;
+    }
+    if (lower.indexOf('אודות') !== -1 || lower.indexOf('עלינו') !== -1) {
+      return 'ℹ️ ' + title;
+    }
     if (lower.indexOf('מיקום') !== -1 || lower.indexOf('כתובת') !== -1 || lower.indexOf('ניווט') !== -1 || lower.indexOf('מפה') !== -1 || lower.indexOf('waze') !== -1) {
       return '📍 ' + title;
     }
@@ -1238,8 +1259,11 @@
     if (lower.indexOf('הורדה') !== -1 || lower.indexOf('קובץ') !== -1 || lower.indexOf('pdf') !== -1) {
       return '📥 ' + title;
     }
+    if (lower.indexOf('איסוף') !== -1 || lower.indexOf('מוכנ') !== -1) {
+      return '📦 ' + title;
+    }
 
-    return '🔹 ' + title;
+    return '• ' + title;
   };
 
   var renderMessages = function() {
