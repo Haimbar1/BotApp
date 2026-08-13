@@ -653,6 +653,8 @@
       overflow: hidden;
       transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       transform-origin: bottom right;
+      direction: rtl;
+      text-align: right;
     }
     .obw-window.obw-hidden {
       opacity: 0;
@@ -670,12 +672,14 @@
       justify-content: space-between;
       position: relative;
       direction: rtl;
+      text-align: right;
     }
     .obw-header-info {
       display: flex;
       align-items: center;
       gap: 10px;
       text-align: right;
+      direction: rtl;
     }
     .obw-avatar {
       width: 42px;
@@ -707,6 +711,7 @@
       text-align: center;
       width: max-content;
       max-width: calc(100% - 130px);
+      direction: rtl;
     }
     .obw-title {
       font-weight: 700;
@@ -715,6 +720,8 @@
       line-height: 1.15;
       color: #ffffff;
       letter-spacing: -0.3px;
+      text-align: right;
+      direction: rtl;
     }
     .obw-subtitle {
       font-size: 11.5px;
@@ -722,6 +729,8 @@
       color: rgba(255, 255, 255, 0.9);
       margin: 3px 0 0 0;
       line-height: 1.15;
+      text-align: right;
+      direction: rtl;
     }
     .obw-close-btn {
       position: absolute;
@@ -759,6 +768,8 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
+      direction: rtl;
+      text-align: right;
     }
     .obw-messages,
     .obw-messages * {
@@ -775,6 +786,8 @@
       white-space: pre-wrap;
       font-weight: 400;
       letter-spacing: -0.05px;
+      direction: rtl;
+      text-align: right;
     }
     .obw-msg-bot {
       align-self: flex-start;
@@ -784,17 +797,23 @@
       border-bottom-right-radius: 6px;
       box-shadow: 0 1px 3px rgba(60, 80, 130, 0.05);
       font-weight: 400;
+      direction: rtl;
+      text-align: right;
     }
     .obw-msg-lead {
       color: #314d73;
       font-weight: 550;
       letter-spacing: -0.05px;
+      direction: rtl;
+      text-align: right;
     }
 
     /* Opening/welcome message: compact line rhythm */
     .obw-msg.obw-opening-msg {
       line-height: 1.28;
       font-weight: 400;
+      direction: rtl;
+      text-align: right;
     }
 
     /* Opening screen: a little extra breathing room before the six options. */
@@ -805,6 +824,8 @@
     .obw-msg.obw-opening-msg > div {
       margin: 0;
       padding: 0;
+      direction: rtl;
+      text-align: right;
     }
 
     .obw-msg.obw-opening-msg .obw-msg-bullet {
@@ -817,6 +838,8 @@
       gap: 6px;
       margin: 3px 0;
       padding-right: 2px;
+      direction: rtl;
+      text-align: right;
     }
 
     .obw-msg-bullet-mark {
@@ -830,6 +853,8 @@
       flex: 1 1 auto;
       min-width: 0;
       font-weight: 400;
+      direction: rtl;
+      text-align: right;
     }
 
     .obw-msg-user {
@@ -842,6 +867,8 @@
       padding: 6px 9px;
       font-size: 12px;
       font-weight: 400;
+      direction: rtl;
+      text-align: right;
     }
     .obw-msg-time {
       display: none !important;
