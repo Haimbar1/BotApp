@@ -535,15 +535,6 @@
 
     welcomeText = formatPersonalGreeting(welcomeText);
 
-    if (buttons.length === 0) {
-      buttons = [
-        { id: 'btn_exam', title: '📅 תיאום בדיקה / תור' },
-        { id: 'btn_catalog', title: '👓 קטלוג מוצרים ומחירים' },
-        { id: 'btn_hours', title: '⏰ שעות פעילות ומיקום' },
-        { id: 'btn_human', title: '📱 שיחה עם נציג אנושי' }
-      ];
-    }
-
     return { text: welcomeText, buttons: buttons };
   };
 
@@ -2364,6 +2355,61 @@
       handleSendMessage();
     }
   };
+
+  // Fetch dynamic bot config from database endpoint if available
+  var fetchBotConfigFromDatabase = function() {
+    if (!botId) return;
+
+    var origin = '';
+    if (currentScript && currentScript.src) {
+      try {
+        origin = new URL(currentScript.src).origin;
+      } catch (e) {}
+    }
+
+    var endpoint = (origin ? origin : '') + '/api/public/bot-config?bot_id=' + encodeURIComponent(botId);
+
+    fetch(endpoint)
+      .then(function(res) {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function(data) {
+        if (!data) return;
+        var hasChanges = false;
+        if (data.welcomeMessage && data.welcomeMessage !== welcomeMessage) {
+          welcomeMessage = data.welcomeMessage;
+          hasChanges = true;
+        }
+        if (data.conversationFlow && data.conversationFlow !== conversationFlow) {
+          conversationFlow = data.conversationFlow;
+          hasChanges = true;
+        }
+        if (data.title && data.title !== botTitle) {
+          botTitle = data.title;
+          hasChanges = true;
+        }
+        if (data.whatsappNumber && data.whatsappNumber !== whatsappNumber) {
+          whatsappNumber = data.whatsappNumber;
+          hasChanges = true;
+        }
+
+        if (hasChanges && typeof window.OpticsBotWidgetUpdate === 'function') {
+          window.OpticsBotWidgetUpdate({
+            botId: botId,
+            title: botTitle,
+            whatsappNumber: whatsappNumber,
+            welcomeMessage: welcomeMessage,
+            conversationFlow: conversationFlow
+          });
+        }
+      })
+      .catch(function(err) {
+        // Silent catch for external environments
+      });
+  };
+
+  fetchBotConfigFromDatabase();
 
   // Initial render
   renderMessages();

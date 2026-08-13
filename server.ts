@@ -2330,6 +2330,35 @@ async function startServer() {
     throw lastError || new Error("Gemini generation failed on all attempted models");
   }
 
+  // ---------------- PUBLIC BOT CONFIG ROUTE FOR EMBEDDED WIDGETS ----------------
+  app.get("/api/public/bot-config", (req: any, res: any) => {
+    try {
+      const botId = (req.query.bot_id || req.query.botId || "").toString().trim();
+      if (!botId) {
+        return res.status(400).json({ error: "Missing bot_id parameter" });
+      }
+
+      const allAgents = readAgents();
+      const agent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+
+      if (!agent) {
+        return res.status(404).json({ error: "Bot not found" });
+      }
+
+      return res.json({
+        botId: agent.botId || agent.id,
+        title: agent.businessName || agent.name || agent.title || agent.botIdentity?.name || "",
+        welcomeMessage: agent.welcomeMessage || "",
+        conversationFlow: agent.conversationFlow || "",
+        whatsappNumber: agent.ownerPhone || agent.whatsappNumber || agent.phone || "",
+        themeColor: agent.themeColor || "#0047AB"
+      });
+    } catch (err: any) {
+      console.error("[SERVER] Error fetching public bot config:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // ---------------- PUBLIC DEMO BOT CREATION ROUTE ----------------
   app.post("/api/public/create-demo-bot", async (req, res) => {
     try {
