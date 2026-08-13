@@ -14,6 +14,7 @@
   var themeColor = userConfig.themeColor || (currentScript ? currentScript.getAttribute('data-theme-color') : null) || '#0047AB';
   var welcomeMessage = userConfig.welcomeMessage || userConfig.FirstMessage || userConfig.firstMessage || (currentScript ? currentScript.getAttribute('data-welcome-message') : null) || '';
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
+  var customOptions = userConfig.options || (currentScript ? currentScript.getAttribute('data-options') : null) || '';
 
   // Header title: show only the bot name.
   // Do not automatically add a location/subtitle such as "מושב אמירים".
@@ -299,13 +300,36 @@
     return String(title).trim();
   };
 
-  // Helper to parse ONLY the welcome message (הודעת פתיחה) up to "זרימת השיחה:" and extract options purely as interactive buttons
-  var parseConversationFlow = function(flowStr, fallbackTitle) {
+  // Helper to parse welcome message and conversation flow to extract options purely as interactive buttons
+  var parseConversationFlow = function(flowStr, fallbackTitle, secondaryFlowStr, explicitOptions) {
     var welcomeText = '';
     var buttons = [];
 
-    if (flowStr && typeof flowStr === 'string' && flowStr.trim().length > 0) {
-      var rawText = flowStr.trim();
+    // 1. Process explicit options if provided via data-options or window.OpticsBotConfig.options
+    if (explicitOptions) {
+      var rawOpts = Array.isArray(explicitOptions) 
+        ? explicitOptions 
+        : String(explicitOptions).split(/[\n|;,]/);
+      rawOpts.forEach(function(opt) {
+        var title = String(opt || '').trim();
+        if (title.length > 0 && title.length <= 90) {
+          buttons.push({
+            id: 'btn_flow_' + buttons.length,
+            title: ensureButtonEmoji(title)
+          });
+        }
+      });
+    }
+
+    var extractFromText = function(str) {
+      var extractedText = '';
+      var extractedButtons = [];
+
+      if (!str || typeof str !== 'string' || str.trim().length === 0) {
+        return { text: extractedText, buttons: extractedButtons };
+      }
+
+      var rawText = str.trim();
       var openingSectionText = rawText;
 
       // 1. Cut off strictly at "זרימת השיחה" / "זרימת שיחה" / "שלב 2" / "המשך שיחה" / etc.
@@ -332,7 +356,6 @@
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
         if (!cleanLineText) return;
 
-        // Skip pure section label headers like "אפשרויות:", "כפתורים:", "בחר אפשרות:"
         var isOptionHeader = /^(?:אפשרויות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(cleanLineText) ||
           /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(cleanLineText);
 
@@ -341,13 +364,9 @@
           return;
         }
 
-        // Product/service names in the opening message are menu buttons
         var isServiceButton = /^(?:משקפים?\s+לשחייה|משקפי\s+שחייה|מסגרות(?:\s+למשקפיים)?|מסגרות\s+למשקפים|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|קבלת\s+משקפיים\s+מוכנים|משקפי\s+שמש|רוד['’]?י\s+פרוג['’]?קט|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|איסוף\s+הזמנה|דרכי\s+הגעה|אחריות|פערי\s+מחירים(?:\s*\([^)]*\))?|שאל\s+נציג\s+אנושי)$/i.test(cleanLineText);
 
-        // Check if line is a bullet or numbered option (e.g. "1. xxx", "- xxx", "• xxx", "🔹 xxx", "אפשרות 1: xxx")
         var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/iu);
-
-        // Line starting with an emoji e.g. "📅 תיאום תור"
         var emojiMatch = line.match(/^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFA}])\s*(.+)$/u);
 
         var isShortText = cleanLineText.length > 0 && cleanLineText.length <= 90;
@@ -379,8 +398,8 @@
           parts.forEach(function(p) {
             var pTitle = p.trim().replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
             if (pTitle.length > 0 && pTitle.length <= 90) {
-              buttons.push({
-                id: 'btn_flow_' + buttons.length,
+              extractedButtons.push({
+                id: 'btn_flow_' + extractedButtons.length,
                 title: ensureButtonEmoji(pTitle)
               });
             }
@@ -392,18 +411,16 @@
           var finalTitle = candidateTitle.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
           finalTitle = finalTitle.replace(/^(?:\d+[\.\)-]|[\-\*•])\s*/, '').trim();
           if (finalTitle.length > 0 && finalTitle.length <= 90) {
-            buttons.push({
-              id: 'btn_flow_' + buttons.length,
+            extractedButtons.push({
+              id: 'btn_flow_' + extractedButtons.length,
               title: ensureButtonEmoji(finalTitle)
             });
           }
         } else {
-          // Normal greeting text line
           textLines.push(line);
         }
       });
 
-      // Clean trailing option intro lines from textLines
       while (textLines.length > 0) {
         var lastTextLine = textLines[textLines.length - 1].trim();
         if (/^(?:אפשרויות|כפתורים|בחרו\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצו\s*לעשות|איך\s*אפשר\s*לעזור)[ \t]*[:\-\|]?$/i.test(lastTextLine) ||
@@ -415,13 +432,30 @@
       }
 
       if (textLines.length > 0) {
-        // Opening message: remove accidental blank lines produced by the
-        // agent/emoji formatting. Keep each real line, but do not create
-        // large vertical gaps between consecutive lines.
-        welcomeText = textLines
+        extractedText = textLines
           .join('\n')
           .replace(/[ \t]*\n[ \t]*(?:\n[ \t]*)+/g, '\n')
           .replace(/^[ \t]+|[ \t]+$/g, '');
+      }
+
+      return { text: extractedText, buttons: extractedButtons };
+    };
+
+    // 2. Extract from primary flowStr (welcomeMessage)
+    var primaryRes = extractFromText(flowStr);
+    welcomeText = primaryRes.text;
+    if (primaryRes.buttons.length > 0) {
+      buttons = buttons.concat(primaryRes.buttons);
+    }
+
+    // 3. If primary flowStr had no buttons, check secondaryFlowStr (conversationFlow)
+    if (buttons.length === 0 && secondaryFlowStr) {
+      var secondaryRes = extractFromText(secondaryFlowStr);
+      if (secondaryRes.buttons.length > 0) {
+        buttons = buttons.concat(secondaryRes.buttons);
+      }
+      if (!welcomeText && secondaryRes.text) {
+        welcomeText = secondaryRes.text;
       }
     }
 
@@ -1196,7 +1230,7 @@
   var isTyping = false;
 
   // Initial welcome message from welcomeMessage or conversation flow
-  var initialFlow = parseConversationFlow(welcomeMessage || conversationFlow, botTitle);
+  var initialFlow = parseConversationFlow(welcomeMessage, botTitle, conversationFlow, customOptions);
   var messages = [
     {
       id: 'welcome_1',
@@ -2315,7 +2349,7 @@
     STORAGE_KEY = 'optics_bot_session_' + botId;
     sessionId = getSessionId();
 
-    var updatedFlow = parseConversationFlow(welcomeMessage || conversationFlow, botTitle);
+    var updatedFlow = parseConversationFlow(welcomeMessage, botTitle, conversationFlow, customOptions);
 
     messages = [
       {

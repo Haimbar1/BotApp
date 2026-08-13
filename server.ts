@@ -2332,14 +2332,24 @@ async function startServer() {
 
   // ---------------- PUBLIC BOT CONFIG ROUTE FOR EMBEDDED WIDGETS ----------------
   app.get("/api/public/bot-config", (req: any, res: any) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+
     try {
       const botId = (req.query.bot_id || req.query.botId || "").toString().trim();
-      if (!botId) {
-        return res.status(400).json({ error: "Missing bot_id parameter" });
-      }
-
       const allAgents = readAgents();
-      const agent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+
+      let agent = allAgents.find((a: any) => (a.botId && a.botId === botId) || (a.id && a.id === botId));
+
+      // Fallback to first agent if botId is empty or not matched
+      if (!agent && allAgents.length > 0) {
+        agent = allAgents[0];
+      }
 
       if (!agent) {
         return res.status(404).json({ error: "Bot not found" });
