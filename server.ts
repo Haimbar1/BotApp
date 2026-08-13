@@ -2331,7 +2331,7 @@ async function startServer() {
   }
 
   // ---------------- PUBLIC BOT CONFIG ROUTE FOR EMBEDDED WIDGETS ----------------
-  app.get("/api/public/bot-config", (req: any, res: any) => {
+  app.get("/api/public/bot-config", async (req: any, res: any) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -2344,24 +2344,74 @@ async function startServer() {
       const botId = (req.query.bot_id || req.query.botId || "").toString().trim();
       const allAgents = readAgents();
 
-      let agent = allAgents.find((a: any) => (a.botId && a.botId === botId) || (a.id && a.id === botId));
+      let agent = allAgents.find((a: any) => (a.botId && String(a.botId) === botId) || (a.id && String(a.id) === botId));
 
-      // Fallback to first agent if botId is empty or not matched
-      if (!agent && allAgents.length > 0) {
+      // Attempt to pull live data from n8n GET webhook if fields are missing or agent not found locally
+      let n8nBotData: any = null;
+      if (botId) {
+        try {
+          const defaultGetUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283";
+          const fetchUrl = `${defaultGetUrl}${defaultGetUrl.includes("?") ? "&" : "?"}botId=${encodeURIComponent(botId)}`;
+          console.log("[SERVER] Fetching bot config from n8n webhook for botId:", botId);
+          
+          const n8nRes = await fetch(fetchUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "application/json, text/plain, */*"
+            }
+          });
+
+          if (n8nRes.ok) {
+            let rawData = await n8nRes.json();
+            if (Array.isArray(rawData)) {
+              // Find matching bot in array
+              const matched = rawData.find((item: any) => {
+                const itemBotId = String(item.botId || item["Bot ID"] || item.id || "").trim();
+                return itemBotId === botId;
+              });
+              n8nBotData = matched || rawData[0];
+            } else if (rawData && typeof rawData === "object") {
+              n8nBotData = rawData;
+            }
+          }
+        } catch (n8nErr) {
+          console.warn("[SERVER] n8n fetch fallback for bot-config failed:", n8nErr);
+        }
+      }
+
+      // Helper to extract values from n8n data
+      const getVal = (keys: string[]): string => {
+        if (!n8nBotData) return "";
+        for (const k of keys) {
+          if (n8nBotData[k] !== undefined && n8nBotData[k] !== null) {
+            return String(n8nBotData[k]).trim();
+          }
+        }
+        return "";
+      };
+
+      const title = getVal(["businessName", "שם העסק", "name", "שם", "title", "Bot Identity"]) || agent?.businessName || agent?.name || agent?.title || "בוט עסק חכם";
+      const welcomeMessage = getVal(["FirstMessage", "firstMessage", "welcomeMessage", "הודעת פתיחה", "First Message"]) || agent?.welcomeMessage || "";
+      const conversationFlow = getVal(["conversationFlow", "זרימת שיחה", "תסריט שיחה", "Conversation Flow"]) || agent?.conversationFlow || "";
+      const whatsappNumber = getVal(["ownerPhone", "טלפון בעל העסק", "phone", "whatsappNumber", "Owner Phone"]) || agent?.ownerPhone || agent?.whatsappNumber || agent?.phone || "972552502584";
+
+      if (!agent && !n8nBotData && allAgents.length > 0) {
         agent = allAgents[0];
       }
 
-      if (!agent) {
-        return res.status(404).json({ error: "Bot not found" });
-      }
+      const finalBotId = botId || getVal(["botId", "Bot ID"]) || agent?.botId || agent?.id || "bot_generic";
+      const finalTitle = title || agent?.businessName || agent?.name || "בוט עסק חכם";
+      const finalWelcome = welcomeMessage || agent?.welcomeMessage || "";
+      const finalFlow = conversationFlow || agent?.conversationFlow || "";
+      const finalWa = whatsappNumber || agent?.ownerPhone || "972552502584";
 
       return res.json({
-        botId: agent.botId || agent.id,
-        title: agent.businessName || agent.name || agent.title || agent.botIdentity?.name || "",
-        welcomeMessage: agent.welcomeMessage || "",
-        conversationFlow: agent.conversationFlow || "",
-        whatsappNumber: agent.ownerPhone || agent.whatsappNumber || agent.phone || "",
-        themeColor: agent.themeColor || "#0047AB"
+        botId: finalBotId,
+        title: finalTitle,
+        welcomeMessage: finalWelcome,
+        conversationFlow: finalFlow,
+        whatsappNumber: finalWa,
+        themeColor: agent?.themeColor || "#0047AB"
       });
     } catch (err: any) {
       console.error("[SERVER] Error fetching public bot config:", err);

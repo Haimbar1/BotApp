@@ -7,7 +7,7 @@
 
   var userConfig = window.OpticsBotConfig || {};
   var botId = userConfig.botId || (currentScript ? currentScript.getAttribute('data-bot-id') : null) || 'bot_generic_252';
-  var webhookUrl = userConfig.webhookUrl || (currentScript ? currentScript.getAttribute('data-webhook-url') : null) || 'https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a';
+  var webhookUrl = userConfig.webhookUrl || (currentScript ? currentScript.getAttribute('data-webhook-url') : null) || 'https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283';
   var botTitle = userConfig.title || (currentScript ? currentScript.getAttribute('data-title') : null) || 'האופטיקה הטובה - מושב אמירים';
   var botSubtitle = userConfig.subtitle || (currentScript ? currentScript.getAttribute('data-subtitle') : null) || '';
   var whatsappNumber = userConfig.whatsappNumber || (currentScript ? currentScript.getAttribute('data-whatsapp') : null) || '972552502584';
@@ -2390,7 +2390,39 @@
     }
   };
 
-  // Fetch dynamic bot config from database endpoint if available
+  // Helper to apply newly fetched bot config
+  var applyFetchedBotConfig = function(data) {
+    if (!data) return;
+    var hasChanges = false;
+    if (data.welcomeMessage && data.welcomeMessage !== welcomeMessage) {
+      welcomeMessage = data.welcomeMessage;
+      hasChanges = true;
+    }
+    if (data.conversationFlow && data.conversationFlow !== conversationFlow) {
+      conversationFlow = data.conversationFlow;
+      hasChanges = true;
+    }
+    if (data.title && data.title !== botTitle) {
+      botTitle = data.title;
+      hasChanges = true;
+    }
+    if (data.whatsappNumber && data.whatsappNumber !== whatsappNumber) {
+      whatsappNumber = data.whatsappNumber;
+      hasChanges = true;
+    }
+
+    if (hasChanges && typeof window.OpticsBotWidgetUpdate === 'function') {
+      window.OpticsBotWidgetUpdate({
+        botId: botId,
+        title: botTitle,
+        whatsappNumber: whatsappNumber,
+        welcomeMessage: welcomeMessage,
+        conversationFlow: conversationFlow
+      });
+    }
+  };
+
+  // Fetch dynamic bot config from database endpoint or fallback to n8n webhook
   var fetchBotConfigFromDatabase = function() {
     if (!botId) return;
 
@@ -2405,41 +2437,37 @@
 
     fetch(endpoint)
       .then(function(res) {
-        if (!res.ok) return null;
+        if (!res.ok) throw new Error('Local fetch failed');
         return res.json();
       })
       .then(function(data) {
-        if (!data) return;
-        var hasChanges = false;
-        if (data.welcomeMessage && data.welcomeMessage !== welcomeMessage) {
-          welcomeMessage = data.welcomeMessage;
-          hasChanges = true;
-        }
-        if (data.conversationFlow && data.conversationFlow !== conversationFlow) {
-          conversationFlow = data.conversationFlow;
-          hasChanges = true;
-        }
-        if (data.title && data.title !== botTitle) {
-          botTitle = data.title;
-          hasChanges = true;
-        }
-        if (data.whatsappNumber && data.whatsappNumber !== whatsappNumber) {
-          whatsappNumber = data.whatsappNumber;
-          hasChanges = true;
-        }
-
-        if (hasChanges && typeof window.OpticsBotWidgetUpdate === 'function') {
-          window.OpticsBotWidgetUpdate({
-            botId: botId,
-            title: botTitle,
-            whatsappNumber: whatsappNumber,
-            welcomeMessage: welcomeMessage,
-            conversationFlow: conversationFlow
-          });
-        }
+        if (!data) throw new Error('Empty local response');
+        applyFetchedBotConfig(data);
       })
       .catch(function(err) {
-        // Silent catch for external environments
+        // Fallback: fetch directly from n8n GET webhook using botId parameter
+        var directN8nUrl = webhookUrl + (webhookUrl.indexOf('?') !== -1 ? '&' : '?') + 'botId=' + encodeURIComponent(botId);
+        fetch(directN8nUrl)
+          .then(function(res) {
+            if (!res.ok) return null;
+            return res.json();
+          })
+          .then(function(n8nData) {
+            if (!n8nData) return;
+            var item = Array.isArray(n8nData) ? (n8nData.find(function(x) {
+              return String(x.botId || x['Bot ID'] || x.id || '') === botId;
+            }) || n8nData[0]) : n8nData;
+
+            if (item) {
+              applyFetchedBotConfig({
+                welcomeMessage: item.FirstMessage || item.firstMessage || item.welcomeMessage || item['First Message'] || '',
+                conversationFlow: item.conversationFlow || item['Conversation Flow'] || '',
+                title: item.businessName || item.name || item.title || item['Business Name'] || '',
+                whatsappNumber: item.ownerPhone || item.phone || item.whatsappNumber || item['Owner Phone'] || ''
+              });
+            }
+          })
+          .catch(function(e) {});
       });
   };
 

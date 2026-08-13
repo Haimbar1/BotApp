@@ -1448,7 +1448,7 @@ export default function App() {
       whatsappNumber: waNum,
       welcomeMessage: welcomeMsg,
       conversationFlow: flowText,
-      webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
+      webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283"
     };
 
     if (typeof (window as any).OpticsBotWidgetUpdate === "function") {
