@@ -293,6 +293,12 @@
     return baseText;
   };
 
+  // Helper to preserve button title exactly as written without inventing emojis
+  var ensureButtonEmoji = function(title, url) {
+    if (!title) return url ? 'מעבר לקישור' : '';
+    return String(title).trim();
+  };
+
   // Helper to parse ONLY the welcome message (הודעת פתיחה) up to "זרימת השיחה:" and extract options purely as interactive buttons
   var parseConversationFlow = function(flowStr, fallbackTitle) {
     var welcomeText = '';
@@ -303,7 +309,7 @@
       var openingSectionText = rawText;
 
       // 1. Cut off strictly at "זרימת השיחה" / "זרימת שיחה" / "שלב 2" / "המשך שיחה" / etc.
-      var endBoundaryRegex = /(?:\r?\n|^)[ \t]*(?:(?:\d+[\.\)-]|[\-\*•▪️])\s*)?(?:זרימת\s*ה?שיחה|תרחיש(?:י)?\s*ה?שיחה|המשך\s*ה?שיחה|תסריט\s*ה?שיחה|שלב\s*2|סעיף\s*2|2\.)/i;
+      var endBoundaryRegex = /(?:\r?\n|^)[ \t]*(?:(?:\d+[\.\)-]|[\-\*•])\s*)?(?:זרימת\s*ה?שיחה|תרחיש(?:י)?\s*ה?שיחה|המשך\s*ה?שיחה|תסריט\s*ה?שיחה|שלב\s*2|סעיף\s*2)(?:[ \t]*[:\-\|]|\r?\n|$)/i;
       var matchEnd = openingSectionText.match(endBoundaryRegex);
       if (matchEnd && matchEnd.index > 0) {
         openingSectionText = openingSectionText.substring(0, matchEnd.index);
@@ -314,65 +320,83 @@
 
       var lines = openingSectionText.split(/\r?\n/).map(function(l) { return l.trim(); }).filter(Boolean);
       var textLines = [];
+      var inOptionsSection = false;
+
+      var hasExplicitHeader = lines.some(function(l) {
+        var clean = l.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
+        return /^(?:אפשרויות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(clean) ||
+          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(clean);
+      });
 
       lines.forEach(function(line) {
-        // Skip pure section label headers like "אפשרויות:", "כפתורים:", "בחר אפשרות:"
-        if (/^(?:אפשרויות|כפתורים|בחרו\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט)[ \t]*[:\-\|]?$/i.test(line)) {
-          return;
-        }
-
-        // Skip option intro headers if they introduce list options
-        if (/^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)/i.test(line)) {
-          return;
-        }
-
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
+        if (!cleanLineText) return;
 
-        // Product/service names in the opening message are menu buttons.
-        // These are intentionally recognized without requiring a bullet.
+        // Skip pure section label headers like "אפשרויות:", "כפתורים:", "בחר אפשרות:"
+        var isOptionHeader = /^(?:אפשרויות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(cleanLineText) ||
+          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(cleanLineText);
+
+        if (isOptionHeader) {
+          inOptionsSection = true;
+          return;
+        }
+
+        // Product/service names in the opening message are menu buttons
         var isServiceButton = /^(?:משקפים?\s+לשחייה|משקפי\s+שחייה|מסגרות(?:\s+למשקפיים)?|מסגרות\s+למשקפים|עדשות\s+מגע|עדשות\s+מולטיפוקל|מולטיפוקל|קבלת\s+משקפיים\s+מוכנים|משקפי\s+שמש|רוד['’]?י\s+פרוג['’]?קט|קביעת\s+תור|קביעת\s+בדיקת\s+ראייה|איסוף\s+הזמנה|דרכי\s+הגעה|אחריות|פערי\s+מחירים(?:\s*\([^)]*\))?|שאל\s+נציג\s+אנושי)$/i.test(cleanLineText);
 
         // Check if line is a bullet or numbered option (e.g. "1. xxx", "- xxx", "• xxx", "🔹 xxx", "אפשרות 1: xxx")
-        // Only real list markers create buttons. Semantic emojis such as
-        // 📅 📍 👓 etc. can start a normal sentence and must NOT create
-        // an extra button/line spacing in the opening message.
         var bulletMatch = line.match(/^(?:(?:\d+[\.\)-]|[\-\*•🔹▪️▫️👉▸>])|אפשרות\s*\d+\s*[:\-\|]?)\s*(.+)$/iu);
 
-        // Check if line is a short action option sitting at the end or as an option line (e.g. "לקבוע בדיקה", "שאלות אחרות")
-        var isShortAction = false;
-        if (!bulletMatch && cleanLineText.length > 0 && cleanLineText.length <= 70 && !/[.\!\?]$/.test(cleanLineText)) {
-          var actionKeywords = /(?:לקבוע|קביעת|תיאום|תור|בדיקה|שאלות|אחרות|אחר|בירור|שיחה|נציג|אנושי|מידע|שעות|מיקום|כתובת|קטלוג|מחיר|מחירון|קנה|הזמנה|צור\s*קשר|פרטים|תפריט|עזרה|משקפ|מסגר|עדשות|שחייה|שמש|מוכנים|פרוג['’]?קט|מולטיפוקל|איסוף|אחריות|Waze|ניווט)/i;
-          if ((actionKeywords.test(cleanLineText) || isServiceButton) && !cleanLineText.startsWith('✅')) {
-            isShortAction = true;
-          }
-        }
+        // Line starting with an emoji e.g. "📅 תיאום תור"
+        var emojiMatch = line.match(/^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFA}])\s*(.+)$/u);
+
+        var isShortText = cleanLineText.length > 0 && cleanLineText.length <= 90;
+        var isQuestionLine = isShortText && (cleanLineText.indexOf('?') !== -1 || /^(?:איך|מה|מהי|מהם|מתי|איפה|למה|מי|האם|כיצד|אילו|איזה)\b/i.test(cleanLineText));
+        var actionKeywords = /(?:לקבוע|קביעת|תיאום|תור|בדיקה|שאלות|אחרות|אחר|בירור|שיחה|נציג|אנושי|מידע|שעות|מיקום|כתובת|קטלוג|מחיר|מחירון|קנה|הזמנה|צור\s*קשר|פרטים|תפריט|עזרה|משקפ|מסגר|עדשות|שחייה|שמש|מוכנים|פרוג['’]?קט|מולטיפוקל|איסוף|אחריות|Waze|ניווט|הרשמה|רישום|אודות|שירות|קורס|אפיון|לימודים|תמיכה|ייעוץ|אופטיקה|חברתית|מרשמים|רגילים)/i;
+
+        var isOptionLine = false;
+        var candidateTitle = cleanLineText;
 
         if (bulletMatch && bulletMatch[1]) {
-          var btnTitle = bulletMatch[1].trim();
-          btnTitle = btnTitle.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
-          if (btnTitle.length > 0 && btnTitle.length < 70) {
-            buttons.push({
-              id: 'btn_flow_' + buttons.length,
-              title: btnTitle
-            });
+          isOptionLine = true;
+          candidateTitle = bulletMatch[1].trim();
+        } else if (emojiMatch && emojiMatch[2] && isShortText && !line.startsWith('✅')) {
+          isOptionLine = true;
+          candidateTitle = line.trim();
+        } else if (inOptionsSection && isShortText && !line.startsWith('✅')) {
+          isOptionLine = true;
+          candidateTitle = cleanLineText;
+        } else if (!hasExplicitHeader) {
+          if (isQuestionLine && !line.startsWith('✅')) {
+            isOptionLine = true;
+            candidateTitle = cleanLineText;
+          } else if (isShortText && (actionKeywords.test(cleanLineText) || isServiceButton) && !cleanLineText.startsWith('✅')) {
+            isOptionLine = true;
+            candidateTitle = cleanLineText;
           }
-        } else if (isShortAction) {
-          buttons.push({
-            id: 'btn_flow_' + buttons.length,
-            title: cleanLineText
-          });
         } else if (line.indexOf('|') !== -1 && !line.startsWith('http')) {
-          // If options are listed inline separated by vertical bars e.g. "תיאום תור | קטלוג | שעות פעילות"
           var parts = line.split('|');
           parts.forEach(function(p) {
             var pTitle = p.trim().replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
-            if (pTitle.length > 0 && pTitle.length < 70) {
+            if (pTitle.length > 0 && pTitle.length <= 90) {
               buttons.push({
                 id: 'btn_flow_' + buttons.length,
-                title: pTitle
+                title: ensureButtonEmoji(pTitle)
               });
             }
           });
+          return;
+        }
+
+        if (isOptionLine) {
+          var finalTitle = candidateTitle.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
+          finalTitle = finalTitle.replace(/^(?:\d+[\.\)-]|[\-\*•])\s*/, '').trim();
+          if (finalTitle.length > 0 && finalTitle.length <= 90) {
+            buttons.push({
+              id: 'btn_flow_' + buttons.length,
+              title: ensureButtonEmoji(finalTitle)
+            });
+          }
         } else {
           // Normal greeting text line
           textLines.push(line);
@@ -419,10 +443,8 @@
 
     buttons = uniqueButtons;
 
-    // Hard limit for the opening/conversation-flow menu too.
-    // If there are more than 6 options, prefer options related to the
-    // opening text and preserve the agent's original order for ties.
-    if (buttons.length > 6) {
+    // Limit for the opening/conversation-flow menu options.
+    if (buttons.length > 10) {
       var normalizedWelcome = String(welcomeText || '')
         .toLowerCase()
         .replace(/[\u0591-\u05C7]/g, '')
@@ -494,15 +516,15 @@
         return item.button && item.button.url;
       });
 
-      var selectedWelcome = welcomeRegularOptions.slice(0, 6);
+      var selectedWelcome = welcomeRegularOptions.slice(0, 10);
 
-      if (selectedWelcome.length < 6) {
+      if (selectedWelcome.length < 10) {
         selectedWelcome = selectedWelcome.concat(
-          welcomeLinkOptions.slice(0, 6 - selectedWelcome.length)
+          welcomeLinkOptions.slice(0, 10 - selectedWelcome.length)
         );
       }
 
-      buttons = selectedWelcome.slice(0, 6).map(function(item) {
+      buttons = selectedWelcome.slice(0, 10).map(function(item) {
         return item.button;
       });
     }
@@ -1194,77 +1216,7 @@
     }
   ];
 
-  var ensureButtonEmoji = function(title, url) {
-    if (!title) title = url ? 'מעבר לקישור' : 'אפשרות';
-    title = String(title).trim();
 
-    var hasEmoji = /[\u{1F300}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFA}]/u.test(title);
-    if (hasEmoji) return title;
-
-    var lower = title.toLowerCase();
-    if (url || lower.indexOf('http') !== -1 || lower.indexOf('קישור') !== -1 || lower.indexOf('לינק') !== -1 || lower.indexOf('אתר') !== -1 || lower.indexOf('דף') !== -1) {
-      return '🌐 ' + title;
-    }
-    if (lower.indexOf('וואטסאפ') !== -1 || lower.indexOf('ווטסאפ') !== -1 || lower.indexOf('whatsapp') !== -1 || lower.indexOf('wa.me') !== -1) {
-      return '📱 ' + title;
-    }
-    if (lower.indexOf('בדיק') !== -1 || lower.indexOf('תור') !== -1 || lower.indexOf('תיאום') !== -1 || lower.indexOf('יומן') !== -1 || lower.indexOf('תאריך') !== -1) {
-      return '📅 ' + title;
-    }
-    if (lower.indexOf('קטלוג') !== -1 || lower.indexOf('משקפ') !== -1 || lower.indexOf('מוצר') !== -1 || lower.indexOf('מחיר') !== -1 || lower.indexOf('חנות') !== -1) {
-      return '👓 ' + title;
-    }
-    if (lower.indexOf('שעות') !== -1 || lower.indexOf('זמן') !== -1 || lower.indexOf('פעילות') !== -1 || lower.indexOf('מתי') !== -1) {
-      return '⏰ ' + title;
-    }
-    if (lower.indexOf('מסגר') !== -1 || lower.indexOf('דגמ') !== -1) {
-      return '👓 ' + title;
-    }
-    if (lower.indexOf('שמש') !== -1 || lower.indexOf('שחייה') !== -1 || lower.indexOf('שחיה') !== -1) {
-      return '🕶️ ' + title;
-    }
-    if (lower.indexOf('מולטיפוקל') !== -1) {
-      return '🔎 ' + title;
-    }
-    if (lower.indexOf('עדשות מגע') !== -1 || lower.indexOf('עדשה') !== -1) {
-      return '👁️ ' + title;
-    }
-    if (lower.indexOf('אחריות') !== -1 || lower.indexOf('ציפוי') !== -1 || lower.indexOf('אחריו') !== -1) {
-      return '🛡️ ' + title;
-    }
-    if (lower.indexOf('מבצע') !== -1 || lower.indexOf('הנחה') !== -1 || lower.indexOf('זול') !== -1 || lower.indexOf('פערי') !== -1) {
-      return '💰 ' + title;
-    }
-    if (lower.indexOf('אודות') !== -1 || lower.indexOf('עלינו') !== -1) {
-      return 'ℹ️ ' + title;
-    }
-    if (lower.indexOf('מיקום') !== -1 || lower.indexOf('כתובת') !== -1 || lower.indexOf('ניווט') !== -1 || lower.indexOf('מפה') !== -1 || lower.indexOf('waze') !== -1) {
-      return '📍 ' + title;
-    }
-    if (lower.indexOf('נציג') !== -1 || lower.indexOf('אנושי') !== -1 || lower.indexOf('טלפון') !== -1 || lower.indexOf('שיחה') !== -1 || lower.indexOf('שירות') !== -1) {
-      return '📞 ' + title;
-    }
-    if (lower.indexOf('תשלום') !== -1 || lower.indexOf('אשראי') !== -1 || lower.indexOf('ביט') !== -1 || lower.indexOf('קנה') !== -1) {
-      return '💳 ' + title;
-    }
-    if (lower.indexOf('אישור') !== -1 || lower.indexOf('כן') !== -1 || lower.indexOf('מאשר') !== -1) {
-      return '✅ ' + title;
-    }
-    if (lower.indexOf('ביטול') !== -1 || lower.indexOf('לא') !== -1 || lower.indexOf('חזור') !== -1) {
-      return '❌ ' + title;
-    }
-    if (lower.indexOf('מידע') !== -1 || lower.indexOf('עזרה') !== -1 || lower.indexOf('שאלה') !== -1 || lower.indexOf('פרטים') !== -1) {
-      return '💡 ' + title;
-    }
-    if (lower.indexOf('הורדה') !== -1 || lower.indexOf('קובץ') !== -1 || lower.indexOf('pdf') !== -1) {
-      return '📥 ' + title;
-    }
-    if (lower.indexOf('איסוף') !== -1 || lower.indexOf('מוכנ') !== -1) {
-      return '📦 ' + title;
-    }
-
-    return '• ' + title;
-  };
 
   var renderMessages = function() {
     messagesBox.innerHTML = '';

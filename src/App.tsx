@@ -988,7 +988,7 @@ export default function App() {
                 href={targetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 my-1 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition cursor-pointer border border-blue-400/30 no-underline shrink-0"
+                className="inline-flex items-center justify-center gap-1.5 my-1 px-3.5 py-1.5 bg-white border-2 border-blue-500 text-blue-700 hover:bg-blue-50 rounded-xl text-xs font-bold shadow-sm transition cursor-pointer shrink-0 no-underline"
               >
                 <span>{label}</span>
                 <ExternalLink className="w-3 h-3" />
@@ -4710,18 +4710,9 @@ ${videos || "(לא הוגדר)"}
               <span>חיבור WhatsApp Business 💬</span>
             </button>
 
-            {/* Security controls & System Firebase Storage Settings (Admin Only) */}
+            {/* Security controls (Admin Only) */}
             {sessionUser?.email === "haim.bar@gmail.com" && (
               <>
-                <button
-                  onClick={() => setShowSystemFirebaseModal(true)}
-                  className="p-2 bg-[#171A24] text-slate-300 hover:text-emerald-400 hover:shadow-[0_0_12px_rgba(16,185,129,0.2)] rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
-                  title="הגדרת מפתחות Firebase Storage ברמת המערכת (מנהל מערכת ראשי)"
-                >
-                  <Globe className="w-4 h-4 text-emerald-400" />
-                  <span>הגדרות Firebase 🌐</span>
-                </button>
-
                 <button
                   onClick={() => {
                     setSecurityGoogleClientId(googleClientId);
@@ -5937,13 +5928,14 @@ ${videos || "(לא הוגדר)"}
                                                 <span>{parsed.listTitle}</span>
                                               </p>
                                             )}
-                                            <div className="flex flex-wrap gap-1.5">
+                                            <div className="flex flex-wrap gap-1.5 mt-1">
                                               {parsed.listOptions.map((opt: any, idx: number) => {
-                                                const optTitle = typeof opt === "string" ? opt : (opt.title || opt.text || opt.label || opt.id || `אפשרות ${idx + 1}`);
+                                                const rawTitle = typeof opt === "string" ? opt : (opt.title || opt.text || opt.label || opt.id || `אפשרות ${idx + 1}`);
+                                                const optTitle = String(rawTitle || "").trim() || `אפשרות ${idx + 1}`;
                                                 return (
                                                   <span
                                                     key={idx}
-                                                    className="px-2.5 py-1 rounded-lg bg-sky-950/80 border border-sky-500/30 text-sky-200 text-[11px] font-medium shadow-sm"
+                                                    className="inline-flex items-center justify-center px-3 py-1.5 bg-white border-2 border-blue-500 text-blue-700 text-xs font-bold rounded-xl shadow-sm hover:bg-blue-50 transition cursor-pointer"
                                                   >
                                                     {optTitle}
                                                   </span>
