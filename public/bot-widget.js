@@ -836,14 +836,14 @@
     }
 
     .obw-msg.obw-opening-msg .obw-msg-bullet {
-      margin: 4px 0;
+      margin: 2px 0;
     }
 
     .obw-msg-bullet {
       display: flex;
       align-items: flex-start;
       gap: 7px;
-      margin: 4px 0;
+      margin: 2px 0;
       padding-right: 0;
       direction: rtl;
       text-align: right;
@@ -1427,7 +1427,25 @@
           });
         });
 
-        var formatted = formattedLines.join('<br/>');
+        var joinFormattedLines = function(lines) {
+          var result = '';
+          for (var i = 0; i < lines.length; i++) {
+            var curr = lines[i];
+            if (i > 0) {
+              var prev = lines[i - 1];
+              var prevIsBlock = /^<div/i.test(prev.trim()) || /<\/div>$/i.test(prev.trim());
+              var currIsBlock = /^<div/i.test(curr.trim());
+
+              if (!prevIsBlock && !currIsBlock) {
+                result += '<br/>';
+              }
+            }
+            result += curr;
+          }
+          return result;
+        };
+
+        var formatted = joinFormattedLines(formattedLines);
 
         // Professional visual hierarchy:
         // emphasize only the first line/sentence, while keeping the rest
@@ -1445,7 +1463,7 @@
           if (firstNonEmptyIndex === 0) {
             formattedLines[0] =
               '<span class="obw-msg-lead">' + formattedLines[0] + '</span>';
-            formatted = formattedLines.join('<br/>');
+            formatted = joinFormattedLines(formattedLines);
           }
         }
 
