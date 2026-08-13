@@ -1448,7 +1448,7 @@ export default function App() {
       whatsappNumber: waNum,
       welcomeMessage: welcomeMsg,
       conversationFlow: flowText,
-      webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283"
+      webhookUrl: "https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
     };
 
     if (typeof (window as any).OpticsBotWidgetUpdate === "function") {
@@ -7582,7 +7582,7 @@ ${videos || "(לא הוגדר)"}
   src="https://app.smartesek.com/bot-widget.js" 
   data-bot-id="${bId}"
   data-title="${bTitle}"${welcomeMsg ? `\n  data-welcome-message="${welcomeMsg}"` : ''}${waNum ? `\n  data-whatsapp="${waNum}"` : ''}
-  data-webhook-url="https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283"
+  data-webhook-url="https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a"
   async>
 </script>`;
 

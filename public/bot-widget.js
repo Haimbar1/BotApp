@@ -7,7 +7,7 @@
 
   var userConfig = window.OpticsBotConfig || {};
   var botId = userConfig.botId || (currentScript ? currentScript.getAttribute('data-bot-id') : null) || 'bot_generic_252';
-  var webhookUrl = userConfig.webhookUrl || (currentScript ? currentScript.getAttribute('data-webhook-url') : null) || 'https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283';
+  var webhookUrl = userConfig.webhookUrl || (currentScript ? currentScript.getAttribute('data-webhook-url') : null) || 'https://n8n.srv1239769.hstgr.cloud/webhook/65325d34-0c9e-4cc3-8b7c-c03c47105b3a';
   var botTitle = userConfig.title || (currentScript ? currentScript.getAttribute('data-title') : null) || 'האופטיקה הטובה - מושב אמירים';
   var botSubtitle = userConfig.subtitle || (currentScript ? currentScript.getAttribute('data-subtitle') : null) || '';
   var whatsappNumber = userConfig.whatsappNumber || (currentScript ? currentScript.getAttribute('data-whatsapp') : null) || '972552502584';
@@ -2461,7 +2461,8 @@
       })
       .catch(function(err) {
         // Fallback: fetch directly from n8n GET webhook using botId parameter
-        var directN8nUrl = webhookUrl + (webhookUrl.indexOf('?') !== -1 ? '&' : '?') + 'botId=' + encodeURIComponent(botId);
+        var n8nGetUrl = 'https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283';
+        var directN8nUrl = n8nGetUrl + (n8nGetUrl.indexOf('?') !== -1 ? '&' : '?') + 'botId=' + encodeURIComponent(botId);
         fetch(directN8nUrl)
           .then(function(res) {
             if (!res.ok) return null;
