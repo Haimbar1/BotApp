@@ -1466,9 +1466,6 @@ export default function App() {
         if (welcomeMsg) {
           script.setAttribute("data-welcome-message", welcomeMsg);
         }
-        if (flowText) {
-          script.setAttribute("data-conversation-flow", flowText);
-        }
         document.body.appendChild(script);
       }
     }
@@ -7574,53 +7571,66 @@ ${videos || "(לא הוגדר)"}
               </div>
 
               {/* Code Snippet Box */}
-              <div className="relative bg-[#07080e] border border-slate-800 rounded-xl p-4 font-mono text-xs text-emerald-400 dir-ltr text-left overflow-x-auto select-all">
-                <pre className="whitespace-pre-wrap break-all">{`<!-- סקריפט בועת הצ'אט - SmartEsek Webi Bot -->
+              {(() => {
+                const bId = embedTargetAgent.botId || `bot_${embedTargetAgent.id}`;
+                const bTitle = (embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט").replace(/"/g, '&quot;');
+                const welcomeMsg = (embedTargetAgent.welcomeMessage || "").replace(/"/g, '&quot;').replace(/\r?\n/g, '\\n');
+                const waNum = embedTargetAgent.ownerPhone || "972552502584";
+
+                const snippet = `<!-- סקריפט בועת הצ'אט - SmartEsek Webi Bot -->
 <script 
   src="https://app.smartesek.com/bot-widget.js" 
-  data-bot-id="${embedTargetAgent.botId || `bot_${embedTargetAgent.id}`}"
-  data-title="${embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט"}"
+  data-bot-id="${bId}"
+  data-title="${bTitle}"${welcomeMsg ? `\n  data-welcome-message="${welcomeMsg}"` : ''}${waNum ? `\n  data-whatsapp="${waNum}"` : ''}
+  data-webhook-url="https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283"
   async>
-</script>`}</pre>
-              </div>
+</script>`;
 
-              {/* Copy & Action Controls */}
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const embedCode = `<!-- סקריפט בועת הצ'אט - SmartEsek Webi Bot -->\n<script \n  src="https://app.smartesek.com/bot-widget.js" \n  data-bot-id="${embedTargetAgent.botId || `bot_${embedTargetAgent.id}`}"\n  data-title="${embedTargetAgent.businessName || embedTargetAgent.name || "שם הבוט"}"\n  async>\n</script>`;
-                    navigator.clipboard.writeText(embedCode);
-                    setEmbedCopied(true);
-                    setTimeout(() => setEmbedCopied(false), 3000);
-                  }}
-                  className={`flex-1 py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg ${
-                    embedCopied
-                      ? "bg-emerald-500 text-slate-950 font-black"
-                      : "bg-sky-500 hover:bg-sky-400 text-slate-950 font-black"
-                  }`}
-                >
-                  {embedCopied ? (
-                    <>
-                      <Check className="w-4 h-4 text-slate-950" />
-                      <span>הקוד הועתק בהצלחה! ✓</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-4 h-4 text-slate-950" />
-                      <span>העתק קוד להטמעה 📋</span>
-                    </>
-                  )}
-                </button>
+                return (
+                  <>
+                    <div className="relative bg-[#07080e] border border-slate-800 rounded-xl p-4 font-mono text-xs text-emerald-400 dir-ltr text-left overflow-x-auto select-all">
+                      <pre className="whitespace-pre-wrap break-all">{snippet}</pre>
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowEmbedModal(false)}
-                  className="px-4 py-3 bg-slate-850 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
-                >
-                  סגור
-                </button>
-              </div>
+                    {/* Copy & Action Controls */}
+                    <div className="flex items-center gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(snippet);
+                          setEmbedCopied(true);
+                          setTimeout(() => setEmbedCopied(false), 3000);
+                        }}
+                        className={`flex-1 py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg ${
+                          embedCopied
+                            ? "bg-emerald-500 text-slate-950 font-black"
+                            : "bg-sky-500 hover:bg-sky-400 text-slate-950 font-black"
+                        }`}
+                      >
+                        {embedCopied ? (
+                          <>
+                            <Check className="w-4 h-4 text-slate-950" />
+                            <span>הקוד הועתק בהצלחה! ✓</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4 text-slate-950" />
+                            <span>העתק קוד להטמעה 📋</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowEmbedModal(false)}
+                        className="px-4 py-3 bg-slate-850 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+                      >
+                        סגור
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </motion.div>
           </div>
         )}

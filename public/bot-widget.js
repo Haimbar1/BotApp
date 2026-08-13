@@ -16,6 +16,21 @@
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
   var customOptions = userConfig.options || (currentScript ? currentScript.getAttribute('data-options') : null) || '';
 
+  var cleanStringAttr = function(val) {
+    if (!val || typeof val !== 'string') return val || '';
+    var res = val.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    if (res.indexOf('\\n') !== -1) {
+      res = res.replace(/\\n/g, '\n');
+    }
+    return res.trim();
+  };
+
+  welcomeMessage = cleanStringAttr(welcomeMessage);
+  conversationFlow = cleanStringAttr(conversationFlow);
+  if (typeof customOptions === 'string') {
+    customOptions = cleanStringAttr(customOptions);
+  }
+
   // Header title: show only the bot name.
   // Do not automatically add a location/subtitle such as "מושב אמירים".
   // If the bot name itself contains a location, it remains part of the name.
@@ -348,16 +363,16 @@
 
       var hasExplicitHeader = lines.some(function(l) {
         var clean = l.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
-        return /^(?:אפשרויות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(clean) ||
-          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(clean);
+        return /^(?:אפשרויות|אפשריות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|תפריט\s*ראשי|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(clean) ||
+          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(clean);
       });
 
       lines.forEach(function(line) {
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
         if (!cleanLineText) return;
 
-        var isOptionHeader = /^(?:אפשרויות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(cleanLineText) ||
-          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(cleanLineText);
+        var isOptionHeader = /^(?:אפשרויות|אפשריות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|תפריט\s*ראשי|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(cleanLineText) ||
+          /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(cleanLineText);
 
         if (isOptionHeader) {
           inOptionsSection = true;
@@ -2471,7 +2486,10 @@
       });
   };
 
-  fetchBotConfigFromDatabase();
+  // Only fetch from server/n8n if no welcome message or options were provided directly in script tag / config
+  if (!welcomeMessage && !customOptions && !conversationFlow) {
+    fetchBotConfigFromDatabase();
+  }
 
   // Initial render
   renderMessages();
