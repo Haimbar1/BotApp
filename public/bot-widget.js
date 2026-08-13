@@ -357,19 +357,24 @@
       // 2. Remove leading "הודעת פתיחה:" or "1. הודעת פתיחה:" header
       openingSectionText = openingSectionText.replace(/^[ \t]*(?:(?:\d+[\.\)-]|[\-\*•▪️])\s*)?(?:שלב\s*1\s*[:\-\|]?\s*|סעיף\s*1\s*[:\-\|]?\s*)?(?:הודעת\s*פתיחה|ברכת\s*פתיחה|שאלת\s*פתיחה|פתיחה)[ \t]*[:\-\|]?[ \t]*/i, '').trim();
 
-      var lines = openingSectionText.split(/\r?\n/).map(function(l) { return l.trim(); }).filter(Boolean);
+      var rawLines = openingSectionText.split(/\r?\n/);
       var textLines = [];
       var inOptionsSection = false;
 
-      var hasExplicitHeader = lines.some(function(l) {
+      var hasExplicitHeader = rawLines.some(function(l) {
         var clean = l.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
         return /^(?:אפשרויות|אפשריות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|תפריט\s*ראשי|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(clean) ||
           /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(clean);
       });
 
-      lines.forEach(function(line) {
+      rawLines.forEach(function(line) {
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
-        if (!cleanLineText) return;
+        if (!cleanLineText) {
+          if (textLines.length > 0 && textLines[textLines.length - 1] !== '') {
+            textLines.push('');
+          }
+          return;
+        }
 
         var isOptionHeader = /^(?:אפשרויות|אפשריות|כפתורים|בחרו?\s*אפשרות|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר\s*מבין\s*האפשרויות|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|תפריט\s*ראשי|מה\s*תרצ[וה]\s*לעשות|איך\s*אפשר\s*לעזור|איך\s*נוכל\s*לסייע|נושאים\s*לבחירה|שאלות\s*נפוצות)[ \t]*[:\-\|]?$/i.test(cleanLineText) ||
           /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(cleanLineText);
@@ -438,8 +443,9 @@
 
       while (textLines.length > 0) {
         var lastTextLine = textLines[textLines.length - 1].trim();
-        if (/^(?:אפשרויות|כפתורים|בחרו\s*אפשרות|אפשרויות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצו\s*לעשות|איך\s*אפשר\s*לעזור)[ \t]*[:\-\|]?$/i.test(lastTextLine) ||
-            /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(lastTextLine)) {
+        if (!lastTextLine ||
+            /^(?:אפשרויות|אפשריות|כפתורים|בחרו\s*אפשרות|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|בחר\s*אחת\s*מהאפשרויות|אנא\s*בחר|אפשרויות\s*זמינות|להלן\s*האפשרויות|תפריט|מה\s*תרצו\s*לעשות|איך\s*אפשר\s*לעזור)[ \t]*[:\-\|]?$/i.test(lastTextLine) ||
+            /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(lastTextLine)) {
           textLines.pop();
         } else {
           break;
@@ -449,8 +455,8 @@
       if (textLines.length > 0) {
         extractedText = textLines
           .join('\n')
-          .replace(/[ \t]*\n[ \t]*(?:\n[ \t]*)+/g, '\n')
-          .replace(/^[ \t]+|[ \t]+$/g, '');
+          .replace(/\n{3,}/g, '\n\n')
+          .replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
       }
 
       return { text: extractedText, buttons: extractedButtons };
@@ -777,11 +783,11 @@
     }
 
     .obw-msg {
-      max-width: 94%;
-      padding: 7px 10px;
-      border-radius: 13px;
-      font-size: 12.5px;
-      line-height: 1.38;
+      max-width: 95%;
+      padding: 9px 12px;
+      border-radius: 14px;
+      font-size: 12.8px;
+      line-height: 1.5;
       word-break: break-word;
       white-space: pre-wrap;
       font-weight: 400;
@@ -792,7 +798,7 @@
     .obw-msg-bot {
       align-self: flex-start;
       background: #ffffff;
-      color: #46566b;
+      color: #384860;
       border: 2px solid #cfd9f8;
       border-bottom-right-radius: 6px;
       box-shadow: 0 1px 3px rgba(60, 80, 130, 0.05);
@@ -808,17 +814,18 @@
       text-align: right;
     }
 
-    /* Opening/welcome message: compact line rhythm */
+    /* Opening/welcome message: spacious line rhythm */
     .obw-msg.obw-opening-msg {
-      line-height: 1.28;
+      line-height: 1.55;
       font-weight: 400;
       direction: rtl;
       text-align: right;
+      padding: 10px 13px;
     }
 
     /* Opening screen: a little extra breathing room before the six options. */
     .obw-msg.obw-opening-msg .obw-buttons-container {
-      padding-top: 22px;
+      padding-top: 18px;
     }
 
     .obw-msg.obw-opening-msg > div {
@@ -829,15 +836,15 @@
     }
 
     .obw-msg.obw-opening-msg .obw-msg-bullet {
-      margin: 2px 0;
+      margin: 4px 0;
     }
 
     .obw-msg-bullet {
       display: flex;
       align-items: flex-start;
-      gap: 6px;
-      margin: 3px 0;
-      padding-right: 2px;
+      gap: 7px;
+      margin: 4px 0;
+      padding-right: 0;
       direction: rtl;
       text-align: right;
     }
@@ -846,7 +853,10 @@
       flex: 0 0 auto;
       color: #2f6fa3;
       font-weight: 600;
-      line-height: 1.3;
+      font-size: 13.5px;
+      line-height: 1.4;
+      direction: rtl;
+      text-align: right;
     }
 
     .obw-msg-bullet-text {
@@ -855,6 +865,7 @@
       font-weight: 400;
       direction: rtl;
       text-align: right;
+      line-height: 1.45;
     }
 
     .obw-msg-user {
@@ -1299,9 +1310,7 @@
       if (msg.sender !== 'user' && messages.indexOf(msg) === 0) {
         rawText = String(rawText)
           .replace(/\r\n/g, '\n')
-          .replace(/\n[ \t]*\n+/g, '\n')
-          .replace(/[ \t]+\n/g, '\n')
-          .replace(/\n[ \t]+/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
           .trim();
       }
 
@@ -1319,32 +1328,29 @@
           // - item
           // • item
           // * item
-          // ✅ item
           // numbered items such as 1. item
           var bulletMatch = trimmedLine.match(
             /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)])\s+(.+)$/u
           );
 
-          var bulletMark = '';
-          var bulletText = '';
+          var emojiBulletMatch = trimmedLine.match(
+            /^([\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFA}\u{2700}-\u{27BF}])\s*(.+)$/u
+          );
 
           if (bulletMatch) {
             var originalMarkMatch = trimmedLine.match(
               /^(?:[-*•▪▫‣▸►]|(?:\d+)[.)])\s+/u
             );
 
-            bulletMark = originalMarkMatch ? originalMarkMatch[0].trim() : '•';
-            bulletText = bulletMatch[1].trim();
+            var bulletMark = originalMarkMatch ? originalMarkMatch[0].trim() : '•';
+            var bulletText = bulletMatch[1].trim();
 
-            // Keep numbered markers as-is; normalize plain markdown bullets
-            // to a subtle dot for a cleaner chat appearance.
             if (/^[-*•▪▫‣▸►]$/.test(bulletMark)) {
               bulletMark = '•';
             }
 
             var formattedBulletText = escapeHtml(bulletText);
 
-            // Turn URLs inside bullet text into the same compact link button.
             if (/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(bulletText)) {
               formattedBulletText = formatTextWithInlineButtons(bulletText);
             }
@@ -1352,6 +1358,21 @@
             return '<div class="obw-msg-bullet">' +
               '<span class="obw-msg-bullet-mark">' + escapeHtml(bulletMark) + '</span>' +
               '<span class="obw-msg-bullet-text">' + formattedBulletText + '</span>' +
+              '</div>';
+          }
+
+          if (emojiBulletMatch) {
+            var emojiMark = emojiBulletMatch[1];
+            var emojiText = emojiBulletMatch[2].trim();
+            var formattedEmojiText = escapeHtml(emojiText);
+
+            if (/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(emojiText)) {
+              formattedEmojiText = formatTextWithInlineButtons(emojiText);
+            }
+
+            return '<div class="obw-msg-bullet">' +
+              '<span class="obw-msg-bullet-mark">' + escapeHtml(emojiMark) + '</span>' +
+              '<span class="obw-msg-bullet-text">' + formattedEmojiText + '</span>' +
               '</div>';
           }
 
