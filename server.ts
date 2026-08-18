@@ -795,9 +795,7 @@ async function startServer() {
         return agentEmail !== userEmail;
       });
 
-      // Map user's proposed agents to update only allowed fields on the existing agent from DB
-      // Allowed fields to change: agentEmail, ownerPhone, businessName, ownerName, leadFollowUpDays, status
-      // Everything else must remain unchanged (except for the first newly created agent)
+      // Map user's proposed agents to allow updating full intelligence and prompt configuration
       const userProposedAgents = agents.map((proposed: any) => {
         const existing = existingUserAgents.find((a: any) => a.id === proposed.id);
         if (!existing) {
@@ -810,6 +808,17 @@ async function startServer() {
             botId: proposed.botId || "bot_" + Math.floor(Math.random() * 90000 + 10000),
             whatsappInstance: proposed.whatsappInstance || "Smarti",
             businessPrompt: proposed.businessPrompt || `# הנחיות לסוכן מכירות ושירות לקוחות`,
+            botIdentity: proposed.botIdentity,
+            coursesInfo: proposed.coursesInfo,
+            kidsCourses: proposed.kidsCourses,
+            conversationFlow: proposed.conversationFlow,
+            writingStyle: proposed.writingStyle,
+            faqAnswers: proposed.faqAnswers,
+            whatNotToDo: proposed.whatNotToDo,
+            syllabusLinks: proposed.syllabusLinks,
+            humanEscalation: proposed.humanEscalation,
+            imagesInfo: proposed.imagesInfo,
+            videosInfo: proposed.videosInfo,
             key: proposed.key || "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
             leadFollowUpDays: proposed.leadFollowUpDays || "3",
             agentEmail: userEmail, // Force to logged-in user email
@@ -820,14 +829,9 @@ async function startServer() {
           };
         }
         return {
-          ...existing, // Keep everything else unchanged
-          agentEmail: proposed.agentEmail !== undefined ? proposed.agentEmail : existing.agentEmail,
-          ownerPhone: proposed.ownerPhone !== undefined ? proposed.ownerPhone : existing.ownerPhone,
-          businessName: proposed.businessName !== undefined ? proposed.businessName : existing.businessName,
-          ownerName: proposed.ownerName !== undefined ? proposed.ownerName : existing.ownerName,
-          leadFollowUpDays: proposed.leadFollowUpDays !== undefined ? proposed.leadFollowUpDays : existing.leadFollowUpDays,
-          status: proposed.status !== undefined ? proposed.status : existing.status,
-          whatsappConfig: proposed.whatsappConfig !== undefined ? proposed.whatsappConfig : existing.whatsappConfig
+          ...existing,
+          ...proposed, // Allow updating all fields including businessPrompt, prompt blocks, bot settings!
+          agentEmail: userEmail // Keep user's email
         };
       });
 
@@ -1641,6 +1645,98 @@ async function startServer() {
 
   // ---------------- CHATS / CONVERSATIONS API ROUTES ----------------
 
+  function parseSessionIdInfo(sId: string, knownBotIds: string[] = []) {
+    if (!sId) return { phone: "", botId: "", customerName: "" };
+    let cleanS = String(sId).replace(/@(?:s\.whatsapp\.net|c\.us)/gi, "").trim();
+    cleanS = cleanS.replace(/^=+/, "");
+
+    let phone = "";
+    let botId = "";
+    let customerName = "";
+
+    const isPhonePattern = (s: string) => {
+      if (!s) return false;
+      const clean = s.replace(/[-+ ]/g, "");
+      return (
+        /^(\+?972|0)?[57]\d{8}$/.test(clean) ||
+        /^(\+?972|0)[23489]\d{7}$/.test(clean) ||
+        (/^\d{9,15}$/.test(clean) && !clean.startsWith("170") && !clean.startsWith("180"))
+      );
+    };
+
+    const firstUnderscore = cleanS.indexOf("_");
+    let remainder = cleanS;
+
+    if (firstUnderscore !== -1) {
+      const firstPart = cleanS.substring(0, firstUnderscore).trim();
+      if (isPhonePattern(firstPart)) {
+        phone = firstPart;
+        remainder = cleanS.substring(firstUnderscore + 1).trim();
+      }
+    }
+
+    if (!phone) {
+      const parts = cleanS.split(/[_\-]/);
+      for (const part of parts) {
+        if (isPhonePattern(part)) {
+          phone = part;
+          break;
+        }
+      }
+    }
+
+    if (remainder) {
+      const validKnownBots = [...knownBotIds].filter(Boolean).sort((a, b) => b.length - a.length);
+      let matchedKnownBot = "";
+
+      for (const kBot of validKnownBots) {
+        if (remainder === kBot) {
+          matchedKnownBot = kBot;
+          remainder = "";
+          break;
+        }
+        if (remainder.startsWith(kBot + "_")) {
+          matchedKnownBot = kBot;
+          remainder = remainder.substring(kBot.length + 1).trim();
+          break;
+        }
+      }
+
+      if (matchedKnownBot) {
+        botId = matchedKnownBot;
+        if (remainder) {
+          customerName = remainder;
+        }
+      } else {
+        const botPrefixMatch = remainder.match(/^((?:bot|smartbot|agent|hook|n8n|flow)[_\w\d]*?)_([^\d_].*)$/i);
+        if (botPrefixMatch) {
+          botId = botPrefixMatch[1];
+          customerName = botPrefixMatch[2];
+        } else {
+          const lastUnderscore = remainder.lastIndexOf("_");
+          if (lastUnderscore !== -1) {
+            const potentialBot = remainder.substring(0, lastUnderscore);
+            const potentialName = remainder.substring(lastUnderscore + 1).trim();
+            if (/[\u0590-\u05FFa-zA-Z]/.test(potentialName) && !/^\d+$/.test(potentialName)) {
+              botId = potentialBot;
+              customerName = potentialName;
+            } else {
+              botId = remainder;
+            }
+          } else {
+            botId = remainder;
+          }
+        }
+      }
+    }
+
+    if (customerName) {
+      customerName = customerName.replace(/_/g, " ").trim();
+    }
+
+    return { phone, botId, customerName };
+  }
+
   // Fetch chats matching filter
   app.get("/api/chats", requireAuth, async (req: any, res: any) => {
     // Robust function to return raw stringified JSON or plain text for client parsing
@@ -1796,17 +1892,16 @@ async function startServer() {
               if (!item) return null;
               const sId = item.session_id || item.sessionId || item.SessionId || "";
               
-              // Parse phone and botId from sessionId if needed
-              let itemPhone = item.phone || "";
+              // Parse phone, botId and customerName from sessionId if needed
+              let itemPhone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || "";
               let itemBotId = item.botId || item.bot_id || "";
-              if (sId && (!itemPhone || !itemBotId)) {
-                const underscoreIdx = sId.indexOf("_");
-                if (underscoreIdx !== -1) {
-                  if (!itemPhone) itemPhone = sId.substring(0, underscoreIdx);
-                  if (!itemBotId) itemBotId = sId.substring(underscoreIdx + 1);
-                } else {
-                  if (!itemBotId) itemBotId = sId;
-                }
+              let itemName = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || "";
+
+              if (sId) {
+                const sInfo = parseSessionIdInfo(sId);
+                if (!itemPhone && sInfo.phone) itemPhone = sInfo.phone;
+                if (!itemBotId && sInfo.botId) itemBotId = sInfo.botId;
+                if (!itemName && sInfo.customerName) itemName = sInfo.customerName;
               }
 
               // Parse message contents (can be JSON string or parsed object)
@@ -1842,6 +1937,9 @@ async function startServer() {
                 sessionId: sId,
                 botId: itemBotId || botId,
                 phone: itemPhone,
+                name: itemName,
+                userName: itemName,
+                userPhone: itemPhone,
                 message: {
                   type: finalType,
                   content: finalContent
@@ -1919,9 +2017,27 @@ async function startServer() {
         if (!sessionId) return null;
 
         // Parse phone and botId
-        const firstUnderscore = sessionId.indexOf("_");
-        const phone = firstUnderscore !== -1 ? sessionId.substring(0, firstUnderscore) : "";
-        const botId = firstUnderscore !== -1 ? sessionId.substring(firstUnderscore + 1) : sessionId;
+        let phone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || "";
+        let botId = item.botId || item.bot_id || "";
+        let name = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || "";
+
+        if (sessionId) {
+          const cleanS = String(sessionId).replace(/@(?:s\.whatsapp\.net|c\.us)/gi, "");
+          if (!phone) {
+            const parts = cleanS.split(/[_\-]/);
+            for (const part of parts) {
+              if (part.toLowerCase() === "web" || part.toLowerCase() === "whatsapp" || part.toLowerCase() === "wa") continue;
+              if (/^(\+?972|0)?[57]\d{8}$/.test(part) || /^(\+?972|0)[23489]\d{7}$/.test(part) || (/^\d{9,14}$/.test(part) && !part.startsWith("170") && !part.startsWith("180"))) {
+                phone = part;
+                break;
+              }
+            }
+          }
+          if (!botId) {
+            const firstUnderscore = sessionId.indexOf("_");
+            botId = firstUnderscore !== -1 ? sessionId.substring(firstUnderscore + 1) : sessionId;
+          }
+        }
 
         // Handle variations of message content
         let msgType = "human";
@@ -1949,6 +2065,9 @@ async function startServer() {
           sessionId,
           botId,
           phone,
+          name,
+          userName: name,
+          userPhone: phone,
           message: {
             type: finalType,
             content: typeof msgContent === "object" ? JSON.stringify(msgContent) : msgContent
