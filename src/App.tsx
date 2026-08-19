@@ -4981,8 +4981,8 @@ ${videos || "(לא הוגדר)"}
                   </label>
                   <div className="flex gap-2">
                     <input
-                      type="password"
-                      placeholder="הזן קוד (למשל haim)"
+                      type="text"
+                      placeholder="הזן קוד (למשל hatova או haim או 252)"
                       value={bypassPasscode}
                       onChange={(e) => setBypassPasscode(e.target.value)}
                       onKeyDown={(e) => {
@@ -5006,7 +5006,7 @@ ${videos || "(לא הוגדר)"}
                   </div>
                 </div>
 
-                {/* Auto Developer/Admin Login shortcut when in development or sandbox container */}
+                {/* Auto Quick Login Shortcuts when in development or sandbox container */}
                 {(() => {
                   const host = typeof window !== "undefined" ? window.location.hostname : "";
                   const isDevOrSandbox = !host || 
@@ -5017,40 +5017,53 @@ ${videos || "(לא הוגדר)"}
                                          host.includes("google.com") ||
                                          host.includes("aistudio");
                   if (!isDevOrSandbox) return null;
+
+                  const performDirectLogin = async (pass: string) => {
+                    setBypassPasscode(pass);
+                    try {
+                      const res = await apiFetch("/api/auth/bypass-login", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({ passcode: pass })
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        localStorage.removeItem("has_logged_out");
+                        localStorage.setItem("cyber_session_token", data.token);
+                        setSessionToken(data.token);
+                        setSessionUser(data.user);
+                        setIsAuthenticated(true);
+                        setIsLandingPage(false);
+                        fetchAgentsFromServer(data.token, data.user?.email);
+                        fetchFullSettingsFromServer(data.token);
+                      } else {
+                        setAuthError(data.message || "מפתח מעקף שגוי.");
+                      }
+                    } catch (err) {
+                      setAuthError("שגיאת התחברות מהירה.");
+                    }
+                  };
+
                   return (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setBypassPasscode("haim");
-                        try {
-                          const res = await apiFetch("/api/auth/bypass-login", {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json"
-                            },
-                            body: JSON.stringify({ passcode: "haim" })
-                          });
-                          const data = await res.json();
-                          if (res.ok && data.success) {
-                            localStorage.removeItem("has_logged_out");
-                            localStorage.setItem("cyber_session_token", data.token);
-                            setSessionToken(data.token);
-                            setSessionUser(data.user);
-                            setIsAuthenticated(true);
-                            setIsLandingPage(false);
-                            fetchAgentsFromServer(data.token, data.user?.email);
-                            fetchFullSettingsFromServer(data.token);
-                          } else {
-                            setAuthError(data.message || "מפתח מעקף שגוי.");
-                          }
-                        } catch (err) {
-                          setAuthError("שגיאת התחברות מהירה.");
-                        }
-                      }}
-                      className="w-full mt-2 py-2 px-3 border border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-400 rounded-xl text-[10px] font-bold cursor-pointer transition flex items-center justify-center gap-1.5"
-                    >
-                      <span>🔑 כניסת מנהל מהירה (סביבת פיתוח וסנדבוקס)</span>
-                    </button>
+                    <div className="w-full flex flex-col gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => performDirectLogin("hatova")}
+                        className="w-full py-2 px-3 border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 rounded-xl text-xs font-bold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <span>👓 כניסה מהירה: האופטיקה הטובה (בוט 252)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => performDirectLogin("haim")}
+                        className="w-full py-1.5 px-3 border border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-300 rounded-xl text-[11px] font-semibold cursor-pointer transition flex items-center justify-center gap-1.5"
+                      >
+                        <span>🔑 כניסת מנהל ראשי (חיים בר)</span>
+                      </button>
+                    </div>
                   );
                 })()}
               </div>

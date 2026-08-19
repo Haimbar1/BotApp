@@ -523,7 +523,7 @@ async function startServer() {
       // Search for user by passcode
       let matchingUser = usersList.find((u: any) => String(u.passcode).trim() === passcode.trim());
 
-      // Special super ease shortcut for the administrator in the sandbox environment
+      // Special super ease shortcut for the administrator and authorized business accounts
       const lowerPasscode = passcode.trim().toLowerCase();
       if (
         lowerPasscode === "haim.bar@gmail.com" || 
@@ -541,7 +541,13 @@ async function startServer() {
         lowerPasscode === "hatovaopt@gmail.com" ||
         lowerPasscode === "hatovaopt" ||
         lowerPasscode === "hatova" ||
-        lowerPasscode === "haoptika"
+        lowerPasscode === "haoptika" ||
+        lowerPasscode === "haoptika-hatova" ||
+        lowerPasscode === "252" ||
+        lowerPasscode === "bot_252" ||
+        lowerPasscode === "bot_generic_252" ||
+        lowerPasscode === "האופטיקה הטובה" ||
+        lowerPasscode === "אופטיקה"
       ) {
         matchingUser = {
           name: "האופטיקה הטובה",
@@ -741,20 +747,34 @@ async function startServer() {
 
   // ---------------- AGENTS DATA ROUTES ----------------
 
+  // Helper to determine if an agent belongs to or is accessible by a given user
+  function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
+    if (!userEmail) return false;
+    const u = userEmail.toLowerCase().trim();
+    if (u === "haim.bar@gmail.com") return true;
+    const aEmail = (agent.agentEmail || "").toLowerCase().trim();
+    if (aEmail === u) return true;
+    // Hatova Optometry / Bot 252 special alias mapping
+    if (
+      (u.includes("hatova") || u.includes("252") || u === "haoptika") &&
+      (aEmail.includes("hatova") || agent.botId === "bot_generic_252" || agent.id === "agent_bot_generic_252" || (agent.businessName || "").includes("האופטיקה הטובה"))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   // Get cloud agents list
   app.get("/api/agents", requireAuth, (req: any, res: any) => {
     const list = readAgents();
     const userEmail = (req.user?.email || "").toLowerCase().trim();
     
     // If the user is the system administrator (haim.bar@gmail.com), they see everything.
-    // Otherwise, they only see agents where the agent's email matches the user's email.
+    // Otherwise, they only see agents where the agent's email/bot matches their account.
     if (userEmail === "haim.bar@gmail.com") {
       return res.json({ success: true, data: list });
     } else {
-      const filtered = list.filter((agent: any) => {
-        const agentEmail = (agent.agentEmail || "").toLowerCase().trim();
-        return agentEmail === userEmail;
-      });
+      const filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
       return res.json({ success: true, data: filtered });
     }
   });
@@ -780,10 +800,7 @@ async function startServer() {
       // Normal user: read existing agents and replace ONLY those that belong to the user
       const allAgents = readAgents();
       
-      const existingUserAgents = allAgents.filter((agent: any) => {
-        const agentEmail = (agent.agentEmail || "").toLowerCase().trim();
-        return agentEmail === userEmail;
-      });
+      const existingUserAgents = allAgents.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
 
       const existingUserAgentIds = new Set(existingUserAgents.map((agent: any) => agent.id));
 
@@ -802,10 +819,7 @@ async function startServer() {
       }
 
       // Separate agents belonging to other users
-      const otherAgents = allAgents.filter((agent: any) => {
-        const agentEmail = (agent.agentEmail || "").toLowerCase().trim();
-        return agentEmail !== userEmail;
-      });
+      const otherAgents = allAgents.filter((agent: any) => !isAgentOwnedByUser(agent, userEmail));
 
       // Map user's proposed agents to allow updating full intelligence and prompt configuration
       const userProposedAgents = agents.map((proposed: any) => {
