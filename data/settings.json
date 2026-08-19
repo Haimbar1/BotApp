@@ -1,13 +1,19 @@
 {
   "googleClientId": "1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com",
   "allowedEmails": [
-    "haim.bar@gmail.com"
+    "haim.bar@gmail.com",
+    "hatovaopt@gmail.com"
   ],
   "bypassUsers": [
     {
       "name": "חיים בר (מנהל)",
       "email": "haim.bar@gmail.com",
       "passcode": "HaimBarAdmin2026!"
+    },
+    {
+      "name": "האופטיקה הטובה",
+      "email": "hatovaopt@gmail.com",
+      "passcode": "hatova"
     }
   ]
 }

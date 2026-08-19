@@ -122,9 +122,10 @@ async function startServer() {
   // Default Settings (Includes Haim Bar's email as authorized administrator)
   const defaultSettings = {
     googleClientId: "1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com",
-    allowedEmails: ["haim.bar@gmail.com"],
+    allowedEmails: ["haim.bar@gmail.com", "hatovaopt@gmail.com"],
     bypassUsers: [
-      { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "HaimBarAdmin2026!" }
+      { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "HaimBarAdmin2026!" },
+      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatova" }
     ],
   };
 
@@ -535,6 +536,17 @@ async function startServer() {
           name: "חיים בר (מנהל)",
           email: "haim.bar@gmail.com",
           passcode: "HaimBarAdmin2026!"
+        };
+      } else if (
+        lowerPasscode === "hatovaopt@gmail.com" ||
+        lowerPasscode === "hatovaopt" ||
+        lowerPasscode === "hatova" ||
+        lowerPasscode === "haoptika"
+      ) {
+        matchingUser = {
+          name: "האופטיקה הטובה",
+          email: "hatovaopt@gmail.com",
+          passcode: "hatova"
         };
       }
 
