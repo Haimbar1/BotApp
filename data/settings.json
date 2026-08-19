@@ -11,9 +11,24 @@
       "passcode": "HaimBarAdmin2026!"
     },
     {
+      "name": "חיים בר (מנהל)",
+      "email": "haim.bar@gmail.com",
+      "passcode": "haim"
+    },
+    {
+      "name": "האופטיקה הטובה",
+      "email": "hatovaopt@gmail.com",
+      "passcode": "252"
+    },
+    {
       "name": "האופטיקה הטובה",
       "email": "hatovaopt@gmail.com",
       "passcode": "hatova"
+    },
+    {
+      "name": "האופטיקה הטובה",
+      "email": "hatovaopt@gmail.com",
+      "passcode": "hatovaopt"
     }
   ]
 }

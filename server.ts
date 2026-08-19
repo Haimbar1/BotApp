@@ -520,39 +520,37 @@ async function startServer() {
       const currentSettings = readSettings();
       const usersList = currentSettings.bypassUsers || defaultSettings.bypassUsers;
 
-      // Search for user by passcode
-      let matchingUser = usersList.find((u: any) => String(u.passcode).trim() === passcode.trim());
+      const rawPasscode = String(passcode || "").trim();
+      const lowerPasscode = rawPasscode.toLowerCase();
+      const digitsPasscode = rawPasscode.replace(/\D/g, "");
 
-      // Special super ease shortcut for the administrator and authorized business accounts
-      const lowerPasscode = passcode.trim().toLowerCase();
+      // Search for user by passcode in declared list
+      let matchingUser = usersList.find((u: any) => String(u.passcode).trim().toLowerCase() === lowerPasscode);
+
+      // Special direct shortcuts
       if (
-        lowerPasscode === "haim.bar@gmail.com" || 
-        lowerPasscode === "haim.bar" || 
-        lowerPasscode === "haimbar" || 
-        lowerPasscode === "haim" ||
-        lowerPasscode === "haimbaradmin2026!"
+        digitsPasscode === "252" ||
+        lowerPasscode.includes("252") ||
+        lowerPasscode.includes("hatova") ||
+        lowerPasscode.includes("אופטיקה") ||
+        lowerPasscode.includes("haoptika") ||
+        lowerPasscode.includes("צביקה")
+      ) {
+        matchingUser = {
+          name: "האופטיקה הטובה",
+          email: "hatovaopt@gmail.com",
+          passcode: "252"
+        };
+      } else if (
+        lowerPasscode.includes("haim") ||
+        lowerPasscode.includes("חיים") ||
+        lowerPasscode === "haim.bar@gmail.com" ||
+        digitsPasscode === "2026"
       ) {
         matchingUser = {
           name: "חיים בר (מנהל)",
           email: "haim.bar@gmail.com",
           passcode: "HaimBarAdmin2026!"
-        };
-      } else if (
-        lowerPasscode === "hatovaopt@gmail.com" ||
-        lowerPasscode === "hatovaopt" ||
-        lowerPasscode === "hatova" ||
-        lowerPasscode === "haoptika" ||
-        lowerPasscode === "haoptika-hatova" ||
-        lowerPasscode === "252" ||
-        lowerPasscode === "bot_252" ||
-        lowerPasscode === "bot_generic_252" ||
-        lowerPasscode === "האופטיקה הטובה" ||
-        lowerPasscode === "אופטיקה"
-      ) {
-        matchingUser = {
-          name: "האופטיקה הטובה",
-          email: "hatovaopt@gmail.com",
-          passcode: "hatova"
         };
       }
 
