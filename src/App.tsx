@@ -70,7 +70,7 @@ const addGlobalLog = (msg: string) => {
   }
 };
 
-// Safe API Fetch Wrapper with intelligent CORS Proxy routing for production domains (such as app.smartesek.com or smartesek.co.il)
+// Safe API Fetch Wrapper for production domains (such as app.smartesek.com or smartesek.co.il) and development
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let urlString = "";
   if (typeof input === "string") {
@@ -82,59 +82,31 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
   }
 
   const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
-  addGlobalLog(`CALL: "${urlString}" from host: "${currentHost}"`);
+  addGlobalLog(`FETCH: "${urlString}" (host: "${currentHost}")`);
 
-  if (urlString.startsWith("/api/")) {
-    const isLocal = !currentHost || currentHost.includes("localhost") || currentHost.includes("127.0.0.1") || currentHost.includes("0.0.0.0");
-    const isSandbox = currentHost.includes("run.app") || currentHost.includes("googleusercontent.com") || currentHost.includes("google.com") || currentHost.includes("aistudio");
-    const shouldRedirect = !isLocal && !isSandbox;
+  const requestOptions: RequestInit = {
+    ...init,
+    credentials: init?.credentials || "include",
+  };
 
-    addGlobalLog(`DECISION: host="${currentHost}" isLocal=${isLocal} isSandbox=${isSandbox} -> shouldRedirect=${shouldRedirect}`);
-
-    if (shouldRedirect) {
-      const backendProdUrl = `https://service-1078804201809.us-west1.run.app${urlString}`;
-      addGlobalLog(`INTERCEPTOR: Redirecting relative call: "${urlString}" -> "${backendProdUrl}"`);
-      
-      const updatedInit = {
-        ...init,
-        credentials: init?.credentials || "include" as const
-      };
-      try {
-        const response = await fetch(backendProdUrl, updatedInit);
-        
-        // Debug clone of response to log body
-        try {
-          const clone = response.clone();
-          clone.text().then(text => {
-            addGlobalLog(`INTERCEPTOR RES: "${backendProdUrl}" status=${response.status}. Payload: ${text.substring(0, 300)}`);
-          });
-        } catch (cloneErr) {
-          addGlobalLog(`INTERCEPTOR RES: "${backendProdUrl}" status=${response.status}`);
-        }
-
-        return response;
-      } catch (err: any) {
-        addGlobalLog(`INTERCEPTOR ERR: Failed fetch from "${backendProdUrl}": ${err?.message || String(err)}`);
-        throw err;
-      }
-    }
-  }
   try {
-    const response = await fetch(input, init);
+    const response = await fetch(input, requestOptions);
     
-    // Debug clone of response to log body
+    // Debug clone of response to log body for live diagnostics
     try {
       const clone = response.clone();
       clone.text().then(text => {
-        addGlobalLog(`DIRECT RES: "${urlString}" status=${response.status}. Payload: ${text.substring(0, 300)}`);
+        const sample = text ? text.substring(0, 300) : "empty";
+        addGlobalLog(`API RES: "${urlString}" -> HTTP ${response.status} (${sample})`);
       });
     } catch (cloneErr) {
-      addGlobalLog(`DIRECT RES: "${urlString}" status=${response.status}`);
+      addGlobalLog(`API RES: "${urlString}" -> HTTP ${response.status}`);
     }
 
     return response;
   } catch (err: any) {
-    addGlobalLog(`DIRECT ERR: Failed direct fetch for "${urlString}": ${err?.message || String(err)}`);
+    const errorMsg = err?.message || String(err);
+    addGlobalLog(`API ERR: Failed fetch for "${urlString}": ${errorMsg}`);
     throw err;
   }
 };
@@ -2489,7 +2461,13 @@ export default function App() {
         }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        data = {};
+      }
+
       if (res.ok && data.success) {
         localStorage.removeItem("has_logged_out");
         localStorage.setItem("cyber_session_token", data.token);
@@ -2502,11 +2480,12 @@ export default function App() {
         fetchAgentsFromServer(data.token, data.user?.email);
         fetchFullSettingsFromServer(data.token);
       } else {
-        setAuthError(data.message || "גישת האימות נדחתה על ידי השרת");
+        setAuthError(data.message || data.error || `גישת האימות נדחתה על ידי השרת (קוד שגיאה: ${res.status})`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Google Auth response backend exchange error:", err);
-      setAuthError("שגיאת תקשורת מול שרת האימות. אנא נסה שנית.");
+      const detail = err?.message || String(err);
+      setAuthError(`שגיאת תקשורת מול שרת האימות (${detail}). אנא נסה שנית.`);
     }
   };
 
@@ -2524,7 +2503,13 @@ export default function App() {
         body: JSON.stringify({ passcode: bypassPasscode.trim() })
       });
       
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        data = {};
+      }
+
       if (res.ok && data.success) {
         localStorage.removeItem("has_logged_out");
         localStorage.setItem("cyber_session_token", data.token);
@@ -2541,7 +2526,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Passcode login error:", err);
-      setAuthError("שגיאת תקשורת מול שרת האימות.");
+      const detail = err?.message || String(err);
+      setAuthError(`שגיאת תקשורת מול שרת האימות (${detail}).`);
     }
   };
 
