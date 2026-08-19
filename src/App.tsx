@@ -5540,14 +5540,85 @@ ${videos || "(לא הוגדר)"}
               )}
             </AnimatePresence>
 
+            {/* Mobile Prominent Quick-Access to Brain of the Bot */}
+            <div className="sm:hidden w-full flex flex-col gap-2" dir="rtl">
+              <button
+                type="button"
+                onClick={() => {
+                  setAgentPanelTab("prompt");
+                  setActiveModalTab("botIdentity");
+                  const currentAgent = agents.find(a => a.id === activeId);
+                  if (currentAgent) {
+                    setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+                  }
+                  setShowPromptBuilder(true);
+                }}
+                className="w-full py-3 px-4 bg-gradient-to-r from-sky-600 via-indigo-600 to-purple-600 hover:from-sky-500 hover:to-purple-500 text-white font-black rounded-2xl text-xs flex items-center justify-between shadow-lg shadow-sky-500/20 border border-sky-400/30 cursor-pointer active:scale-[0.98] transition-all"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-white/15 rounded-xl">
+                    <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                  </div>
+                  <div className="text-right">
+                    <span className="block font-black text-white text-xs">🧠 השכל של הסוכן (פרומפט מלא)</span>
+                    <span className="block text-[10px] text-sky-150 font-normal">לחץ כאן לעריכת 12 קטעי ההנחיות והאישיות</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-white/20 rounded-lg text-[10px] font-black shrink-0">פתח עכשיו 🪄</span>
+              </button>
+            </div>
+
             {/* Agent Panel Tabs */}
-            <div className="flex items-center justify-between gap-3 border-b border-slate-850" dir="rtl">
-              <div className="flex items-center gap-1 overflow-x-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-850 pb-2 sm:pb-0" dir="rtl">
+              {/* Mobile 2x2 Grid Tabs (No scrolling needed!) */}
+              <div className="grid grid-cols-2 gap-2 sm:hidden w-full">
                 {[
-                  { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare },
-                  { key: "general" as const, label: "פרטי הסוכן", icon: FileText },
-                  { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone },
-                  { key: "prompt" as const, label: "השכל של הסוכן (פרומפט)", icon: Sparkles }
+                  { key: "prompt" as const, label: "🧠 השכל של הסוכן", icon: Sparkles, isHighlight: true },
+                  { key: "chats" as const, label: "💬 לוג שיחות", icon: MessageSquare, isHighlight: false },
+                  { key: "general" as const, label: "📄 פרטי הסוכן", icon: FileText, isHighlight: false },
+                  { key: "whatsapp" as const, label: "📱 וואטסאפ", icon: Smartphone, isHighlight: false }
+                ].map(tab => {
+                  const TabIcon = tab.icon;
+                  const isTabActive = agentPanelTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => {
+                        setAgentPanelTab(tab.key);
+                        if (tab.key === "prompt") {
+                          setActiveModalTab("botIdentity");
+                          const currentAgent = agents.find(a => a.id === activeId);
+                          if (currentAgent) {
+                            setPromptBuilderBackup(JSON.parse(JSON.stringify(currentAgent)));
+                          }
+                          setShowPromptBuilder(true);
+                        }
+                      }}
+                      className={`min-h-[44px] px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 border select-none ${
+                        isTabActive
+                          ? tab.isHighlight
+                            ? "bg-gradient-to-r from-sky-600/30 to-indigo-600/30 text-sky-200 border-sky-400 shadow-sm ring-1 ring-sky-400/20"
+                            : "bg-sky-500/15 text-sky-300 border-sky-400 shadow-sm"
+                          : tab.isHighlight
+                            ? "bg-[#141829] text-sky-300 border-sky-500/40 hover:bg-[#1a2035]"
+                            : "bg-[#11131a] text-slate-400 hover:text-slate-200 border-slate-800"
+                      }`}
+                    >
+                      <TabIcon className={`w-3.5 h-3.5 ${tab.isHighlight ? "text-sky-400" : ""}`} />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Desktop Desktop Tab Strip */}
+              <div className="hidden sm:flex items-center gap-1 overflow-x-auto scrollbar-none">
+                {[
+                  { key: "prompt" as const, label: "השכל של הסוכן (פרומפט) 🧠", icon: Sparkles, isHighlight: true },
+                  { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare, isHighlight: false },
+                  { key: "general" as const, label: "פרטי הסוכן", icon: FileText, isHighlight: false },
+                  { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone, isHighlight: false }
                 ].map(tab => {
                   const TabIcon = tab.icon;
                   const isTabActive = agentPanelTab === tab.key;
@@ -5568,11 +5639,13 @@ ${videos || "(לא הוגדר)"}
                       }}
                       className={`shrink-0 px-3.5 py-2.5 text-[11px] font-black transition-colors cursor-pointer flex items-center gap-1.5 select-none border-b-2 -mb-px ${
                         isTabActive
-                          ? "text-sky-300 border-sky-400"
-                          : "text-slate-400 hover:text-slate-200 border-transparent"
+                          ? "text-sky-300 border-sky-400 bg-sky-500/5"
+                          : tab.isHighlight
+                            ? "text-sky-400 hover:text-sky-300 border-transparent bg-sky-500/10 rounded-t-lg"
+                            : "text-slate-400 hover:text-slate-200 border-transparent"
                       }`}
                     >
-                      <TabIcon className="w-3.5 h-3.5" />
+                      <TabIcon className={`w-3.5 h-3.5 ${tab.isHighlight ? "text-amber-300" : ""}`} />
                       <span>{tab.label}</span>
                     </button>
                   );
@@ -5580,7 +5653,7 @@ ${videos || "(לא הוגדר)"}
               </div>
 
               {/* Workspace Action Controls */}
-              <div className="flex items-center gap-2 mb-1.5 shrink-0">
+              <div className="flex items-center justify-between sm:justify-end gap-2 mb-1.5 shrink-0 w-full sm:w-auto mt-1 sm:mt-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/60">
                 <button
                   type="button"
                   onClick={() => {
@@ -5591,11 +5664,11 @@ ${videos || "(לא הוגדר)"}
                       setEmbedCopied(false);
                     }
                   }}
-                  className="px-3 py-1.5 rounded-lg text-[10px] font-black bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 transition duration-200 cursor-pointer flex items-center gap-1.5 select-none"
+                  className="flex-1 sm:flex-initial px-3 py-2 sm:py-1.5 rounded-lg text-[10.5px] sm:text-[10px] font-black bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 transition duration-200 cursor-pointer flex items-center justify-center gap-1.5 select-none"
                   title="קח קוד להטמעה של בוט Webi באתר שלך"
                 >
-                  <Code className="w-3 h-3 text-indigo-400" />
-                  <span>קוד הטמעה לאתר 🌐</span>
+                  <Code className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>קוד הטמעה 🌐</span>
                 </button>
 
                 <button
@@ -5605,13 +5678,13 @@ ${videos || "(לא הוגדר)"}
                     await saveAgentsToServer(agents, sessionToken, false);
                     await handleSyncToWebhook();
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition duration-200 cursor-pointer flex items-center gap-1.5 border select-none ${
+                  className={`flex-1 sm:flex-initial px-4 py-2 sm:py-1.5 rounded-lg text-[10.5px] sm:text-[10px] font-black transition duration-200 cursor-pointer flex items-center justify-center gap-1.5 border select-none ${
                     dirtyAgents[activeId]
                       ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-500/30 text-white animate-pulse"
                       : "bg-[#161821] hover:bg-[#1a1c27] border-slate-800 text-slate-350"
                   }`}
                 >
-                  <Save className={`w-3 h-3 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
+                  <Save className={`w-3.5 h-3.5 ${dirtyAgents[activeId] ? "text-emerald-100" : "text-slate-450"}`} />
                   <span>{isSyncing ? "מסנכרן..." : dirtyAgents[activeId] ? "שמור 💾" : "שמור ✓"}</span>
                 </button>
               </div>
@@ -6887,7 +6960,7 @@ ${videos || "(לא הוגדר)"}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto justify-end">
                   
                   {/* Current Active Bot display */}
                   <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 bg-[#121625]/80 border border-slate-800 rounded-xl text-xs text-slate-350 font-bold max-w-[190px] truncate">
@@ -6915,11 +6988,11 @@ ${videos || "(לא הוגדר)"}
                       setGeneratedPrompts(null);
                       setShowWizardModal(true);
                     }}
-                    className="px-4 py-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-extrabold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-500/25 animate-pulse"
+                    className="px-3 py-2.5 sm:px-4 sm:py-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-extrabold rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 animate-pulse"
                     id="trigger-ai-wizard-btn"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                    <span>מחולל סוכנים (AI Magic) 🪄</span>
+                    <span>מחולל AI 🪄</span>
                   </button>
 
                   {/* Manual Save Button */}
@@ -6927,7 +7000,7 @@ ${videos || "(לא הוגדר)"}
                     type="button"
                     disabled={isSavingPrompt}
                     onClick={() => handleManualSavePrompt(false)}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 hover:shadow-emerald-500/10 disabled:opacity-60 disabled:cursor-not-allowed border border-emerald-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                    className="px-3 py-2.5 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-500 hover:shadow-emerald-500/10 disabled:opacity-60 disabled:cursor-not-allowed border border-emerald-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow"
                   >
                     {isSavingPrompt ? (
                       <>
@@ -6937,7 +7010,7 @@ ${videos || "(לא הוגדר)"}
                     ) : (
                       <>
                         <Save className="w-4 h-4 text-emerald-100" />
-                        <span>שמור שינויים 💾</span>
+                        <span>שמור 💾</span>
                       </>
                     )}
                   </button>
@@ -6946,17 +7019,17 @@ ${videos || "(לא הוגדר)"}
                     type="button"
                     disabled={isSavingPrompt}
                     onClick={() => handleManualSavePrompt(true)}
-                    className="px-4 py-2 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-505 hover:to-blue-600 disabled:opacity-60 disabled:cursor-not-allowed border border-sky-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                    className="px-3 py-2.5 sm:px-4 sm:py-2 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-505 hover:to-blue-600 disabled:opacity-60 disabled:cursor-not-allowed border border-sky-500/30 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow"
                   >
                     {isSavingPrompt ? (
                       <>
                         <Loader2 className="w-4 h-4 text-sky-200 animate-spin" />
-                        <span>שומר וחוזר...</span>
+                        <span>שומר...</span>
                       </>
                     ) : (
                       <>
                         <ArrowRight className="w-4 h-4 text-sky-200" />
-                        <span>שמור וחזור למערכת 🔙</span>
+                        <span>שמור וחזור 🔙</span>
                       </>
                     )}
                   </button>
@@ -6965,10 +7038,10 @@ ${videos || "(לא הוגדר)"}
                     type="button"
                     disabled={isSavingPrompt}
                     onClick={handleCancelPromptChanges}
-                    className="px-4 py-2 bg-[#1e1215] hover:bg-[#2c171c] disabled:opacity-60 disabled:cursor-not-allowed border border-rose-900/40 text-rose-300 hover:text-rose-200 font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                    className="px-3 py-2.5 sm:px-4 sm:py-2 bg-[#1e1215] hover:bg-[#2c171c] disabled:opacity-60 disabled:cursor-not-allowed border border-rose-900/40 text-rose-300 hover:text-rose-200 font-black rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow"
                   >
                     <X className="w-4 h-4 text-rose-550" />
-                    <span>ביטול ויציאה (ללא שמירה) ❌</span>
+                    <span>יציאה ❌</span>
                   </button>
                   
                 </div>
@@ -7127,12 +7200,21 @@ ${videos || "(לא הוגדר)"}
                         
                         {/* Title Header Bar */}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-[#11131c] p-4 rounded-2xl border border-slate-800 shadow-sm">
-                          <div>
-                            <span className="text-[10px] text-sky-400 font-extrabold uppercase tracking-widest block">עריכת חלק פנימי</span>
-                            <h3 className="text-sm sm:text-base font-black text-white">{sec.title}</h3>
+                          <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+                            <div>
+                              <span className="text-[10px] text-sky-400 font-extrabold uppercase tracking-widest block">עריכת חלק פנימי</span>
+                              <h3 className="text-sm sm:text-base font-black text-white">{sec.title}</h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setMobileWorkspaceTab("blocks")}
+                              className="lg:hidden px-3 py-1.5 bg-[#171b29] hover:bg-[#20263b] text-sky-300 border border-sky-500/30 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer shadow-sm"
+                            >
+                              <span>📋 רשימת הבלוקים</span>
+                            </button>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
                             <button
                               type="button"
                               onClick={() => {
