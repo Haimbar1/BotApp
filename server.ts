@@ -119,13 +119,75 @@ async function startServer() {
   // Serve uploaded files statically at /uploads
   app.use("/uploads", express.static(UPLOADS_DIR));
 
-  // Default Settings (Includes Haim Bar's email as authorized administrator)
+  // Seed Agent 252 (האופטיקה הטובה) - Embedded to ensure 100% availability on any server deployment
+  const SEED_AGENT_252 = {
+    id: "agent_bot_generic_252",
+    ownerName: "צביקה",
+    businessName: "האופטיקה הטובה אמירים",
+    ownerPhone: "052-470-1380",
+    botId: "bot_generic_252",
+    whatsappInstance: "Smarti",
+    businessPrompt: `# הנחיות לסוכן מכירות ושירות לקוחות - האופטיקה הטובה אמירים
+
+אתה סוכן מכירות ושירות לקוחות מקצועי, אמין, סבלני ומסביר פנים של "האופטיקה הטובה אמירים".
+מטרתך העיקרית היא לתת מענה מקיף, נעים וחם על שירותי האופטיקה, לתאם תורים לבדיקות ראייה חינם, להציג את מחירי המסגרות והעדשות, ולהשאיר תמיד את השיחה פתוחה ושירותית.`,
+    key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
+    sendPulseBotId: "",
+    leadFollowUpDays: "3",
+    agentEmail: "hatovaopt@gmail.com",
+    status: "Active",
+    name: "האופטיקה הטובה אמירים _ מכירות",
+    agentType: "sales",
+    welcomeMessage: `הגעת לאופטיקה החברתית במושב אמירים.
+אנחנו מאמינים שראייה טובה מתחילה מיחס טוב.
+
+לא צריך להתרוצץ - אצלנו תמצא את כל מה שצריך במקום אחד:
+✅ בדיקת ראייה מתקדמת ומדויקת בחינם.
+✅ מבחר עצום של מסגרות בכל סגנון ותקציב.
+✅ שירות אישי וחם, עם התאמה מושלמת לצרכים שלך.
+אפשרויות:
+תיאום תור 
+עדשות מולטיפוקל
+איך מגיעים אליכם
+מהי אופטיקה חברתית
+סוגי מסגרות ומחירים
+מהם מרשמים רגילים
+
+מתי המשקפיים מוכנים`,
+    botIdentity: "שלום! אני סוכן המכירות הדיגיטלי והרשמי של 'האופטיקה הטובה אמירים'. אני כאן כדי לספק לכם שירות אישי, חם ומקצועי ביותר, לענות על כל שאלה לגבי פתרונות הראייה שלנו, לעזור לכם לבחור את המוצרים המתאימים ביותר ולכוון אתכם לתיאום תור אצלנו באווירה שיווקית ומזמינה.",
+    coursesInfo: "האופטיקה הטובה באמירים - מגוון פתרונות אופטיקה מתקדמים ומחירים חברתיים לכל המשפחה.",
+    kidsCourses: "",
+    conversationFlow: "אדיב, מקצועי, שירותי, מסייע בתיאום תורים ומענה על מחירים ופרטי הגעה.",
+    writingStyle: "חם, מזמין, שיווקי ונעים.",
+    faqAnswers: `ש: כמה עולה בדיקת ראייה?
+ת: בדיקת הראייה אצלנו היא בחינם לחלוטין וללא שום התחייבות!
+
+ש: איפה אתם נמצאים ואיך מגיעים?
+ת: כתובתנו: מצפה מנחם 86, אמירים. 15 ק"מ מכרמיאל לכיוון צפת.
+
+ש: אילו סוגי מסגרות יש ומה המחירים?
+ת: טווחי המחירים של המסגרות המובילות אצלנו הם 150 ש"ח, 200 ש"ח או 300 ש"ח בלבד כולל עדשות בסיסיות!
+
+ש: עדשות מגע?
+ת: עדשות חודשיות — במקום 160 ₪ רק 70 ₪. עדשות יומיות — במקום 140 ₪ רק 70 ₪.`,
+    whatNotToDo: "חוקי ברזל: 1) לעולם אין לסיים שיחה מיוזמתך. 2) אין להמציא מחירים שלא מופיעים בהנחיות.",
+    syllabusLinks: "https://drive.google.com/file/d/1YqG2_xDAajwzu32v4_aaDrHawNhNwaGx/view?usp=drive_link",
+    humanEscalation: "לכל פנייה ישירה לאנוש, ניתן לפנות לצביקה בטלפון: 052-470-1380.",
+    imagesInfo: "תמונות המקום ועדשות זמינות במערכת.",
+    videosInfo: "",
+    lastSyncedAt: "עודכן ונשמר במערכת"
+  };
+
+  // Default Settings (Includes Haim Bar and Hatova Optometry)
   const defaultSettings = {
     googleClientId: "1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com",
     allowedEmails: ["haim.bar@gmail.com", "hatovaopt@gmail.com"],
     bypassUsers: [
       { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "HaimBarAdmin2026!" },
-      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatova" }
+      { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "haim" },
+      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "252" },
+      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatova" },
+      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatovaopt" }
     ],
   };
 
@@ -134,7 +196,7 @@ async function startServer() {
   }
 
   if (!fs.existsSync(AGENTS_FILE)) {
-    fs.writeFileSync(AGENTS_FILE, JSON.stringify([], null, 2), "utf8");
+    fs.writeFileSync(AGENTS_FILE, JSON.stringify([SEED_AGENT_252], null, 2), "utf8");
   }
 
   // Helper Functions to read/write JSON files
@@ -189,14 +251,29 @@ async function startServer() {
   }
 
   function readAgents() {
+    let list: any[] = [];
     try {
       if (fs.existsSync(AGENTS_FILE)) {
-        return JSON.parse(fs.readFileSync(AGENTS_FILE, "utf8"));
+        list = JSON.parse(fs.readFileSync(AGENTS_FILE, "utf8"));
       }
     } catch (e) {
       console.error("[SERVER] Error reading agents file:", e);
     }
-    return [];
+    if (!Array.isArray(list)) {
+      list = [];
+    }
+    // Check if SEED_AGENT_252 is present in the list, if not ensure it is included
+    if (!list.some((a: any) => a.id === "agent_bot_generic_252" || a.botId === "bot_generic_252")) {
+      list.push(SEED_AGENT_252);
+      try {
+        if (fs.existsSync(DATA_DIR)) {
+          fs.writeFileSync(AGENTS_FILE, JSON.stringify(list, null, 2), "utf8");
+        }
+      } catch (err) {
+        // ignore write error on readonly platforms
+      }
+    }
+    return list;
   }
 
   function saveAgents(agentsList: any[]) {
@@ -772,7 +849,10 @@ async function startServer() {
     if (userEmail === "haim.bar@gmail.com") {
       return res.json({ success: true, data: list });
     } else {
-      const filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
+      let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
+      if (filtered.length === 0 && (userEmail.includes("hatova") || userEmail.includes("252") || userEmail === "haoptika")) {
+        filtered = [SEED_AGENT_252];
+      }
       return res.json({ success: true, data: filtered });
     }
   });
