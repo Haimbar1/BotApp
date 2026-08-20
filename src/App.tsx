@@ -53,6 +53,27 @@ import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
 import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
 import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
+import { AgentConfig, MessageSourceInfo } from "./types";
+import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
+import { getMessageSourceInfo, cleanSourceFromText } from "./lib/sourceHelper";
+
+// Helper to determine if an agent belongs to or is accessible by a given user
+export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
+  if (!userEmail) return false;
+  const u = userEmail.toLowerCase().trim();
+  if (u === "haim.bar@gmail.com") return true;
+  const aEmail = (agent?.agentEmail || "").toLowerCase().trim();
+  if (aEmail === u) return true;
+  
+  // Hatova Optometry / Bot 252 special alias mapping
+  if (
+    (u.includes("hatova") || u.includes("252") || u === "haoptika" || u.includes("אופטיקה") || u.includes("צביקה")) &&
+    (aEmail.includes("hatova") || agent?.botId === "bot_generic_252" || agent?.id === "agent_bot_generic_252" || (agent?.businessName || "").includes("האופטיקה הטובה") || (agent?.name || "").includes("האופטיקה הטובה"))
+  ) {
+    return true;
+  }
+  return false;
+}
 
 // Global array for API fetch history logs
 const globalApiLogs: string[] = [];
@@ -110,46 +131,6 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
     throw err;
   }
 };
-
-interface AgentConfig {
-  id: string;
-  ownerName: string;
-  businessName: string;
-  ownerPhone: string;
-  botId: string;
-  whatsappInstance: string;
-  businessPrompt: string;
-  key: string;
-  leadFollowUpDays?: string;
-  lastSyncedAt?: string;
-  welcomeMessage?: string;
-  botIdentity?: string;
-  coursesInfo?: string;
-  kidsCourses?: string;
-  conversationFlow?: string;
-  writingStyle?: string;
-  faqAnswers?: string;
-  whatNotToDo?: string;
-  syllabusLinks?: string;
-  humanEscalation?: string;
-  imagesInfo?: string;
-  videosInfo?: string;
-  agentEmail?: string; // Associated email address for security and permissions
-  status?: string;
-  name?: string;
-  agentType?: "sales" | "support";
-  sendPulseBotId?: string;
-  whatsappConfig?: {
-    phoneNumberId?: string;
-    systemUserAccessToken?: string;
-    wabaId?: string;
-    phoneNumber?: string;
-    code?: string;
-    appId?: string;
-    status?: string;
-    updatedAt?: string;
-  };
-}
 
 const DEFAULT_POST_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
 const DEFAULT_GET_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/eacddf0e-4128-4097-8d47-62c142d05283";
@@ -1157,19 +1138,27 @@ export default function App() {
     phone: Phone
   };
 
-  // Renders a human message body, replacing known "Label: value" lines with an icon + value.
-  // Fixed display order: Name, then Phone, then the actual chat message text (chatInput/content) last.
+  // Renders a human message body, replacing known "Label: value" lines with an icon + value,
+  // and replaces raw "SOURCE:WH" lines with a source badge/emoji for WhatsApp, Web, or Facebook Post.
+  // Fixed display order: Source badge, Name, Phone, then the actual chat message text (chatInput/content) last.
   const renderHumanMessageLines = (text: string) => {
     if (!text) return null;
+    const sourceInfo = getMessageSourceInfo(text);
     const cleanText = text.replace(/^(?:chatInput|chat_input|CHATINPUT|ChatInput|chatinput)[\s:\-=]*/i, "").trim() || text;
     const lines = cleanText.split("\n");
     const fieldLineRegex = /^(?:chatInput|chat_input|CHATINPUT|ChatInput|chatinput|content|Name|name|userName|UserName|user_name|pushName|pushname|sender_name|profile_name|customer_name|שם|שם מלא|משתמש|לקוח|Phone|phone|userPhone|UserPhone|user_phone|sender_phone|wa_id|from|mobile|Mobile|טלפון|נייד|סלולרי|וואטסאפ|ווטסאפ)[\s:\-=]+(.*)$/i;
+    const sourceLineRegex = /^(?:SOURCE|Source|source|מקור|CHANNEL|channel|PLATFORM|platform)[\s:\-=]+(.*)$/i;
     const fieldOrder = ["Name", "Phone", "chatInput"];
 
     const matchedByField: Record<string, string> = {};
     const otherLines: string[] = [];
 
     lines.forEach((line) => {
+      // Filter out raw SOURCE:WH / source lines so they are never displayed as raw text
+      if (sourceLineRegex.test(line.trim())) {
+        return;
+      }
+
       const match = line.match(fieldLineRegex);
       if (match) {
         const [, value] = match;
@@ -1181,9 +1170,21 @@ export default function App() {
         matchedByField[normalizedField] = value.trim();
       } else if (line.trim()) {
         const cleanLine = line.replace(/^(?:chatInput|chat_input|CHATINPUT|ChatInput|chatinput)[\s:\-=]*/i, "").trim() || line;
-        if (cleanLine) otherLines.push(cleanLine);
+        // Check if clean line is just a source tag
+        if (cleanLine && !sourceLineRegex.test(cleanLine)) {
+          otherLines.push(cleanLine);
+        }
       }
     });
+
+    const renderedSource = sourceInfo ? (
+      <div key="msg-source-badge" dir="rtl" className="flex items-center gap-1.5 pb-1 border-b border-slate-700/30 mb-0.5">
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-xs ${sourceInfo.badgeClass}`}>
+          <span className="text-xs">{sourceInfo.icon}</span>
+          <span>{sourceInfo.label}</span>
+        </span>
+      </div>
+    ) : null;
 
     const renderedFields = fieldOrder
       .filter((field) => matchedByField[field] !== undefined)
@@ -1199,7 +1200,11 @@ export default function App() {
 
     const renderedOther = otherLines.map((line, idx) => <span key={`other-${idx}`}>{line}</span>);
 
-    return [...renderedFields, ...renderedOther];
+    return [
+      ...(renderedSource ? [renderedSource] : []),
+      ...renderedFields,
+      ...renderedOther
+    ];
   };
 
   // Renders AI message text with inline styled buttons replacing raw URLs and their intro phrases
@@ -2677,116 +2682,146 @@ export default function App() {
   // Fetch agents array saved on the server
   const fetchAgentsFromServer = async (token: string, emailUserOverride?: string) => {
     try {
-      const res = await apiFetch("/api/agents", {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
       const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
       const isAdmin = activeEmail === "haim.bar@gmail.com";
 
-      if (res.ok) {
-        const data = await res.json();
-        
-        if (data.success && data.data && data.data.length > 0) {
-          setAgents(data.data);
-          const currentId = activeId;
-          const activeOnly = data.data.filter((a: any) => a.status === "Active");
-          const matchingAgent = data.data.find((a: any) => a.id === currentId);
-          const targetAgent = (matchingAgent && matchingAgent.status === "Active")
-            ? matchingAgent
-            : (activeOnly[0] || data.data[0]);
-          setActiveId(targetAgent.id);
-          loadAgentToForm(targetAgent);
-          
-          // For administrator login, we always fetch & restore all live projects/agents directly from the n8n webhook
-          if (isAdmin) {
-            console.log("[CLIENT] Admin logged in/initialized, automatically fetching all live projects from n8n webhook...");
-            setTimeout(() => {
-              handlePullAllAgentsFromN8n(token);
-            }, 800);
-          } else if (
-            data.data.length === 1 && 
-            (data.data[0].businessName.includes("סוכן חדש") || data.data[0].businessName === "SBS Games")
-          ) {
-            // Placeholder fallback
+      let fetchedList: any[] = [];
+      let fetchSuccess = false;
+
+      try {
+        const res = await apiFetch("/api/agents", {
+          headers: {
+            "Authorization": `Bearer ${token}`
           }
-        } else {
-          // No cloud records stored yet
-          if (isAdmin) {
-            loadFromLocalOldPresetOrCreate(token);
-            console.log("[CLIENT] Admin empty cloud list detected, pulling all configs from webhook...");
-            setTimeout(() => {
-              handlePullAllAgentsFromN8n(token);
-            }, 800);
-          } else {
-            // For non-admin, let them enter the system with an empty agents list (no auto-creation)
-            setAgents([]);
-            setActiveId("");
-            clearFormFields();
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+            fetchedList = data.data;
+            fetchSuccess = true;
           }
         }
-      } else {
+      } catch (fetchErr) {
+        console.warn("[CLIENT] Server /api/agents unreachable or returned 404, using client fallback:", fetchErr);
+      }
+
+      if (fetchSuccess && fetchedList.length > 0) {
+        setAgents(fetchedList);
+        const currentId = activeId;
+        const activeOnly = fetchedList.filter((a: any) => a.status === "Active");
+        const matchingAgent = fetchedList.find((a: any) => a.id === currentId);
+        const targetAgent = (matchingAgent && matchingAgent.status === "Active")
+          ? matchingAgent
+          : (activeOnly[0] || fetchedList[0]);
+        setActiveId(targetAgent.id);
+        loadAgentToForm(targetAgent);
+        
+        // For administrator login, we always fetch & restore all live projects/agents directly from the n8n webhook
         if (isAdmin) {
-          loadFromLocalOldPresetOrCreate(token);
-        } else {
-          setAgents([]);
-          setActiveId("");
-          clearFormFields();
+          console.log("[CLIENT] Admin logged in/initialized, automatically fetching all live projects from n8n webhook...");
+          setTimeout(() => {
+            handlePullAllAgentsFromN8n(token);
+          }, 800);
+        }
+      } else {
+        // No server response or empty list: load from local / embedded presets (guarantees agents for 252, admin, etc.)
+        loadFromLocalOldPresetOrCreate(token, activeEmail);
+        if (isAdmin) {
+          setTimeout(() => {
+            handlePullAllAgentsFromN8n(token);
+          }, 800);
         }
       }
     } catch (e) {
       console.error("Error loading server-saved agents, falling back to local:", e);
       const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
-      const isAdmin = activeEmail === "haim.bar@gmail.com";
-      if (isAdmin) {
-        loadFromLocalOldPresetOrCreate(token);
-      } else {
-        setAgents([]);
-        setActiveId("");
-        clearFormFields();
-      }
+      loadFromLocalOldPresetOrCreate(token, activeEmail);
     }
   };
 
-  const loadFromLocalOldPresetOrCreate = (token: string) => {
+  const loadFromLocalOldPresetOrCreate = (token: string, userEmail?: string) => {
+    const activeEmail = (userEmail || sessionUser?.email || "").toLowerCase().trim();
+    const isAdmin = activeEmail === "haim.bar@gmail.com";
+    const isHatova = activeEmail.includes("hatova") || activeEmail.includes("252") || activeEmail === "haoptika" || activeEmail.includes("אופטיקה") || activeEmail.includes("צביקה");
+
     const savedAgents = localStorage.getItem("n8n_agents_configs");
+    let candidates: AgentConfig[] = [];
+
     if (savedAgents) {
       try {
         const parsed = JSON.parse(savedAgents) as AgentConfig[];
-        if (parsed.length > 0) {
-          setAgents(parsed);
-          const activeOnly = parsed.filter((a: any) => a.status === "Active");
-          const targetAgent = activeOnly[0] || parsed[0];
-          setActiveId(targetAgent.id);
-          loadAgentToForm(targetAgent);
-          saveAgentsToServer(parsed, token);
-          return;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (isAdmin) {
+            candidates = parsed;
+          } else {
+            candidates = parsed.filter(a => isAgentOwnedByUser(a, activeEmail));
+          }
         }
       } catch (e) {
         console.error("Local storage parse error:", e);
       }
     }
-    createNewAgentStateOnlyAndSave(token);
+
+    // If local storage didn't yield anything for this user, check embedded defaults
+    if (candidates.length === 0) {
+      if (isHatova) {
+        candidates = [SEED_AGENT_252];
+      } else if (isAdmin) {
+        candidates = DEFAULT_INITIAL_AGENTS;
+      } else {
+        const matched = DEFAULT_INITIAL_AGENTS.filter(a => isAgentOwnedByUser(a, activeEmail));
+        if (matched.length > 0) {
+          candidates = matched;
+        }
+      }
+    }
+
+    if (candidates.length > 0) {
+      setAgents(candidates);
+      const activeOnly = candidates.filter((a: any) => a.status === "Active");
+      const targetAgent = activeOnly[0] || candidates[0];
+      setActiveId(targetAgent.id);
+      loadAgentToForm(targetAgent);
+      saveAgentsToServer(candidates, token);
+      return;
+    }
+
+    // If still empty (new custom user), create an initial active bot for them
+    createNewAgentStateOnlyAndSave(token, userEmail);
   };
 
-  const createNewAgentStateOnlyAndSave = (token: string) => {
+  const createNewAgentStateOnlyAndSave = (token: string, userEmail?: string) => {
+    const activeEmail = (userEmail || sessionUser?.email || "").toLowerCase().trim();
+    const isHatova = activeEmail.includes("hatova") || activeEmail.includes("252") || activeEmail === "haoptika" || activeEmail.includes("אופטיקה") || activeEmail.includes("צביקה");
+
+    if (isHatova) {
+      const list = [SEED_AGENT_252];
+      setAgents(list);
+      setActiveId(SEED_AGENT_252.id);
+      loadAgentToForm(SEED_AGENT_252);
+      saveAgentsToServer(list, token);
+      return;
+    }
+
     const newId = "agent_" + Date.now();
     const newAgent: AgentConfig = {
       id: newId,
-      ownerName: "",
-      businessName: "סוכן חדש 1",
+      ownerName: sessionUser?.name || "",
+      businessName: sessionUser?.name ? `סוכן ${sessionUser.name}` : "סוכן חדש 1",
       ownerPhone: "",
       botId: "bot_" + Math.floor(Math.random() * 90000 + 10000),
-      whatsappInstance: "Generic Bot",
+      whatsappInstance: "Smarti",
       businessPrompt: promptTemplates[0].content
-        .replace(/{BusinessName}/g, "העסק שלי")
-        .replace(/{OwnerName}/g, "בעל העסק")
+        .replace(/{BusinessName}/g, sessionUser?.name || "העסק שלי")
+        .replace(/{OwnerName}/g, sessionUser?.name || "בעל העסק")
         .replace(/{OwnerPhone}/g, "050-1234567")
         .replace(/{BotId}/g, "Generic Bot"),
       key: "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
       leadFollowUpDays: "3",
-      status: "Not Active",
+      agentEmail: activeEmail,
+      status: "Active",
+      name: sessionUser?.name ? `${sessionUser.name} _ מכירות` : "סוכן חדש 1",
+      agentType: "sales"
     };
     const list = [newAgent];
     setAgents(list);
@@ -6304,6 +6339,13 @@ ${videos || "(לא הוגדר)"}
 
                         // Primary Title: Name if available, else formatted Phone, else short Session ID
                         const displayTitle = hasName ? session.name : (hasPhone ? formattedPhone : `שיחה ${session.sessionId.slice(0, 8)}`);
+                        
+                        // Extract source (WhatsApp / Web / Facebook Post)
+                        const sessionSource = getMessageSourceInfo(
+                          session.lastHumanMessage?.message?.content || session.lastMessage?.message?.content || "",
+                          session.lastHumanMessage || session.lastMessage
+                        );
+                        const cleanPreviewText = cleanSourceFromText(parsedLast.text).replace(/^(?:chatInput|Name|Phone|userPhone|userName|משתמש|טלפון)[\s:\-=]*/i, "") || parsedLast.text;
 
                         return (
                           <div
@@ -6319,17 +6361,25 @@ ${videos || "(לא הוגדר)"}
                               <span className="text-xs font-black text-slate-100 truncate max-w-[140px]" title={displayTitle}>
                                 {hasName ? `👤 ${session.name}` : (hasPhone ? `📞 ${formattedPhone}` : displayTitle)}
                               </span>
-                              <span className="text-[9px] text-slate-300 font-mono font-bold bg-[#0d0e15] border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
-                                {session.lastTimestamp ? (() => {
-                                  const d = new Date(session.lastTimestamp);
-                                  if (isNaN(d.getTime())) return session.lastTimestamp;
-                                  const day = String(d.getDate()).padStart(2, "0");
-                                  const month = String(d.getMonth() + 1).padStart(2, "0");
-                                  const hours = String(d.getHours()).padStart(2, "0");
-                                  const minutes = String(d.getMinutes()).padStart(2, "0");
-                                  return `${day}/${month} ${hours}:${minutes}`;
-                                })() : (session.lastMessage?.id ? `#${session.lastMessage.id}` : "")}
-                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {sessionSource && (
+                                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border shadow-2xs ${sessionSource.badgeClass}`} title={sessionSource.label}>
+                                    <span>{sessionSource.icon}</span>
+                                    <span className="hidden sm:inline">{sessionSource.label}</span>
+                                  </span>
+                                )}
+                                <span className="text-[9px] text-slate-300 font-mono font-bold bg-[#0d0e15] border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
+                                  {session.lastTimestamp ? (() => {
+                                    const d = new Date(session.lastTimestamp);
+                                    if (isNaN(d.getTime())) return session.lastTimestamp;
+                                    const day = String(d.getDate()).padStart(2, "0");
+                                    const month = String(d.getMonth() + 1).padStart(2, "0");
+                                    const hours = String(d.getHours()).padStart(2, "0");
+                                    const minutes = String(d.getMinutes()).padStart(2, "0");
+                                    return `${day}/${month} ${hours}:${minutes}`;
+                                  })() : (session.lastMessage?.id ? `#${session.lastMessage.id}` : "")}
+                                </span>
+                              </div>
                             </div>
 
                             {/* Clean Phone Number subline if both Name and Phone are present */}
@@ -6341,8 +6391,8 @@ ${videos || "(לא הוגדר)"}
                             )}
 
                             <div className="flex items-center justify-between gap-2 mt-0.5">
-                              <p className="text-[10px] text-slate-400 truncate flex-1 text-right leading-normal">
-                                {parsedLast.text}
+                              <p className="text-[10px] text-slate-400 truncate flex-1 text-right leading-normal" dir="rtl">
+                                {cleanPreviewText}
                               </p>
                               
                               {/* Delete conversation button */}
@@ -6462,8 +6512,22 @@ ${videos || "(לא הוגדר)"}
                                 )}
                               </div>
                             </div>
-                            <div className="text-[10px] text-slate-400 font-mono bg-[#11131f] px-2.5 py-1 rounded-lg border border-slate-800 dir-ltr">
-                              ID: {activeSession.sessionId}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {(() => {
+                                const threadSource = getMessageSourceInfo(
+                                  activeSession.lastHumanMessage?.message?.content || activeSession.lastMessage?.message?.content || "",
+                                  activeSession.lastHumanMessage || activeSession.lastMessage
+                                );
+                                return threadSource ? (
+                                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs ${threadSource.badgeClass}`}>
+                                    <span className="text-sm">{threadSource.icon}</span>
+                                    <span>{threadSource.label}</span>
+                                  </span>
+                                ) : null;
+                              })()}
+                              <div className="text-[10px] text-slate-400 font-mono bg-[#11131f] px-2.5 py-1 rounded-lg border border-slate-800 dir-ltr">
+                                ID: {activeSession.sessionId}
+                              </div>
                             </div>
                           </div>
 
