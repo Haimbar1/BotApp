@@ -636,7 +636,7 @@ export default function App() {
     }
 
     if (remainder) {
-      const validKnownBots = [...knownBotIds].filter(Boolean).sort((a, b) => b.length - a.length);
+      const validKnownBots = [...knownBotIds, "bot_generic_252"].filter(Boolean).sort((a, b) => b.length - a.length);
       let matchedKnownBot = "";
 
       for (const kBot of validKnownBots) {
@@ -658,7 +658,7 @@ export default function App() {
           customerName = remainder;
         }
       } else {
-        const botPrefixMatch = remainder.match(/^((?:bot|smartbot|agent|hook|n8n|flow)[_\w\d]*?)_([^\d_].*)$/i);
+        const botPrefixMatch = remainder.match(/^((?:bot_generic_\d+|bot_[a-zA-Z0-9_-]+|smartbot_[a-zA-Z0-9_-]+|agent_[a-zA-Z0-9_-]+))_([^\d_].*)$/i);
         if (botPrefixMatch) {
           botId = botPrefixMatch[1];
           customerName = botPrefixMatch[2];
@@ -1334,150 +1334,181 @@ export default function App() {
       }
 
       setIsChatsLoading(true);
-      try {
-        const webhookChatsUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
-        const proxyUrl = `/api/fetch-config?url=${encodeURIComponent(webhookChatsUrl)}&botId=${encodeURIComponent(targetBotId)}`;
-        console.log(`[CLIENT] Fetching chats for active Bot ID: "${targetBotId}" via fetch-config proxy: "${proxyUrl}"`);
-        
-        const response = await apiFetch(proxyUrl, {
-          headers: {
-            "Authorization": `Bearer ${sessionToken}`
+
+      const allKnownBotIds = agents.map(a => a.botId).filter(Boolean);
+
+      const cleanContent = (rawContent: any): string => {
+        if (!rawContent) return "";
+        if (typeof rawContent === "object") {
+          try {
+            return JSON.stringify(rawContent);
+          } catch (e) {
+            return String(rawContent);
           }
-        });
-        
-        const result = await response.json();
-        
-        if (active) {
-          if (result.success && result.data) {
-            const rawData = result.data;
-            let records: any[] = [];
-            if (Array.isArray(rawData)) {
-              records = rawData;
-            } else if (rawData && Array.isArray(rawData.data)) {
-              records = rawData.data;
-            } else if (rawData && typeof rawData === "object") {
-              const arrayKey = Object.keys(rawData).find((key) => Array.isArray((rawData as any)[key]));
-              if (arrayKey) {
-                records = (rawData as any)[arrayKey];
-              } else if (rawData.chats && Array.isArray(rawData.chats)) {
-                records = rawData.chats;
-              } else if (rawData.rows && Array.isArray(rawData.rows)) {
-                records = rawData.rows;
-              } else {
-                records = [rawData];
-              }
+        }
+        if (typeof rawContent === "string") {
+          const trimmed = rawContent.trim();
+          if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+            try {
+              JSON.parse(trimmed);
+              return trimmed;
+            } catch (e) {
+              // ignore
             }
+          }
+          return rawContent;
+        }
+        return String(rawContent);
+      };
 
-            const cleanContent = (rawContent: any): string => {
-              if (!rawContent) return "";
-              if (typeof rawContent === "object") {
-                try {
-                  return JSON.stringify(rawContent);
-                } catch (e) {
-                  return String(rawContent);
-                }
+      const processRecords = (records: any[]): any[] => {
+        const knownList = [targetBotId, ...allKnownBotIds, "bot_generic_252"].filter(Boolean);
+        return records.map((item: any, idx: number) => {
+          if (!item) return null;
+          const sId = String(item.session_id || item.sessionId || item.SessionId || "").replace(/^=+/, "");
+          const sInfo = parseSessionIdInfo(sId, knownList);
+          
+          let itemPhone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || sInfo.phone || "";
+          let itemBotId = item.botId || item.bot_id || sInfo.botId || targetBotId;
+          let itemName = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || item.contact_name || sInfo.customerName || "";
+
+          let messageContent = item.message;
+          let finalType: "human" | "ai" = "human";
+          let finalContent = "";
+
+          if (messageContent) {
+            if (typeof messageContent === "string") {
+              try {
+                const parsedMsg = JSON.parse(messageContent);
+                finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
+                const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
+                finalContent = cleanContent(innerContent);
+              } catch (e) {
+                finalContent = cleanContent(messageContent);
               }
-              if (typeof rawContent === "string") {
-                const trimmed = rawContent.trim();
-                if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-                  try {
-                    JSON.parse(trimmed);
-                    return trimmed;
-                  } catch (e) {
-                    // ignore
-                  }
-                }
-                return rawContent;
-              }
-              return String(rawContent);
-            };
-
-            const allKnownBotIds = agents.map(a => a.botId).filter(Boolean);
-            const liveChats = records.map((item: any, idx: number) => {
-              if (!item) return null;
-              const sId = String(item.session_id || item.sessionId || item.SessionId || "").replace(/^=+/, "");
-              const sInfo = parseSessionIdInfo(sId, allKnownBotIds);
-              
-              let itemPhone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || sInfo.phone || "";
-              let itemBotId = item.botId || item.bot_id || sInfo.botId || "";
-              let itemName = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || item.contact_name || sInfo.customerName || "";
-
-              let messageContent = item.message;
-              let finalType: "human" | "ai" = "human";
-              let finalContent = "";
-
-              if (messageContent) {
-                if (typeof messageContent === "string") {
-                  try {
-                    const parsedMsg = JSON.parse(messageContent);
-                    finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
-                    const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
-                    finalContent = cleanContent(innerContent);
-                  } catch (e) {
-                    finalContent = cleanContent(messageContent);
-                  }
-                } else if (typeof messageContent === "object") {
-                  finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
-                  const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
-                  finalContent = cleanContent(innerContent);
-                }
-              } else {
-                const contentVal = item.content || item.text || item.message_text || "";
-                const typeVal = item.type || item.message_type || item.sender || "human";
-                finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
-                finalContent = cleanContent(contentVal);
-              }
-
-              return {
-                id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
-                sessionId: sId,
-                botId: itemBotId || targetBotId,
-                phone: itemPhone,
-                name: itemName,
-                userName: itemName,
-                userPhone: itemPhone,
-                message: {
-                  type: finalType,
-                  content: finalContent
-                },
-                timestamp: item.created_at || item.createdAt || item.timestamp || item.time || item.date || item.sent_at || item.sentAt || item.ts || item.inserted_at || item.insertedAt || item.updated_at || item.updatedAt || item.message_time || item.created || ""
-              };
-            }).filter(Boolean);
-
-            const filteredChats = liveChats.filter((c: any) => c && c.sessionId && !isMessageDeleted(c.sessionId, c.id));
-            setChats(filteredChats);
+            } else if (typeof messageContent === "object") {
+              finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
+              const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
+              finalContent = cleanContent(innerContent);
+            }
           } else {
-            console.error("[CHATS] Failed to fetch chats through fetch-config proxy:", result.message);
-            throw new Error("Proxy call failed");
+            const contentVal = item.content || item.text || item.message_text || "";
+            const typeVal = item.type || item.message_type || item.sender || "human";
+            finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
+            finalContent = cleanContent(contentVal);
           }
+
+          return {
+            id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
+            sessionId: sId,
+            botId: itemBotId || targetBotId,
+            phone: itemPhone,
+            name: itemName,
+            userName: itemName,
+            userPhone: itemPhone,
+            message: {
+              type: finalType,
+              content: finalContent
+            },
+            timestamp: item.created_at || item.createdAt || item.timestamp || item.time || item.date || item.sent_at || item.sentAt || item.ts || item.inserted_at || item.insertedAt || item.updated_at || item.updatedAt || item.message_time || item.created || ""
+          };
+        }).filter((c: any) => c && c.sessionId && !isMessageDeleted(c.sessionId, c.id));
+      };
+
+      const extractRecordsFromPayload = (rawData: any): any[] => {
+        if (!rawData) return [];
+        if (Array.isArray(rawData)) return rawData;
+        if (rawData && Array.isArray(rawData.data)) return rawData.data;
+        if (rawData && typeof rawData === "object") {
+          const arrayKey = Object.keys(rawData).find((key) => Array.isArray((rawData as any)[key]));
+          if (arrayKey) return (rawData as any)[arrayKey];
+          if (rawData.chats && Array.isArray(rawData.chats)) return rawData.chats;
+          if (rawData.rows && Array.isArray(rawData.rows)) return rawData.rows;
+          return [rawData];
         }
-      } catch (err) {
-        console.warn("[CHATS] Proxy fetch failed, attempting direct /api/chats fallback...", err);
-        try {
-          const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
-            headers: {
-              "Authorization": `Bearer ${sessionToken}`
-            }
-          });
+        return [];
+      };
+
+      const webhookChatsUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
+      let fetchedSuccessfully = false;
+
+      // Tier 1: Try /api/fetch-config proxy
+      try {
+        const proxyUrl = `/api/fetch-config?url=${encodeURIComponent(webhookChatsUrl)}&botId=${encodeURIComponent(targetBotId)}`;
+        console.log(`[CLIENT] [Tier 1] Fetching chats via proxy: "${proxyUrl}"`);
+        const response = await apiFetch(proxyUrl, {
+          headers: { "Authorization": `Bearer ${sessionToken}` }
+        });
+        if (response.ok) {
           const result = await response.json();
-          if (active) {
-            if (result.success) {
-              const rawList = result.data || [];
-              setChats(rawList.filter((c: any) => c && (c.sessionId || c.session_id) && !isMessageDeleted(c.sessionId || c.session_id, c.id)));
-            } else {
-              setChats([]);
+          if (result.success && result.data) {
+            const rawRecords = extractRecordsFromPayload(result.data);
+            if (rawRecords.length > 0) {
+              const liveChats = processRecords(rawRecords);
+              if (active && liveChats.length > 0) {
+                console.log(`[CLIENT] Successfully loaded ${liveChats.length} chats from Tier 1`);
+                setChats(liveChats);
+                fetchedSuccessfully = true;
+              }
             }
           }
-        } catch (fallbackErr) {
-          console.error("[CHATS] Direct fallback failed too:", fallbackErr);
-          if (active) {
-            setChats([]);
+        }
+      } catch (tier1Err) {
+        console.warn("[CLIENT] Tier 1 proxy fetch failed:", tier1Err);
+      }
+
+      // Tier 2: Try direct /api/chats backend endpoint
+      if (!fetchedSuccessfully) {
+        try {
+          console.log(`[CLIENT] [Tier 2] Fetching chats via /api/chats for botId: "${targetBotId}"`);
+          const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
+            headers: { "Authorization": `Bearer ${sessionToken}` }
+          });
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && result.data && Array.isArray(result.data) && result.data.length > 0) {
+              const liveChats = processRecords(result.data);
+              if (active && liveChats.length > 0) {
+                console.log(`[CLIENT] Successfully loaded ${liveChats.length} chats from Tier 2`);
+                setChats(liveChats);
+                fetchedSuccessfully = true;
+              }
+            }
           }
+        } catch (tier2Err) {
+          console.warn("[CLIENT] Tier 2 /api/chats fetch failed:", tier2Err);
         }
-      } finally {
-        if (active) {
-          setIsChatsLoading(false);
+      }
+
+      // Tier 3: Direct Webhook GET to n8n (client-side fallback)
+      if (!fetchedSuccessfully) {
+        try {
+          const directWebhookUrl = `${webhookChatsUrl}?botId=${encodeURIComponent(targetBotId)}`;
+          console.log(`[CLIENT] [Tier 3] Fetching chats directly from Webhook: "${directWebhookUrl}"`);
+          const response = await fetch(directWebhookUrl, { method: "GET" });
+          if (response.ok) {
+            const rawJson = await response.json();
+            const rawRecords = extractRecordsFromPayload(rawJson);
+            if (rawRecords.length > 0) {
+              const liveChats = processRecords(rawRecords);
+              if (active && liveChats.length > 0) {
+                console.log(`[CLIENT] Successfully loaded ${liveChats.length} chats from Tier 3`);
+                setChats(liveChats);
+                fetchedSuccessfully = true;
+              }
+            }
+          }
+        } catch (tier3Err) {
+          console.warn("[CLIENT] Tier 3 direct webhook fetch failed:", tier3Err);
         }
+      }
+
+      if (active && !fetchedSuccessfully) {
+        console.log("[CLIENT] No active chats found or all tiers returned empty.");
+      }
+
+      if (active) {
+        setIsChatsLoading(false);
       }
     };
 
