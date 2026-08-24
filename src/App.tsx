@@ -3807,7 +3807,14 @@ ${videos || "(לא הוגדר)"}
       webhookUrl: webhookUrl || undefined
     };
 
+    let syncSuccess = false;
+    let syncErrorMessage = "";
+
+    // -------------------------------------------------------------
+    // Tier 1: Try Server Backend Proxy (/api/sync)
+    // -------------------------------------------------------------
     try {
+      console.log(`[CLIENT] [Tier 1] Posting sync payload to /api/sync proxy...`);
       const response = await apiFetch("/api/sync", {
         method: "POST",
         headers: {
@@ -3817,38 +3824,77 @@ ${videos || "(לא הוגדר)"}
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setSyncStatus("success");
-        setSyncMessage("השמירה והסנכרון בוצעו בהצלחה! 🚀");
-        
-        // Update last synced timestamps using a functional state updater to avoid stale state closures
-        const nowStr = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) + " - " + new Date().toLocaleDateString('he-IL');
-        const targetId = agentOverride ? agentOverride.id : activeId;
-        
-        setAgents(prevAgents => {
-          const freshUpdated = prevAgents.map(agent => {
-            if (agent.id === targetId) {
-              return { ...agent, lastSyncedAt: nowStr };
-            }
-            return agent;
-          });
-          saveAgentsToServer(freshUpdated, sessionToken, false);
-          return freshUpdated;
-        });
-        setDirtyAgents(prev => ({ ...prev, [targetId]: false }));
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          syncSuccess = true;
+          console.log(`[CLIENT] [Tier 1] Webhook sync succeeded via backend proxy.`);
+        } else {
+          syncErrorMessage = data.error || "נכשל בסנכרון הנתונים";
+        }
       } else {
-        setSyncStatus("error");
-        setSyncMessage(data.error || "נכשל בסנכרון הנתונים");
+        const errJson = await response.json().catch(() => null);
+        syncErrorMessage = (errJson && errJson.error) ? errJson.error : `שגיאת שרת: HTTP ${response.status}`;
       }
-    } catch (err: any) {
-      console.error("Webhook network error:", err);
-      setSyncStatus("error");
-      setSyncMessage("שגיאת תקשורת: ודא שחיבור האינטרנט פעיל ושרת ה-Proxy פועל כנדרש.");
-    } finally {
-      setIsSyncing(false);
+    } catch (tier1Err: any) {
+      console.warn("[CLIENT] Tier 1 /api/sync failed, attempting Tier 2 direct fetch:", tier1Err);
+      syncErrorMessage = tier1Err?.message || String(tier1Err);
     }
+
+    // -------------------------------------------------------------
+    // Tier 2: Direct Webhook POST fallback (Matches client-to-webhook pattern)
+    // -------------------------------------------------------------
+    if (!syncSuccess) {
+      try {
+        const targetWebhookUrl = (webhookUrl && webhookUrl.trim().length > 5) ? webhookUrl.trim() : DEFAULT_POST_WEBHOOK_URL;
+        const directPostUrl = `${targetWebhookUrl}${targetWebhookUrl.includes("?") ? "&" : "?"}botId=${encodeURIComponent(currentBotId || "*")}`;
+        console.log(`[CLIENT] [Tier 2 Fallback] Syncing directly to Webhook: "${directPostUrl}"`);
+        const directResponse = await fetch(directPostUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (directResponse.ok) {
+          syncSuccess = true;
+          console.log(`[CLIENT] [Tier 2] Direct Webhook sync succeeded!`);
+        } else {
+          const directText = await directResponse.text().catch(() => "");
+          console.warn(`[CLIENT] [Tier 2] Direct Webhook returned HTTP ${directResponse.status}: ${directText}`);
+        }
+      } catch (tier2Err: any) {
+        console.warn("[CLIENT] Tier 2 direct webhook failed:", tier2Err);
+      }
+    }
+
+    // Final outcome handling
+    if (syncSuccess) {
+      setSyncStatus("success");
+      setSyncMessage("השמירה והסנכרון בוצעו בהצלחה! 🚀");
+
+      const nowStr = new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) + " - " + new Date().toLocaleDateString('he-IL');
+      const targetId = agentOverride ? agentOverride.id : activeId;
+
+      setAgents(prevAgents => {
+        const freshUpdated = prevAgents.map(agent => {
+          if (agent.id === targetId) {
+            return { ...agent, lastSyncedAt: nowStr };
+          }
+          return agent;
+        });
+        saveAgentsToServer(freshUpdated, sessionToken, false);
+        return freshUpdated;
+      });
+      setDirtyAgents(prev => ({ ...prev, [targetId]: false }));
+    } else {
+      setSyncStatus("error");
+      setSyncMessage(syncErrorMessage || "נכשל בסנכרון השכל וההגדרות מול ה-Webhook");
+    }
+
+    setIsSyncing(false);
   };
 
   // Manual save click handler for prompt editor
@@ -3972,7 +4018,7 @@ ${videos || "(לא הוגדר)"}
     setShowPromptBuilder(false);
   };
 
-  // Pull configurations FROM n8n Webhook GET URL and update local fields
+  // Pull configurations FROM n8n Webhook GET URL and update local fields (Multi-Tier Resilient Pipeline)
   const handlePullConfigFromN8n = async () => {
     setIsSyncing(true);
     setSyncStatus("idle");
@@ -3981,32 +4027,51 @@ ${videos || "(לא הוגדר)"}
     try {
       const fetchUrl = (webhookUrl && webhookUrl !== DEFAULT_POST_WEBHOOK_URL) ? webhookUrl : DEFAULT_GET_WEBHOOK_URL;
       console.log("[CLIENT] Pulling live settings from n8n GET endpoint proxy with URL:", fetchUrl, "for Bot ID:", botId);
-      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(fetchUrl)}&botId=${encodeURIComponent(botId)}`, {
-        headers: {
-          "Authorization": `Bearer ${sessionToken}`
-        }
-      });
       
-      if (!res.ok) {
-        let errMsg = `שגיאת קריאה: קוד ${res.status}`;
-        try {
-          const errData = await res.json();
-          if (errData.error) {
-            errMsg = `${errData.error}${errData.details ? `: ${errData.details}` : ""}`;
+      let fetchedRawData: any = null;
+
+      // Tier 1: Try backend proxy /api/fetch-config
+      try {
+        const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(fetchUrl)}&botId=${encodeURIComponent(botId)}`, {
+          headers: {
+            "Authorization": `Bearer ${sessionToken}`
           }
-        } catch (e) {
-          // ignore
+        });
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success && result.data) {
+            fetchedRawData = result.data;
+          }
         }
-        throw new Error(errMsg);
+      } catch (tier1Err) {
+        console.warn("[CLIENT] Tier 1 proxy fetch-config failed, falling back to direct GET:", tier1Err);
       }
-      
-      const result = await res.json();
-      if (result.success && result.data) {
-        let raw = result.data;
+
+      // Tier 2: Direct Webhook GET fallback (same pattern as chats)
+      if (!fetchedRawData) {
+        try {
+          const directGetUrl = `${fetchUrl}${fetchUrl.includes("?") ? "&" : "?"}botId=${encodeURIComponent(botId || "*")}`;
+          console.log(`[CLIENT] [Tier 2 Fallback] Fetching config directly from Webhook: "${directGetUrl}"`);
+          const directRes = await fetch(directGetUrl, { method: "GET" });
+          if (directRes.ok) {
+            fetchedRawData = await directRes.json();
+          }
+        } catch (tier2Err) {
+          console.warn("[CLIENT] Tier 2 direct GET failed:", tier2Err);
+        }
+      }
+
+      if (fetchedRawData) {
+        let raw = fetchedRawData;
         
         // If n8n returns an array, unpack the first element
         if (Array.isArray(raw)) {
-          raw = raw[0] || {};
+          // If multiple, try to find matching botId
+          const matched = raw.find((item: any) => {
+            const itemBotId = String(item.botId || item["Bot ID"] || item.id || "").trim();
+            return itemBotId === String(botId).trim();
+          });
+          raw = matched || raw[0] || {};
         }
         
         // Smart keys parser (supports English, Hebrew, space variations, and safely handles numbers)
@@ -4216,7 +4281,7 @@ ${videos || "(לא הוגדר)"}
         setSyncMessage("נתוני הסוכן נמשכו בהצלחה מקראית הנתונים מהשרת והוזנו למסך! 🔄");
       } else {
         setSyncStatus("error");
-        setSyncMessage(result.error || "נכשל בפענוח הנתונים מהשרת");
+        setSyncMessage("נכשל בקבלת הנתונים מה-Webhook של n8n");
       }
     } catch (err: any) {
       console.error("Pull config error:", err);
@@ -4240,30 +4305,43 @@ ${videos || "(לא הוגדר)"}
 
     try {
       console.log("[CLIENT] Pulling ALL configuration presets from n8n GET Webhook (botId=*):", urlToUse);
-      const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(urlToUse)}&botId=*`, {
-        headers: {
-          "Authorization": `Bearer ${tokenToUse}`
-        }
-      });
       
-      if (!res.ok) {
-        let errMsg = `שגיאת קריאה: קוד ${res.status}`;
-        try {
-          const errData = await res.json();
-          if (errData.error) {
-            errMsg = `${errData.error}${errData.details ? `: ${errData.details}` : ""}`;
+      let rawList: any = null;
+
+      // Tier 1: Try backend proxy /api/fetch-config
+      try {
+        const res = await apiFetch(`/api/fetch-config?url=${encodeURIComponent(urlToUse)}&botId=*`, {
+          headers: {
+            "Authorization": `Bearer ${tokenToUse}`
           }
-        } catch (e) {
-          // ignore
+        });
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success && result.data) {
+            rawList = result.data;
+          }
         }
-        throw new Error(errMsg);
+      } catch (tier1Err) {
+        console.warn("[CLIENT] Tier 1 pull-all proxy failed, falling back to direct GET:", tier1Err);
       }
-      
-      const result = await res.json();
-      if (result.success && result.data) {
-        let rawList = result.data;
+
+      // Tier 2: Direct Webhook GET fallback (same pattern as chats)
+      if (!rawList) {
+        try {
+          const directGetUrl = `${urlToUse}${urlToUse.includes("?") ? "&" : "?"}botId=*`;
+          console.log(`[CLIENT] [Tier 2 Fallback] Pulling all agents directly from Webhook: "${directGetUrl}"`);
+          const directRes = await fetch(directGetUrl, { method: "GET" });
+          if (directRes.ok) {
+            rawList = await directRes.json();
+          }
+        } catch (tier2Err) {
+          console.warn("[CLIENT] Tier 2 direct pull-all failed:", tier2Err);
+        }
+      }
+
+      if (rawList) {
         if (!Array.isArray(rawList)) {
-          rawList = rawList ? [rawList] : [];
+          rawList = [rawList];
         }
         
         if (rawList.length === 0) {
@@ -4299,7 +4377,21 @@ ${videos || "(לא הוגדר)"}
             "שם וואטסאפ instance ",
             "WhatsApp Instance Name"
           ]);
-          const pulledBusinessPrompt = getVal(item, ["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
+          const pulledBusinessPrompt = getVal(item, [
+            "businessPrompt",
+            "Business Prompt",
+            "Prompt",
+            "prompt",
+            "systemPrompt",
+            "System Prompt",
+            "פרומפט עיסקי",
+            "פרומפט עסקי",
+            "פרומפט",
+            "שכל",
+            "שכל הבוט",
+            "הנחיות",
+            "הנחיות לבוט"
+          ]);
           const pulledKey = getVal(item, ["key", "Key", "מפתח"]);
           const pulledSendPulseBotId = getVal(item, ["sendPulseBotId", "SendPulse Bot ID"]);
           const pulledLeadFollowUpDays = getVal(item, ["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
