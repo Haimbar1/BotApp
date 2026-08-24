@@ -55,7 +55,7 @@ import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
 import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
 import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
-import { getMessageSourceInfo, cleanSourceFromText } from "./lib/sourceHelper";
+import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText } from "./lib/sourceHelper";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
 export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
@@ -492,6 +492,7 @@ export default function App() {
   const [isChatsLoading, setIsChatsLoading] = useState<boolean>(false);
   const [agentPanelTab, setAgentPanelTab] = useState<"general" | "whatsapp" | "prompt" | "chats">("chats");
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
+  const [chatSourceFilter, setChatSourceFilter] = useState<"all" | "web" | "whatsapp" | "facebook">("all");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
   const [showRawMessageId, setShowRawMessageId] = useState<string | null>(null);
   const [deletedSessionCutoffs, setDeletedSessionCutoffs] = useState<Record<string, number>>(() => {
@@ -1654,20 +1655,58 @@ export default function App() {
     return list;
   }, [chats, customContactNames, agents]);
 
-  // Automatically select the appropriate session
+  // Channel source counts for all sessions
+  const chatSessionsCounts = useMemo(() => {
+    const counts = { all: chatSessions.length, web: 0, whatsapp: 0, facebook: 0 };
+    for (const session of chatSessions) {
+      const srcInfo = getSessionSourceInfo(session);
+      if (srcInfo.type === "web") {
+        counts.web++;
+      } else if (srcInfo.type === "facebook") {
+        counts.facebook++;
+      } else {
+        counts.whatsapp++;
+      }
+    }
+    return counts;
+  }, [chatSessions]);
+
+  // Filtered sessions based on channel filter and search query
+  const filteredChatSessions = useMemo(() => {
+    return chatSessions.filter(session => {
+      // 1. Channel Filter
+      if (chatSourceFilter !== "all") {
+        const srcInfo = getSessionSourceInfo(session);
+        if (srcInfo.type !== chatSourceFilter) {
+          return false;
+        }
+      }
+
+      // 2. Search query filter
+      const term = chatsSearchTerm.trim().toLowerCase();
+      if (!term) return true;
+      return (
+        session.phone.toLowerCase().includes(term) ||
+        session.name.toLowerCase().includes(term) ||
+        session.sessionId.toLowerCase().includes(term)
+      );
+    });
+  }, [chatSessions, chatSourceFilter, chatsSearchTerm]);
+
+  // Automatically select the appropriate session from filtered sessions
   useEffect(() => {
-    if (chatSessions.length > 0) {
-      const hasSelectedValidSession = chatSessions.some(s => s.sessionId === selectedSessionId);
+    if (filteredChatSessions.length > 0) {
+      const hasSelectedValidSession = filteredChatSessions.some(s => s.sessionId === selectedSessionId);
       if (!selectedSessionId || !hasSelectedValidSession) {
-        // Select the latest one (since chatSessions list is sorted descending by lastTimestamp, index 0 is the newest/latest)
-        setSelectedSessionId(chatSessions[0].sessionId);
+        // Select the latest session in the filtered list
+        setSelectedSessionId(filteredChatSessions[0].sessionId);
       }
     } else {
       if (selectedSessionId !== "") {
         setSelectedSessionId("");
       }
     }
-  }, [chatSessions, selectedSessionId]);
+  }, [filteredChatSessions, selectedSessionId]);
 
   const handleClearSessionChats = async (sessionId: string) => {
     if (!sessionId) return;
@@ -3746,6 +3785,16 @@ ${videos || "(לא הוגדר)"}
       "Video": currentVideosInfo,
       "SendPulse Bot ID": currentSendPulseBotId,
 
+      // Unified Prompt / Full System Prompt fields (שכל / הנחיות / Prompt)
+      "Prompt": currentBusinessPrompt,
+      "prompt": currentBusinessPrompt,
+      "businessPrompt": currentBusinessPrompt,
+      "Business Prompt": currentBusinessPrompt,
+      "systemPrompt": currentBusinessPrompt,
+      "System Prompt": currentBusinessPrompt,
+      "הנחיות": currentBusinessPrompt,
+      "שכל": currentBusinessPrompt,
+
       // Metadata properties & event parameters (kept for n8n workflow logic)
       event: resolvedIsNewBot ? "create_bot" : "update_bot",
       eventType: resolvedIsNewBot ? "CREATE_BOT" : "UPDATE_BOT",
@@ -3986,7 +4035,21 @@ ${videos || "(לא הוגדר)"}
           "שם וואטסאפ instance ",
           "WhatsApp Instance Name"
         ]);
-        const pulledBusinessPrompt = getVal(["businessPrompt", "פרומפט עיסקי", "פרומפט עסקי"]);
+        const pulledBusinessPrompt = getVal([
+          "businessPrompt",
+          "Business Prompt",
+          "Prompt",
+          "prompt",
+          "systemPrompt",
+          "System Prompt",
+          "פרומפט עיסקי",
+          "פרומפט עסקי",
+          "פרומפט",
+          "שכל",
+          "שכל הבוט",
+          "הנחיות",
+          "הנחיות לבוט"
+        ]);
         const pulledKey = getVal(["key", "Key", "מפתח"]);
         const pulledSendPulseBotId = getVal(["sendPulseBotId", "SendPulse Bot ID"]);
         const pulledLeadFollowUpDays = getVal(["leadFollowUpDays", "זמן למעקב אחרי ליד בימים", "Days to Floow up", "Days to Follow up"]) || "3";
@@ -6302,7 +6365,8 @@ ${videos || "(לא הוגדר)"}
                 <div className="border-l border-slate-850 bg-[#090a0f] flex flex-col h-full overflow-hidden">
                   
                   {/* Search and metadata */}
-                  <div className="p-3 border-b border-slate-850 flex flex-col gap-2">
+                  <div className="p-3 border-b border-slate-850 flex flex-col gap-2.5 bg-[#090a0f]">
+                    {/* Search input */}
                     <div className="relative">
                       <input
                         type="text"
@@ -6321,25 +6385,125 @@ ${videos || "(לא הוגדר)"}
                         </button>
                       )}
                     </div>
-                    <div className="text-[10px] text-slate-550 font-bold flex items-center justify-between px-1 font-sans">
-                      <span>{chatSessions.length} שיחות בסה"כ</span>
-                      {chatsRefreshTrigger > 0 && <span>רענון אחרון: {new Date().toLocaleTimeString()}</span>}
+
+                    {/* Source Channel Filter Tabs (הכל - ברירת מחדל, WEB, וואטסאפ, תגובות FB) */}
+                    <div className="grid grid-cols-4 gap-1 p-1 bg-[#10121a] rounded-lg border border-slate-850">
+                      {/* הכל */}
+                      <button
+                        type="button"
+                        onClick={() => setChatSourceFilter("all")}
+                        className={`px-1.5 py-1.5 rounded-md text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer select-none ${
+                          chatSourceFilter === "all"
+                            ? "bg-slate-700 text-white shadow-sm border border-slate-600"
+                            : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                        }`}
+                        title="הצג את כל השיחות (ברירת מחדל)"
+                      >
+                        <span className="truncate">{t("filterAll")}</span>
+                        <span className={`text-[9px] px-1 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                          chatSourceFilter === "all" ? "bg-slate-900 text-slate-200" : "bg-slate-850 text-slate-400"
+                        }`}>
+                          {chatSessionsCounts.all}
+                        </span>
+                      </button>
+
+                      {/* WEB */}
+                      <button
+                        type="button"
+                        onClick={() => setChatSourceFilter("web")}
+                        className={`px-1.5 py-1.5 rounded-md text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer select-none ${
+                          chatSourceFilter === "web"
+                            ? "bg-sky-500/25 text-sky-200 shadow-sm border border-sky-500/50 font-black"
+                            : "text-slate-400 hover:text-sky-300 hover:bg-sky-500/10"
+                        }`}
+                        title="שיחות מתוסף האתר (WEB)"
+                      >
+                        <span className="text-xs">🌐</span>
+                        <span className="truncate">{t("filterWeb")}</span>
+                        <span className={`text-[9px] px-1 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                          chatSourceFilter === "web" ? "bg-sky-950 text-sky-300 border border-sky-800/60" : "bg-slate-850 text-slate-400"
+                        }`}>
+                          {chatSessionsCounts.web}
+                        </span>
+                      </button>
+
+                      {/* וואטסאפ */}
+                      <button
+                        type="button"
+                        onClick={() => setChatSourceFilter("whatsapp")}
+                        className={`px-1.5 py-1.5 rounded-md text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer select-none ${
+                          chatSourceFilter === "whatsapp"
+                            ? "bg-emerald-500/25 text-emerald-200 shadow-sm border border-emerald-500/50 font-black"
+                            : "text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+                        }`}
+                        title="שיחות מ-WhatsApp"
+                      >
+                        <span className="text-xs">💬</span>
+                        <span className="truncate">{t("filterWhatsApp")}</span>
+                        <span className={`text-[9px] px-1 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                          chatSourceFilter === "whatsapp" ? "bg-emerald-950 text-emerald-300 border border-emerald-800/60" : "bg-slate-850 text-slate-400"
+                        }`}>
+                          {chatSessionsCounts.whatsapp}
+                        </span>
+                      </button>
+
+                      {/* תגובות FB */}
+                      <button
+                        type="button"
+                        onClick={() => setChatSourceFilter("facebook")}
+                        className={`px-1.5 py-1.5 rounded-md text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer select-none ${
+                          chatSourceFilter === "facebook"
+                            ? "bg-blue-500/25 text-blue-200 shadow-sm border border-blue-500/50 font-black"
+                            : "text-slate-400 hover:text-blue-300 hover:bg-blue-500/10"
+                        }`}
+                        title="שיחות מתגובות פייסבוק (FB)"
+                      >
+                        <span className="text-xs">📘</span>
+                        <span className="truncate">{t("filterFb")}</span>
+                        <span className={`text-[9px] px-1 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                          chatSourceFilter === "facebook" ? "bg-blue-950 text-blue-300 border border-blue-800/60" : "bg-slate-850 text-slate-400"
+                        }`}>
+                          {chatSessionsCounts.facebook}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Metadata summary */}
+                    <div className="text-[10px] text-slate-400 font-bold flex items-center justify-between px-1 font-sans">
+                      <span>
+                        {chatSourceFilter === "all" && !chatsSearchTerm 
+                          ? `${chatSessions.length} שיחות בסה"כ`
+                          : `${filteredChatSessions.length} מתוך ${chatSessions.length} שיחות`}
+                      </span>
+                      {chatsRefreshTrigger > 0 && <span className="text-slate-500">רענון אחרון: {new Date().toLocaleTimeString()}</span>}
                     </div>
                   </div>
 
                   {/* Sessions List */}
                   <div className="flex-1 overflow-y-auto divide-y divide-slate-900 custom-scrollbar">
-                    {chatSessions
-                      .filter(session => {
-                        const term = chatsSearchTerm.trim().toLowerCase();
-                        if (!term) return true;
-                        return (
-                          session.phone.toLowerCase().includes(term) ||
-                          session.name.toLowerCase().includes(term) ||
-                          session.sessionId.toLowerCase().includes(term)
-                        );
-                      })
-                      .map(session => {
+                    {filteredChatSessions.length === 0 ? (
+                      <div className="p-6 flex flex-col items-center justify-center text-center gap-3 text-slate-400 h-48">
+                        <div className="p-3 bg-slate-900/60 rounded-full border border-slate-800 text-slate-500 text-xl">
+                          {chatSourceFilter === "web" ? "🌐" : chatSourceFilter === "facebook" ? "📘" : chatSourceFilter === "whatsapp" ? "💬" : "🔍"}
+                        </div>
+                        <p className="text-xs font-bold text-slate-300">
+                          {chatsSearchTerm ? "לא נמצאו תוצאות לחיפוש" : t("noFilteredSessions")}
+                        </p>
+                        {(chatSourceFilter !== "all" || chatsSearchTerm) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setChatSourceFilter("all");
+                              setChatsSearchTerm("");
+                            }}
+                            className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded-lg text-xs font-bold transition cursor-pointer border border-slate-700"
+                          >
+                            {t("clearFilter")}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      filteredChatSessions.map(session => {
                         const isActive = selectedSessionId === session.sessionId;
                         const snippetMsg = session.lastHumanMessage || session.lastMessage;
                         const parsedLast = snippetMsg 
@@ -6372,10 +6536,7 @@ ${videos || "(לא הוגדר)"}
                         const displayTitle = hasName ? session.name : (hasPhone ? formattedPhone : `שיחה ${session.sessionId.slice(0, 8)}`);
                         
                         // Extract source (WhatsApp / Web / Facebook Post)
-                        const sessionSource = getMessageSourceInfo(
-                          session.lastHumanMessage?.message?.content || session.lastMessage?.message?.content || "",
-                          session.lastHumanMessage || session.lastMessage
-                        );
+                        const sessionSource = getSessionSourceInfo(session);
                         const cleanPreviewText = cleanSourceFromText(parsedLast.text).replace(/^(?:chatInput|Name|Phone|userPhone|userName|משתמש|טלפון)[\s:\-=]*/i, "") || parsedLast.text;
 
                         return (
@@ -6441,7 +6602,8 @@ ${videos || "(לא הוגדר)"}
                             </div>
                           </div>
                         );
-                      })}
+                      })
+                    )}
                   </div>
                 </div>
 
@@ -6545,10 +6707,7 @@ ${videos || "(לא הוגדר)"}
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               {(() => {
-                                const threadSource = getMessageSourceInfo(
-                                  activeSession.lastHumanMessage?.message?.content || activeSession.lastMessage?.message?.content || "",
-                                  activeSession.lastHumanMessage || activeSession.lastMessage
-                                );
+                                const threadSource = getSessionSourceInfo(activeSession);
                                 return threadSource ? (
                                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs ${threadSource.badgeClass}`}>
                                     <span className="text-sm">{threadSource.icon}</span>
