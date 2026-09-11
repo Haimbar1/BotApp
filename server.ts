@@ -3188,6 +3188,150 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
     }
   });
 
+  // Endpoint: diagnose a free-text business-owner issue/request and auto-fix the
+  // relevant prompt blocks (out of the 12), returning a plain-language summary
+  // of what changed so a non-technical client can review and just click "Save".
+  app.post("/api/ai/diagnose-and-fix-agent", requireAuth, async (req, res) => {
+    try {
+      const {
+        issueDescription,
+        businessName,
+        ownerName,
+        ownerPhone,
+        parts
+      } = req.body;
+
+      const partKeys = [
+        "welcomeMessage", "botIdentity", "coursesInfo", "kidsCourses",
+        "conversationFlow", "writingStyle", "faqAnswers", "whatNotToDo",
+        "syllabusLinks", "humanEscalation", "imagesInfo", "videosInfo"
+      ];
+
+      const partTitles: Record<string, string> = {
+        welcomeMessage: "הודעת פתיחה ותפריט ראשי",
+        botIdentity: "זהות הבוט ומאפייניו",
+        coursesInfo: "מה אני מוכר — שירותים/מוצרים/קורסים",
+        kidsCourses: "קהל יעד וסיגמנטים מיוחדים",
+        conversationFlow: "זרימת ושלבי השיחה",
+        writingStyle: "טון ואופן כתיבה",
+        faqAnswers: "שאלות פופולריות (FAQ)",
+        whatNotToDo: "חוקי ברזל (מה לא לעשות)",
+        syllabusLinks: "ברושורים, חומרי מידע וקישורים",
+        humanEscalation: "אסקלציה לאנוש (הפניה לנציג)",
+        imagesInfo: "תמונות וגלריית מדיה",
+        videosInfo: "סרטוני וידאו והדרכה"
+      };
+
+      if (!issueDescription || !String(issueDescription).trim()) {
+        return res.status(400).json({
+          success: false,
+          error: "חובה לתאר את הבעיה או היכולת המבוקשת"
+        });
+      }
+
+      if (!ai) {
+        console.warn("[SERVER] GoogleGenAI client NOT initialized for diagnose-and-fix-agent.");
+        return res.status(503).json({
+          success: false,
+          error: "מנוע ה-AI אינו זמין כרגע, נסה שוב בעוד רגע"
+        });
+      }
+
+      const safeParts = parts || {};
+      const currentPartsBlock = partKeys
+        .map(k => `--- ${partTitles[k]} (מפתח: ${k}) ---\n${safeParts[k] || "(ריק, אין תוכן קיים)"}`)
+        .join("\n\n");
+
+      const promptToModel =
+        "אתה עוזר פיתוח AI ומומחה אפיון סוכני מכירות ושירות לצ'אט ו-WhatsApp.\n" +
+        "לקוח (בעל עסק שאינו טכני) מנהל בוט המורכב מ-12 בלוקי הנחיות נפרדים. הוא מתאר בעיה בהתנהגות הבוט או יכולת חדשה שהוא רוצה, בשפה חופשית ולא טכנית.\n" +
+        "המשימה שלך: לקרוא את כל 12 הבלוקים הנוכחיים, להבין היכן בדיוק טמונה הבעיה (היא עשויה לגעת ביותר מבלוק אחד), ולכתוב מחדש רק את הבלוקים שבאמת צריכים להשתנות כדי לפתור את הבעיה או להוסיף את היכולת המבוקשת.\n\n" +
+        `שם העסק: ${businessName || "עסק דיגיטלי"}\n` +
+        `שם מנהל העסק: ${ownerName || "מנהל"}\n` +
+        `טלפון מנהל העסק: ${ownerPhone || "לא צוין"}\n\n` +
+        "--- 12 בלוקי ההנחיות הנוכחיים של הבוט ---\n" +
+        `${currentPartsBlock}\n\n` +
+        "--- תיאור הבעיה/הבקשה של הלקוח (בשפתו, כפי שנכתב) ---\n" +
+        `${issueDescription}\n\n` +
+        "דרישות קריטיות:\n" +
+        "1. אם התיאור ברור מספיק ואפשר לפעול לפיו בביטחון: כתוב מחדש טקסט מלא (לא תיאור שינוי, לא דיף) לכל בלוק שצריך להשתנות, בעברית תקנית ובאותו סגנון וטון של שאר הבלוקים. אל תיגע בבלוקים שלא קשורים לבעיה. הגדר needsClarification=false.\n" +
+        "2. אם התיאור עמום מדי או חסר מידע קריטי כדי לפעול בביטחון (לדוגמה: הלקוח מבקש להוסיף קישור לאתר אך שום קישור לא מופיע לא בבלוקים הקיימים ולא בתיאור עצמו) — אל תנחש ואל תמציא מידע (כמו כתובת URL). במקום זאת הגדר needsClarification=true, כתוב שאלת הבהרה אחת קצרה וברורה ב-clarifyingQuestion, והחזר את שדה changes ריק (ללא שינויים).\n" +
+        "3. כתוב summary: הסבר קצר, ברור ולא טכני בעברית (2-5 שורות, אפשר בפורמט בולטים עם '-' בתחילת שורה) שמסביר לבעל עסק שאינו טכני מה בדיוק שונה בכל בלוק שהשתנה ולמה זה פותר את מה שביקש. אם needsClarification=true, השאר summary ריק.\n" +
+        "4. אל תשתמש בתגיות markdown או כותרות בתוך הטקסט של הבלוקים עצמם. הערכים בתוך changes הם הטקסט המלא שיוצג ישירות למשתמש.\n\n" +
+        "החזר אובייקט JSON תואם לסכימה שסופקה.";
+
+      console.log(`[SERVER] Diagnosing and fixing agent issue: '${String(issueDescription).slice(0, 200)}'`);
+
+      const changesProperties: Record<string, any> = {};
+      partKeys.forEach(k => {
+        changesProperties[k] = { type: Type.STRING };
+      });
+
+      const response = await generateWithFallback(ai, {
+        model: "gemini-3.5-flash",
+        contents: promptToModel,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              needsClarification: { type: Type.BOOLEAN },
+              clarifyingQuestion: { type: Type.STRING },
+              summary: { type: Type.STRING },
+              changes: {
+                type: Type.OBJECT,
+                properties: changesProperties
+              }
+            },
+            required: ["needsClarification", "summary", "changes"]
+          }
+        }
+      });
+
+      const responseText = response.text;
+      if (!responseText) {
+        throw new Error("Empty response returned from Gemini.");
+      }
+
+      const parsed = JSON.parse(responseText.trim());
+
+      if (parsed.needsClarification) {
+        return res.json({
+          success: true,
+          needsClarification: true,
+          clarifyingQuestion: parsed.clarifyingQuestion || "תוכל/י לתאר את הבקשה בפירוט רב יותר?"
+        });
+      }
+
+      // Filter out unchanged/empty values as a safety net beyond the model's own instructions
+      const rawChanges = parsed.changes || {};
+      const changes: Record<string, string> = {};
+      partKeys.forEach(k => {
+        const newVal = rawChanges[k];
+        const curVal = safeParts[k] || "";
+        if (typeof newVal === "string" && newVal.trim() && newVal.trim() !== String(curVal).trim()) {
+          changes[k] = newVal;
+        }
+      });
+
+      return res.json({
+        success: true,
+        needsClarification: false,
+        changes,
+        touchedParts: Object.keys(changes),
+        summary: parsed.summary || ""
+      });
+
+    } catch (err: any) {
+      console.error("[SERVER] Diagnose-and-fix agent error:", err);
+      return res.status(500).json({
+        success: false,
+        error: "שגיאה באבחון ותיקון הבוט באמצעות AI",
+        details: err?.message || String(err)
+      });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

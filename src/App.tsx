@@ -42,7 +42,10 @@ import {
   Sliders,
   Code,
   Edit2,
-  Loader2
+  Loader2,
+  Stethoscope,
+  Undo2,
+  HelpCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
@@ -449,6 +452,14 @@ export default function App() {
   // AI Prompt Part Improvement states
   const [aiImproveInstruction, setAiImproveInstruction] = useState("");
   const [isImprovingPart, setIsImprovingPart] = useState(false);
+
+  // AI Whole-Agent Issue Diagnosis & Auto-Fix states ("תקן לי את הבוט")
+  const [issueDescription, setIssueDescription] = useState("");
+  const [isDiagnosingIssue, setIsDiagnosingIssue] = useState(false);
+  const [lastFixSummary, setLastFixSummary] = useState<string | null>(null);
+  const [lastFixTouchedParts, setLastFixTouchedParts] = useState<string[]>([]);
+  const [preFixSnapshot, setPreFixSnapshot] = useState<Record<string, string> | null>(null);
+  const [fixClarifyingQuestion, setFixClarifyingQuestion] = useState<string | null>(null);
 
   // Currently expanded block in the multi-part editor
   const [expandedSection, setExpandedSection] = useState<string>("botIdentity");
@@ -3299,6 +3310,175 @@ ${videos || "(לא הוגדר)"}
     } finally {
       setIsImprovingPart(false);
     }
+  };
+
+  // Titles for the 12 prompt blocks, used for the AI diagnose-and-fix panel (chips, payload labels)
+  const PROMPT_PART_TITLES: Record<string, string> = {
+    welcomeMessage: "הודעת פתיחה ותפריט ראשי",
+    botIdentity: "זהות הבוט ומאפייניו",
+    coursesInfo: "מה אני מוכר — שירותים/מוצרים/קורסים",
+    kidsCourses: "קהל יעד וסיגמנטים מיוחדים",
+    conversationFlow: "זרימת ושלבי השיחה",
+    writingStyle: "טון ואופן כתיבה",
+    faqAnswers: "שאלות פופולריות (FAQ)",
+    whatNotToDo: "חוקי ברזל (מה לא לעשות)",
+    syllabusLinks: "ברושורים, חומרי מידע וקישורים",
+    humanEscalation: "אסקלציה לאנוש (הפניה לנציג)",
+    imagesInfo: "תמונות וגלריית מדיה",
+    videosInfo: "סרטוני וידאו והדרכה"
+  };
+
+  const getCurrentPromptParts = (): Record<string, string> => ({
+    welcomeMessage,
+    botIdentity,
+    coursesInfo,
+    kidsCourses,
+    conversationFlow,
+    writingStyle,
+    faqAnswers,
+    whatNotToDo,
+    syllabusLinks,
+    humanEscalation,
+    imagesInfo,
+    videosInfo
+  });
+
+  // Apply one or more prompt part changes atomically in a single state update.
+  // (handlePromptPartChange reads its "fresh" values via closures over the individual
+  // useState values, so calling it in a loop for several keys at once would have each
+  // call see stale values from the others and only the last call's agent update would
+  // survive — this recomputes everything from a single merged snapshot instead.)
+  const applyPromptPartChanges = (changes: Record<string, string>) => {
+    const keys = Object.keys(changes);
+    if (keys.length === 0) return;
+
+    const merged = {
+      welcomeMessage: changes.welcomeMessage ?? welcomeMessage,
+      botIdentity: changes.botIdentity ?? botIdentity,
+      coursesInfo: changes.coursesInfo ?? coursesInfo,
+      kidsCourses: changes.kidsCourses ?? kidsCourses,
+      conversationFlow: changes.conversationFlow ?? conversationFlow,
+      writingStyle: changes.writingStyle ?? writingStyle,
+      faqAnswers: changes.faqAnswers ?? faqAnswers,
+      whatNotToDo: changes.whatNotToDo ?? whatNotToDo,
+      syllabusLinks: changes.syllabusLinks ?? syllabusLinks,
+      humanEscalation: changes.humanEscalation ?? humanEscalation,
+      imagesInfo: changes.imagesInfo ?? imagesInfo,
+      videosInfo: changes.videosInfo ?? videosInfo
+    };
+
+    if (changes.welcomeMessage !== undefined) setWelcomeMessage(merged.welcomeMessage);
+    if (changes.botIdentity !== undefined) setBotIdentity(merged.botIdentity);
+    if (changes.coursesInfo !== undefined) setCoursesInfo(merged.coursesInfo);
+    if (changes.kidsCourses !== undefined) setKidsCourses(merged.kidsCourses);
+    if (changes.conversationFlow !== undefined) setConversationFlow(merged.conversationFlow);
+    if (changes.writingStyle !== undefined) setWritingStyle(merged.writingStyle);
+    if (changes.faqAnswers !== undefined) setFaqAnswers(merged.faqAnswers);
+    if (changes.whatNotToDo !== undefined) setWhatNotToDo(merged.whatNotToDo);
+    if (changes.syllabusLinks !== undefined) setSyllabusLinks(merged.syllabusLinks);
+    if (changes.humanEscalation !== undefined) setHumanEscalation(merged.humanEscalation);
+    if (changes.imagesInfo !== undefined) setImagesInfo(merged.imagesInfo);
+    if (changes.videosInfo !== undefined) setVideosInfo(merged.videosInfo);
+
+    const compiled = compilePromptFromParts(
+      merged.welcomeMessage,
+      merged.botIdentity,
+      merged.coursesInfo,
+      merged.kidsCourses,
+      merged.conversationFlow,
+      merged.writingStyle,
+      merged.faqAnswers,
+      merged.whatNotToDo,
+      merged.syllabusLinks,
+      merged.humanEscalation,
+      merged.imagesInfo,
+      merged.videosInfo
+    );
+    setBusinessPrompt(compiled);
+
+    setAgents(prevAgents => prevAgents.map(agent => {
+      if (agent.id === activeId) {
+        return {
+          ...agent,
+          ...changes,
+          businessPrompt: compiled
+        };
+      }
+      return agent;
+    }));
+    setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+  };
+
+  // Diagnose a free-text issue/capability request and auto-apply the relevant prompt block changes
+  const diagnoseAndFixAgentIssue = async () => {
+    if (!issueDescription.trim()) {
+      alert("אנא תארו בקצרה מהי הבעיה או היכולת החדשה שתרצו להוסיף לבוט");
+      return;
+    }
+
+    try {
+      setIsDiagnosingIssue(true);
+      setFixClarifyingQuestion(null);
+
+      const currentParts = getCurrentPromptParts();
+
+      const response = await apiFetch("/api/ai/diagnose-and-fix-agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
+        },
+        body: JSON.stringify({
+          issueDescription,
+          businessName,
+          ownerName,
+          ownerPhone,
+          parts: currentParts
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "שגיאה באבחון הבעיה");
+      }
+
+      if (data.needsClarification) {
+        setFixClarifyingQuestion(data.clarifyingQuestion || "תוכל/י לתאר את הבקשה בפירוט רב יותר?");
+        return;
+      }
+
+      const touchedParts: string[] = data.touchedParts || [];
+      if (touchedParts.length === 0) {
+        alert("ה-AI לא מצא צורך לשנות אף בלוק בהתאם לתיאור. נסו לנסח את הבקשה בצורה שונה או מפורטת יותר.");
+        return;
+      }
+
+      // Snapshot the pre-fix values of only the touched parts, so the fix can be undone
+      const snapshot: Record<string, string> = {};
+      touchedParts.forEach(key => {
+        snapshot[key] = (currentParts as any)[key] || "";
+      });
+      setPreFixSnapshot(snapshot);
+      applyPromptPartChanges(data.changes);
+
+      setLastFixSummary(data.summary || "");
+      setLastFixTouchedParts(touchedParts);
+      setIssueDescription("");
+    } catch (err: any) {
+      console.error(err);
+      alert(`נכשלנו באבחון ותיקון הבוט: ${err?.message || err}`);
+    } finally {
+      setIsDiagnosingIssue(false);
+    }
+  };
+
+  // Revert the most recently applied AI fix back to its pre-fix values
+  const undoLastFix = () => {
+    if (!preFixSnapshot) return;
+    applyPromptPartChanges(preFixSnapshot);
+    setPreFixSnapshot(null);
+    setLastFixSummary(null);
+    setLastFixTouchedParts([]);
   };
 
   // Update current active agent configuration in state & server
@@ -7520,6 +7700,103 @@ ${videos || "(לא הוגדר)"}
                     </button>
                   );
                 })}
+              </div>
+
+              {/* AI Diagnose & Auto-Fix Panel — describe a problem/capability in free text, AI decides which blocks to change */}
+              <div className="p-3 sm:p-4 border-b border-slate-850 bg-[#090a10]">
+                <div className="bg-gradient-to-br from-amber-950/25 via-rose-950/15 to-slate-950/20 border border-amber-500/25 rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Stethoscope className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="text-xs font-black text-amber-300">יש בעיה בבוט? ספר/י לנו בחופשיות ונתקן אוטומטית 🛠️</span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
+                    לדוגמה: "הבוט לא מפרט את כתובת האתר, לא כששואלים ולא ביוזמתו, הוא רק מפנה לפייסבוק שזה כלום". המערכת תזהה בעצמה אילו חלקים בפרומפט צריך לשנות, תבצע את השינוי, ותסביר לך בקצרה מה שונה — ואז תצטרך/י רק לבדוק ולשמור.
+                  </p>
+
+                  <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                    <textarea
+                      value={issueDescription}
+                      onChange={(e) => setIssueDescription(e.target.value)}
+                      placeholder="תארו כאן את הבעיה או היכולת החדשה שתרצו..."
+                      dir="rtl"
+                      rows={2}
+                      disabled={isDiagnosingIssue}
+                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-amber-500 placeholder-slate-600 resize-none disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      disabled={isDiagnosingIssue || !issueDescription.trim()}
+                      onClick={diagnoseAndFixAgentIssue}
+                      className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[130px] ${
+                        isDiagnosingIssue
+                          ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
+                          : issueDescription.trim()
+                            ? "bg-[#5a3210]/60 hover:bg-[#6d3d13] text-amber-200 border-amber-500/25 hover:border-amber-500/50 cursor-pointer shadow"
+                            : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
+                      }`}
+                    >
+                      {isDiagnosingIssue ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>מאבחן...</span>
+                        </>
+                      ) : (
+                        <span>🔍 אבחן ותקן</span>
+                      )}
+                    </button>
+                  </div>
+
+                  {fixClarifyingQuestion && (
+                    <div className="bg-[#3a2a05]/50 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2">
+                      <HelpCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="text-xs text-amber-200 font-semibold leading-relaxed">
+                        <span className="font-black">צריך עוד פרט אחד: </span>
+                        {fixClarifyingQuestion}
+                        <span className="block text-[10.5px] text-amber-300/70 font-medium mt-1">הוסיפו את הפרט בתיבה למעלה ולחצו שוב על "אבחן ותקן".</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {lastFixSummary !== null && lastFixTouchedParts.length > 0 && (
+                    <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-3 flex flex-col gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span className="text-xs font-black text-emerald-300">בוצעו השינויים הבאים:</span>
+                      </div>
+                      {lastFixSummary.trim() && (
+                        <div className="text-[11px] text-emerald-100/90 font-medium leading-relaxed whitespace-pre-line">
+                          {lastFixSummary}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        {lastFixTouchedParts.map((key) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => {
+                              setActiveModalTab(key);
+                              setMobileWorkspaceTab("editor");
+                            }}
+                            className="px-2.5 py-1 bg-emerald-900/40 hover:bg-emerald-800/50 border border-emerald-500/30 text-emerald-200 rounded-full text-[10px] font-bold transition cursor-pointer"
+                          >
+                            {PROMPT_PART_TITLES[key] || key}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-900/40">
+                        <span className="text-[10px] text-emerald-300/70 font-medium">בדקו את השינויים בכל בלוק ולחצו "שמור 💾" כדי לשמור אותם.</span>
+                        <button
+                          type="button"
+                          onClick={undoLastFix}
+                          className="px-2.5 py-1 bg-[#1e1215] hover:bg-[#2c171c] border border-rose-900/40 text-rose-300 hover:text-rose-200 rounded-lg text-[10px] font-black transition cursor-pointer flex items-center gap-1 shrink-0"
+                        >
+                          <Undo2 className="w-3 h-3" />
+                          <span>בטל תיקון זה</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* TWO COLUMN / THREE COLUMN IDE WORKSPACE */}
