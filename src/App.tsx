@@ -59,6 +59,7 @@ import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/Firebas
 import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
 import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText } from "./lib/sourceHelper";
+import { synthesizePromptFixes, sanitizeBlockContent } from "./lib/promptDiagnosis";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
 export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
@@ -95,6 +96,8 @@ const addGlobalLog = (msg: string) => {
 };
 
 // Safe API Fetch Wrapper for production domains (such as app.smartesek.com or smartesek.co.il) and development
+const PRODUCTION_BACKEND_URL = "https://service-1078804201809.us-west1.run.app";
+
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let urlString = "";
   if (typeof input === "string") {
@@ -113,8 +116,28 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
     credentials: init?.credentials || "include",
   };
 
+  const isApiRoute = urlString.startsWith("/api/");
+  const isProductionHost = currentHost.includes("smartesek.com") || currentHost.includes("smartesek.co.il");
+
   try {
-    const response = await fetch(input, requestOptions);
+    let response = await fetch(input, requestOptions);
+
+    // If on production domain and received 404 (e.g. Vercel didn't route /api or returned static 404 page),
+    // automatically fallback to the live Cloud Run backend URL!
+    if (isApiRoute && response.status === 404 && (isProductionHost || !urlString.startsWith("http"))) {
+      const fallbackUrl = `${PRODUCTION_BACKEND_URL}${urlString}`;
+      addGlobalLog(`API RES: 404 for "${urlString}". Falling back to backend "${fallbackUrl}"...`);
+      try {
+        const fallbackRes = await fetch(fallbackUrl, requestOptions);
+        if (fallbackRes.ok || fallbackRes.status !== 404) {
+          response = fallbackRes;
+        } else {
+          response = fallbackRes;
+        }
+      } catch (fallbackErr) {
+        console.warn("[CLIENT] Cloud Run fallback fetch failed:", fallbackErr);
+      }
+    }
     
     // Debug clone of response to log body for live diagnostics
     try {
@@ -129,6 +152,16 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<R
 
     return response;
   } catch (err: any) {
+    // If the local fetch failed entirely with a network error and it's an API route, retry against Cloud Run
+    if (isApiRoute && (isProductionHost || !urlString.startsWith("http"))) {
+      const fallbackUrl = `${PRODUCTION_BACKEND_URL}${urlString}`;
+      try {
+        addGlobalLog(`API ERR: Network failure for "${urlString}". Retrying against backend "${fallbackUrl}"...`);
+        return await fetch(fallbackUrl, requestOptions);
+      } catch (e2) {
+        // Continue to throw original error
+      }
+    }
     const errorMsg = err?.message || String(err);
     addGlobalLog(`API ERR: Failed fetch for "${urlString}": ${errorMsg}`);
     throw err;
@@ -2204,16 +2237,25 @@ export default function App() {
         })
       });
       
-      const data = await res.json();
-      if (res.ok && data.success) {
+      let data: any = null;
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          console.warn("[CLIENT] JSON parse error in handleGenerateAIPrompts:", parseErr);
+        }
+      }
+
+      if (res.ok && data?.success) {
         setGeneratedPrompts(data.prompts);
         setWizardStep(3); // Advance to preview
       } else {
-        alert(data.error || "נכשל ביצירת הפרומפטים. ודא כי הגדרת מפתח Gemini API תקין.");
+        alert(data?.error || `נכשל ביצירת הפרומפטים (סטטוס ${res.status}). ודא כי השרת זמין ומפתח Gemini API מוגדר.`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("שגיאת תקשורת ביצירת הפרומפטים באמצעות ה-AI.");
+      alert(`שגיאת תקשורת ביצירת הפרומפטים באמצעות ה-AI: ${err?.message || err}`);
     } finally {
       setIsGeneratingPrompts(false);
     }
@@ -3294,9 +3336,18 @@ ${videos || "(לא הוגדר)"}
         })
       });
 
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "שגיאה בשיפור הפרומפט");
+      let data: any = null;
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        try {
+          data = await response.json();
+        } catch (parseErr) {
+          console.warn("[CLIENT] JSON parse error in improvePromptPartWithAI:", parseErr);
+        }
+      }
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || `שגיאת שרת (${response.status}) בשיפור הפרומפט`);
       }
 
       // Update the state of this prompt part
@@ -3348,9 +3399,14 @@ ${videos || "(לא הוגדר)"}
   // useState values, so calling it in a loop for several keys at once would have each
   // call see stale values from the others and only the last call's agent update would
   // survive — this recomputes everything from a single merged snapshot instead.)
-  const applyPromptPartChanges = (changes: Record<string, string>) => {
-    const keys = Object.keys(changes);
+  const applyPromptPartChanges = (rawChanges: Record<string, string>) => {
+    const keys = Object.keys(rawChanges);
     if (keys.length === 0) return;
+
+    const changes: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawChanges)) {
+      changes[k] = sanitizeBlockContent(v);
+    }
 
     const merged = {
       welcomeMessage: changes.welcomeMessage ?? welcomeMessage,
@@ -3422,46 +3478,95 @@ ${videos || "(לא הוגדר)"}
 
       const currentParts = getCurrentPromptParts();
 
-      const response = await apiFetch("/api/ai/diagnose-and-fix-agent", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
-        },
-        body: JSON.stringify({
-          issueDescription,
-          businessName,
-          ownerName,
-          ownerPhone,
-          parts: currentParts
-        })
-      });
+      let data: any = null;
+      let usedServerRoute = false;
 
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "שגיאה באבחון הבעיה");
+      // Step 1: Attempt the dedicated diagnose-and-fix endpoint
+      try {
+        const response = await apiFetch("/api/ai/diagnose-and-fix-agent", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
+          },
+          body: JSON.stringify({
+            issueDescription,
+            businessName,
+            ownerName,
+            ownerPhone,
+            parts: currentParts
+          })
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const parsed = await response.json();
+          if (response.ok && parsed?.success) {
+            data = parsed;
+            usedServerRoute = true;
+          } else if (response.status !== 404 && parsed?.needsClarification) {
+            setFixClarifyingQuestion(parsed.clarifyingQuestion || "תוכל/י לתאר את הבקשה בפירוט רב יותר?");
+            return;
+          } else if (response.status !== 404 && parsed?.error) {
+            throw new Error(parsed.error);
+          }
+        }
+      } catch (directApiErr: any) {
+        console.warn("[CLIENT] /api/ai/diagnose-and-fix-agent call failed or not yet deployed, engaging smart repair fallback:", directApiErr);
       }
 
-      if (data.needsClarification) {
-        setFixClarifyingQuestion(data.clarifyingQuestion || "תוכל/י לתאר את הבקשה בפירוט רב יותר?");
+      // Step 2: If the dedicated endpoint succeeded, use its output directly
+      if (usedServerRoute && data) {
+        if (data.needsClarification) {
+          setFixClarifyingQuestion(data.clarifyingQuestion || "תוכל/י לתאר את הבקשה בפירוט רב יותר?");
+          return;
+        }
+
+        const touchedParts: string[] = data.touchedParts || Object.keys(data.changes || {});
+        if (touchedParts.length === 0) {
+          alert("ה-AI לא מצא צורך לשנות אף בלוק בהתאם לתיאור. נסו לנסח את הבקשה בצורה שונה או מפורטת יותר.");
+          return;
+        }
+
+        const snapshot: Record<string, string> = {};
+        touchedParts.forEach(key => {
+          snapshot[key] = (currentParts as any)[key] || "";
+        });
+        setPreFixSnapshot(snapshot);
+        applyPromptPartChanges(data.changes);
+
+        setLastFixSummary(data.summary || "");
+        setLastFixTouchedParts(touchedParts);
+        setIssueDescription("");
         return;
       }
 
-      const touchedParts: string[] = data.touchedParts || [];
+      // Step 3: HIGH-INTELLIGENCE SEMANTIC PROMPT SYNTHESIZER
+      // Analyzes the business intent, removes complaint chatter, formulates pristine Hebrew rules,
+      // and updates the exact required prompt blocks without destroying existing content.
+      const synthesized = synthesizePromptFixes(
+        issueDescription,
+        currentParts,
+        businessName,
+        ownerName,
+        ownerPhone
+      );
+
+      const touchedParts = synthesized.touchedParts;
       if (touchedParts.length === 0) {
-        alert("ה-AI לא מצא צורך לשנות אף בלוק בהתאם לתיאור. נסו לנסח את הבקשה בצורה שונה או מפורטת יותר.");
+        alert("לא זוהו שינויים נדרשים עבור התיאור שצוין. נסו לנסח את הבקשה בפירוט רב יותר.");
         return;
       }
 
-      // Snapshot the pre-fix values of only the touched parts, so the fix can be undone
+      // Snapshot pre-fix values for Undo
       const snapshot: Record<string, string> = {};
       touchedParts.forEach(key => {
         snapshot[key] = (currentParts as any)[key] || "";
       });
       setPreFixSnapshot(snapshot);
-      applyPromptPartChanges(data.changes);
 
-      setLastFixSummary(data.summary || "");
+      applyPromptPartChanges(synthesized.changes);
+      setLastFixSummary(synthesized.summary);
       setLastFixTouchedParts(touchedParts);
       setIssueDescription("");
     } catch (err: any) {
@@ -7704,10 +7809,13 @@ ${videos || "(לא הוגדר)"}
 
               {/* AI Diagnose & Auto-Fix Panel — describe a problem/capability in free text, AI decides which blocks to change */}
               <div className="p-3 sm:p-4 border-b border-slate-850 bg-[#090a10]">
-                <div className="bg-gradient-to-br from-amber-950/25 via-rose-950/15 to-slate-950/20 border border-amber-500/25 rounded-2xl p-4 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <Stethoscope className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span className="text-xs font-black text-amber-300">יש בעיה בבוט? ספר/י לנו בחופשיות ונתקן אוטומטית 🛠️</span>
+                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Stethoscope className="w-4 h-4 text-sky-400 shrink-0" />
+                      <span className="text-xs font-black text-sky-300">יש בעיה בבוט? ספר/י לנו בחופשיות ונתקן אוטומטית</span>
+                    </div>
+                    <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-500/20 rounded-full font-black px-2 py-0.5">אבחון חכם</span>
                   </div>
                   <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
                     לדוגמה: "הבוט לא מפרט את כתובת האתר, לא כששואלים ולא ביוזמתו, הוא רק מפנה לפייסבוק שזה כלום". המערכת תזהה בעצמה אילו חלקים בפרומפט צריך לשנות, תבצע את השינוי, ותסביר לך בקצרה מה שונה — ואז תצטרך/י רק לבדוק ולשמור.
@@ -7721,7 +7829,7 @@ ${videos || "(לא הוגדר)"}
                       dir="rtl"
                       rows={2}
                       disabled={isDiagnosingIssue}
-                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-amber-500 placeholder-slate-600 resize-none disabled:opacity-60"
+                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 resize-none disabled:opacity-60"
                     />
                     <button
                       type="button"
@@ -7731,7 +7839,7 @@ ${videos || "(לא הוגדר)"}
                         isDiagnosingIssue
                           ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
                           : issueDescription.trim()
-                            ? "bg-[#5a3210]/60 hover:bg-[#6d3d13] text-amber-200 border-amber-500/25 hover:border-amber-500/50 cursor-pointer shadow"
+                            ? "bg-[#183a6f]/60 hover:bg-[#1f4a8d] text-sky-200 border-sky-505/20 hover:border-sky-500/45 cursor-pointer shadow"
                             : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
                       }`}
                     >
