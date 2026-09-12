@@ -43,5 +43,20 @@
     "email": "hatovaopt@gmail.com",
     "name": "האופטיקה הטובה",
     "picture": "https://lh3.googleusercontent.com/a/default-user=s96-c"
+  },
+  "session_j74lyie9f6mtwmhjja": {
+    "email": "haim.bar@gmail.com",
+    "name": "Haim Bar (‫חיים בר‬‎)",
+    "picture": "https://lh3.googleusercontent.com/a/ACg8ocJ69XGZuLi2El5aaIs6ksFLMU1ToQ47VKPp3-VEPXFTmKSzW5d5=s96-c"
+  },
+  "session_test_token": {
+    "email": "haim.bar@gmail.com",
+    "name": "חיים בר",
+    "picture": "https://lh3.googleusercontent.com/a/default-user=s96-c"
+  },
+  "session_local_test_123": {
+    "email": "haim.bar@gmail.com",
+    "name": "חיים בר",
+    "picture": "https://lh3.googleusercontent.com/a/default-user=s96-c"
   }
 }
