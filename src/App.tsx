@@ -52,6 +52,7 @@ import confetti from "canvas-confetti";
 import ReactMarkdown from "react-markdown";
 import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
+import { AppSwitcher } from "./components/AppSwitcher";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
 import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
@@ -5708,6 +5709,7 @@ ${videos || "(לא הוגדר)"}
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
           
           <div className="flex items-center gap-3">
+            <AppSwitcher token={sessionToken || null} />
             <SmartBusinessLogo size="sm" />
             <div className="h-6 w-px bg-slate-800 self-center hidden md:block mx-1"></div>
             <div>

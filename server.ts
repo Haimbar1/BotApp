@@ -425,6 +425,57 @@ async function startServer() {
 
   // ---------------- AUTH API ROUTES ----------------
 
+  // In-app "switch to another module" widget: proxies to the portal's server-to-server
+  // SSO endpoints (the portal is the source of truth for who can open what). The email
+  // comes from the caller's own session token, never from the request body.
+  const PORTAL_URL = process.env.PORTAL_URL || "https://portal.smartesek.com";
+  const sessionEmailFromRequest = (req: express.Request): string | null => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    const session = getSession(authHeader.substring(7));
+    return session?.email ? String(session.email).toLowerCase().trim() : null;
+  };
+  const callPortalSso = async (path: string, email: string, extra: Record<string, unknown> = {}) => {
+    const callerToken = jwt.sign({ email }, process.env.SSO_SHARED_SECRET as string, { expiresIn: "30s" });
+    const portalRes = await fetch(`${PORTAL_URL}/api/sso/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: callerToken, ...extra }),
+    });
+    return { ok: portalRes.ok, status: portalRes.status, data: await portalRes.json() };
+  };
+
+  app.get("/api/switcher/modules", async (req, res) => {
+    try {
+      const email = sessionEmailFromRequest(req);
+      if (!email) return res.status(401).json({ error: "unauthorized" });
+      if (!process.env.SSO_SHARED_SECRET) return res.status(500).json({ error: "sso-not-configured" });
+      const { ok, status, data } = await callPortalSso("modules", email);
+      if (!ok) return res.status(status).json(data);
+      res.json({
+        modules: (data.modules || []).filter((m: any) => String(m.key).toUpperCase() !== "BOTAPP"),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/switcher/token", async (req, res) => {
+    try {
+      const email = sessionEmailFromRequest(req);
+      const { moduleKey } = req.body || {};
+      if (!email) return res.status(401).json({ error: "unauthorized" });
+      if (!moduleKey) return res.status(400).json({ error: "missing-module-key" });
+      if (!process.env.SSO_SHARED_SECRET) return res.status(500).json({ error: "sso-not-configured" });
+      const { ok, status, data } = await callPortalSso("token-for", email, { moduleKey });
+      if (!ok) return res.status(status).json(data);
+      const sep = data.baseUrl.includes("?") ? "&" : "?";
+      res.json({ redirectUrl: `${data.baseUrl}${sep}sso_token=${encodeURIComponent(data.ssoToken)}` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Single Sign-On from the unified Portal (portal.smartesek.com): the portal already
   // verified this user's Google identity and their access to this module, and hands off
   // a short-lived signed token instead of making them log in again here. Checks the same
