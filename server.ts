@@ -423,6 +423,13 @@ async function startServer() {
     });
   }
 
+  // Temporary debug marker (2026-09-19) to empirically confirm whether a given deploy
+  // action actually reaches this running Cloud Run service — safe to delete once the
+  // deploy pipeline is understood.
+  app.get("/api/deploy-marker", (req, res) => {
+    res.json({ marker: "deploy-test-2026-09-19-v1" });
+  });
+
   // ---------------- AUTH API ROUTES ----------------
 
   // Single Sign-On from the unified Portal (portal.smartesek.com): the portal already
