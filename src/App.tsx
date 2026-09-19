@@ -2403,6 +2403,39 @@ export default function App() {
 
     const initApp = async () => {
       try {
+        // 0. Single Sign-On from the unified Portal: a ?sso_token=... means the portal
+        // already verified this user's Google identity and their access to this module.
+        // Exchange it for a real session token via the same shape a normal login
+        // returns, then proceed exactly like the "restore existing session" branch
+        // below does. Falls through to the normal flow (existing token / landing page)
+        // on any failure, so a bad/expired token can't strand the user.
+        const ssoToken = new URLSearchParams(window.location.search).get("sso_token");
+        if (ssoToken) {
+          window.history.replaceState({}, "", window.location.pathname);
+          try {
+            const ssoRes = await apiFetch("/api/auth/sso", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token: ssoToken }),
+            });
+            const ssoData = await ssoRes.json();
+            if (ssoRes.ok && ssoData.success && ssoData.token) {
+              localStorage.setItem("cyber_session_token", ssoData.token);
+              setSessionToken(ssoData.token);
+              setSessionUser(ssoData.user);
+              setIsAuthenticated(true);
+              setIsLandingPage(false);
+              fetchAgentsFromServer(ssoData.token, ssoData.user.email);
+              fetchFullSettingsFromServer(ssoData.token);
+              setIsAuthChecking(false);
+              return;
+            }
+            addGlobalLog(`[CLIENT initApp] SSO login failed: ${JSON.stringify(ssoData)}`);
+          } catch (ssoErr) {
+            console.error("SSO login failed:", ssoErr);
+          }
+        }
+
         // 1. Fetch public Google Client ID configuration
         addGlobalLog("[CLIENT initApp] Fetching /api/settings relative endpoint...");
         const settingsRes = await apiFetch("/api/settings");

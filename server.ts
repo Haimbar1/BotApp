@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import cors from "cors";
+import jwt from "jsonwebtoken";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.ts";
@@ -423,6 +424,67 @@ async function startServer() {
   }
 
   // ---------------- AUTH API ROUTES ----------------
+
+  // Single Sign-On from the unified Portal (portal.smartesek.com): the portal already
+  // verified this user's Google identity and their access to this module, and hands off
+  // a short-lived signed token instead of making them log in again here. Checks the same
+  // `allowedEmails` list the Google login below checks (does NOT auto-register a new
+  // trial user the way that route does) and, if allowed, issues the exact same kind of
+  // session token/response shape as a normal login — purely additive, no existing route
+  // or session mechanism is touched.
+  app.post("/api/auth/sso", (req, res) => {
+    try {
+      const sharedSecret = process.env.SSO_SHARED_SECRET;
+      const { token } = req.body || {};
+
+      if (!sharedSecret) {
+        return res.status(500).json({ success: false, error: "not_configured", message: "SSO אינו מוגדר בשרת זה (חסר SSO_SHARED_SECRET)" });
+      }
+      if (!token) {
+        return res.status(400).json({ success: false, error: "missing_token", message: "חסר טוקן כניסה" });
+      }
+
+      let payload: any;
+      try {
+        payload = jwt.verify(token, sharedSecret);
+      } catch {
+        return res.status(401).json({ success: false, error: "invalid_token", message: "טוקן כניסה לא תקין או שפג תוקפו" });
+      }
+
+      const email = String(payload.email || "").toLowerCase().trim();
+      const name = payload.name || email.split("@")[0];
+      if (!email) {
+        return res.status(400).json({ success: false, error: "missing_email", message: "הטוקן אינו כולל כתובת אימייל" });
+      }
+
+      const currentSettings = readSettings();
+      const allowedCollection = (currentSettings.allowedEmails || []).map((e: string) => e.toLowerCase().trim());
+      if (!allowedCollection.includes(email)) {
+        console.warn(`[SERVER] SSO login rejected — email not in allowedEmails: ${email}`);
+        return res.status(403).json({
+          success: false,
+          error: "not_authorized",
+          email,
+          message: `האימייל ${email} אינו מורשה גישה למערכת. פנה למנהל המפתח לאישור הגישה.`,
+        });
+      }
+
+      const sessionToken = "session_sso_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      activeSessions.set(sessionToken, { email, name, picture: "" });
+      saveSessions(activeSessions);
+
+      console.log(`[SERVER] Successful SSO login from portal: ${name} (${email})`);
+
+      return res.json({
+        success: true,
+        token: sessionToken,
+        user: { email, name, picture: "" },
+      });
+    } catch (err: any) {
+      console.error("[SERVER] SSO login error:", err);
+      return res.status(500).json({ success: false, error: "internal_error", message: "שגיאה פנימית בשרת במהלך אימות ה-SSO" });
+    }
+  });
 
   // Verify Google token & Log in (supports both ID tokens and client-side popup Access tokens)
   app.post("/api/auth/google", async (req, res) => {
