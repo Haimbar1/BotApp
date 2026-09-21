@@ -53,6 +53,7 @@ import ReactMarkdown from "react-markdown";
 import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import { AppSwitcher } from "./components/AppSwitcher";
+import { AppSettingsMenu } from "./components/AppSettingsMenu";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
 import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
@@ -5552,6 +5553,27 @@ ${videos || "(לא הוגדר)"}
           
           <div className="flex items-center gap-3">
             <AppSwitcher token={sessionToken || null} />
+            <AppSettingsMenu
+              showPortalAdmin={true}
+              appItems={
+                sessionUser?.email === "haim.bar@gmail.com"
+                  ? [
+                      {
+                        label: t("permissions"),
+                        onClick: () => {
+                          setSecurityGoogleClientId(googleClientId);
+                          setSecurityAllowedEmails(allowedEmails);
+                          setSecurityBypassUsers(bypassUsers);
+                          setSecurityFeedback(null);
+                          setShowSecurityModal(true);
+                        },
+                      },
+                    ]
+                  : []
+              }
+              integrationItems={[{ label: "חיבור WhatsApp Business", onClick: () => setShowWhatsAppModal(true) }]}
+              onLogout={logout}
+            />
             <SmartBusinessLogo size="sm" />
             <div className="h-6 w-px bg-slate-800 self-center hidden md:block mx-1"></div>
             <div>
@@ -5567,35 +5589,7 @@ ${videos || "(לא הוגדר)"}
 
           {/* Connected User Profile Controls */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* WhatsApp Business API Settings Button */}
-            <button
-              onClick={() => setShowWhatsAppModal(true)}
-              className="px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-emerald-200 rounded-xl border border-emerald-500/30 transition flex items-center gap-1.5 cursor-pointer text-xs font-black shadow-sm"
-              title="הגדרות חיבור WhatsApp Business (Cloud API & n8n)"
-            >
-              <Smartphone className="w-4 h-4 text-emerald-400" />
-              <span>חיבור WhatsApp Business 💬</span>
-            </button>
-
-            {/* Security controls (Admin Only) */}
-            {sessionUser?.email === "haim.bar@gmail.com" && (
-              <>
-                <button
-                  onClick={() => {
-                    setSecurityGoogleClientId(googleClientId);
-                    setSecurityAllowedEmails(allowedEmails);
-                    setSecurityBypassUsers(bypassUsers);
-                    setSecurityFeedback(null);
-                    setShowSecurityModal(true);
-                  }}
-                  className="p-2 bg-[#171A24] text-slate-300 hover:text-sky-400 hover:shadow-[0_0_12px_rgba(56,189,248,0.2)] rounded-xl border border-slate-800 transition flex items-center gap-1.5 cursor-pointer text-xs font-bold"
-                  title="נהל הרשאות ואימיילים מורשים"
-                >
-                  <Shield className="w-4 h-4 text-sky-400" />
-                  {t("permissions")}
-                </button>
-              </>
-            )}
+            {/* WhatsApp connection and permissions moved into the ⚙️ menu (next to the app switcher). */}
 
             {/* Language Selector Dropdown */}
             <div className="relative">

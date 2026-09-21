@@ -340,7 +340,14 @@ export async function createApp() {
     email: string;
     name: string;
     picture: string;
+    // Set when the person came in through the portal: their business there and role in it.
+    tenantId?: string;
+    role?: string;
+    isSuperAdmin?: boolean;
   }
+
+  // Platform administrators see every business's agents and chats.
+  const isSuper = (u: any) => !!u && (String(u.email || "").toLowerCase().trim() === "haim.bar@gmail.com" || u.isSuperAdmin === true);
   
   function readSessions(): Map<string, SessionInfo> {
     try {
@@ -490,7 +497,10 @@ export async function createApp() {
 
       const currentSettings = readSettings();
       const allowedCollection = (currentSettings.allowedEmails || []).map((e: string) => e.toLowerCase().trim());
-      if (!allowedCollection.includes(email)) {
+      // A token that names a portal business means the portal already checked this person's access
+      // to BotApp for that business, so it is trusted without the local allowed-emails list.
+      const portalTenant = payload.tenant?.id != null ? String(payload.tenant.id) : undefined;
+      if (!portalTenant && !allowedCollection.includes(email)) {
         console.warn(`[SERVER] SSO login rejected — email not in allowedEmails: ${email}`);
         return res.status(403).json({
           success: false,
@@ -500,8 +510,13 @@ export async function createApp() {
         });
       }
 
-      const sessionToken = "session_sso_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
-      activeSessions.set(sessionToken, { email, name, picture: "" });
+      const sessionToken = "session_sso_" + crypto.randomBytes(24).toString("hex");
+      activeSessions.set(sessionToken, {
+        email,
+        name,
+        picture: "",
+        ...(portalTenant ? { tenantId: portalTenant, role: payload.role, isSuperAdmin: payload.isSuperAdmin === true } : {}),
+      });
       saveSessions(activeSessions);
 
       console.log(`[SERVER] Successful SSO login from portal: ${name} (${email})`);
@@ -897,10 +912,13 @@ export async function createApp() {
   // ---------------- AGENTS DATA ROUTES ----------------
 
   // Helper to determine if an agent belongs to or is accessible by a given user
-  function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
+  // An agent is the user's if it is listed under their e-mail (the older, per-owner rule) or it
+  // belongs to the same business (portal tenant) as their session.
+  function isAgentOwnedByUser(agent: any, userEmail: string, tenantId?: string): boolean {
     if (!userEmail) return false;
     const u = userEmail.toLowerCase().trim();
     if (u === "haim.bar@gmail.com") return true;
+    if (tenantId && agent.tenantId != null && String(agent.tenantId) === String(tenantId)) return true;
     const aEmail = (agent.agentEmail || "").toLowerCase().trim();
     if (aEmail === u) return true;
     // Hatova Optometry / Bot 252 special alias mapping
@@ -913,17 +931,20 @@ export async function createApp() {
     return false;
   }
 
+  const canAccessAgent = (user: any, agent: any) =>
+    !!agent && (isSuper(user) || isAgentOwnedByUser(agent, String(user?.email || ""), user?.tenantId));
+
   // Get cloud agents list
   app.get("/api/agents", requireAuth, (req: any, res: any) => {
     const list = readAgents();
     const userEmail = (req.user?.email || "").toLowerCase().trim();
-    
-    // If the user is the system administrator (haim.bar@gmail.com), they see everything.
-    // Otherwise, they only see agents where the agent's email/bot matches their account.
-    if (userEmail === "haim.bar@gmail.com") {
+
+    // A platform administrator sees everything. Everyone else only sees their own agents:
+    // listed under their e-mail, or belonging to their business.
+    if (isSuper(req.user)) {
       return res.json({ success: true, data: list });
     } else {
-      let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
+      let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail, req.user?.tenantId));
       if (filtered.length === 0 && (userEmail.includes("hatova") || userEmail.includes("252") || userEmail === "haoptika")) {
         filtered = [SEED_AGENT_252];
       }
@@ -940,7 +961,7 @@ export async function createApp() {
 
     const userEmail = (req.user?.email || "").toLowerCase().trim();
 
-    if (userEmail === "haim.bar@gmail.com") {
+    if (isSuper(req.user)) {
       // Admin has full access to overwrite the file
       const saved = saveAgents(agents);
       if (saved) {
@@ -952,7 +973,8 @@ export async function createApp() {
       // Normal user: read existing agents and replace ONLY those that belong to the user
       const allAgents = readAgents();
       
-      const existingUserAgents = allAgents.filter((agent: any) => isAgentOwnedByUser(agent, userEmail));
+      const userTenant: string | undefined = req.user?.tenantId;
+      const existingUserAgents = allAgents.filter((agent: any) => isAgentOwnedByUser(agent, userEmail, userTenant));
 
       const existingUserAgentIds = new Set(existingUserAgents.map((agent: any) => agent.id));
 
@@ -971,7 +993,7 @@ export async function createApp() {
       }
 
       // Separate agents belonging to other users
-      const otherAgents = allAgents.filter((agent: any) => !isAgentOwnedByUser(agent, userEmail));
+      const otherAgents = allAgents.filter((agent: any) => !isAgentOwnedByUser(agent, userEmail, userTenant));
 
       // Map user's proposed agents to allow updating full intelligence and prompt configuration
       const userProposedAgents = agents.map((proposed: any) => {
@@ -1000,6 +1022,7 @@ export async function createApp() {
             key: proposed.key || "B96B5776A5E4-4754-B7DC-1F1AF8A74940",
             leadFollowUpDays: proposed.leadFollowUpDays || "3",
             agentEmail: userEmail, // Force to logged-in user email
+            ...(userTenant ? { tenantId: userTenant } : {}), // belongs to the business they signed in for
             status: proposed.status || "Not Active",
             name: proposed.name || `${proposed.businessName || "סוכן חדש"} _ מכירות`,
             agentType: proposed.agentType || "sales",
@@ -1009,7 +1032,9 @@ export async function createApp() {
         return {
           ...existing,
           ...proposed, // Allow updating all fields including businessPrompt, prompt blocks, bot settings!
-          agentEmail: userEmail // Keep user's email
+          agentEmail: existing.agentEmail || userEmail, // Keep the agent's owner
+          // The business an agent belongs to can't be changed from here.
+          ...(existing.tenantId != null ? { tenantId: existing.tenantId } : { tenantId: undefined })
         };
       });
 
@@ -1041,6 +1066,9 @@ export async function createApp() {
     }
     if (!targetAgent && allAgents.length > 0 && userEmail === "haim.bar@gmail.com") {
       targetAgent = allAgents[0];
+    }
+    if (targetAgent && !canAccessAgent(req.user, targetAgent)) {
+      return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
 
     const config = targetAgent?.whatsappConfig || {
@@ -1081,6 +1109,9 @@ export async function createApp() {
 
     if (targetIndex === -1) {
       return res.status(404).json({ success: false, error: "not_found", message: "לא נמצא סוכן מותאם לחשבון זה" });
+    }
+    if (!canAccessAgent(req.user, allAgents[targetIndex])) {
+      return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
 
     const currentConfig = allAgents[targetIndex].whatsappConfig || {};
@@ -1917,6 +1948,14 @@ export async function createApp() {
 
   // Fetch chats matching filter
   app.get("/api/chats", requireAuth, async (req: any, res: any) => {
+    // Only the chats of a bot the person may access (platform admins: any).
+    if (!isSuper(req.user)) {
+      const wantedBot = String(req.query?.botId || "").trim();
+      const agent = readAgents().find((a: any) => a.botId === wantedBot || a.id === wantedBot);
+      if (!wantedBot || !canAccessAgent(req.user, agent)) {
+        return res.status(403).json({ success: false, message: "אין הרשאה לשיחות של בוט זה" });
+      }
+    }
     // Robust function to return raw stringified JSON or plain text for client parsing
     function cleanContent(rawContent: any): string {
       if (!rawContent) return "";
@@ -2303,7 +2342,13 @@ export async function createApp() {
       let chats = readChats();
       const initialCount = chats.length;
 
+      // Anyone but a platform admin can only delete chats that belong to their own bots.
+      const myBotIds = new Set(
+        readAgents().filter((a: any) => canAccessAgent(req.user, a)).map((a: any) => String(a.botId))
+      );
+
       chats = chats.filter((chat: any) => {
+        if (!isSuper(req.user) && !myBotIds.has(String(chat.botId))) return true;
         if (sessionId) {
           const reqSid = String(sessionId).trim();
           const chatSid = String(chat.sessionId || chat.session_id || "").trim();
