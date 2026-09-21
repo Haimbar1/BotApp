@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import { createServer as createViteServer } from "vite";
@@ -195,13 +196,7 @@ async function startServer() {
   const defaultSettings = {
     googleClientId: "1078804201809-454g6irigskltnvd6pejt2tu2mc7fbbo.apps.googleusercontent.com",
     allowedEmails: ["haim.bar@gmail.com", "hatovaopt@gmail.com"],
-    bypassUsers: [
-      { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "HaimBarAdmin2026!" },
-      { name: "חיים בר (מנהל)", email: "haim.bar@gmail.com", passcode: "haim" },
-      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "252" },
-      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatova" },
-      { name: "האופטיקה הטובה", email: "hatovaopt@gmail.com", passcode: "hatovaopt" }
-    ],
+    bypassUsers: [] as any[],
   };
 
   // Storage: Postgres when DATABASE_URL is set (see storage.ts), otherwise the local JSON files.
@@ -245,9 +240,8 @@ async function startServer() {
         .filter(Boolean);
     }
 
-    if (!settings.bypassUsers) {
-      settings.bypassUsers = [...defaultSettings.bypassUsers];
-    }
+    // Passcode logins no longer exist; drop anything stored from before.
+    settings.bypassUsers = [];
     return settings;
   }
 
@@ -686,53 +680,38 @@ async function startServer() {
     }
   });
 
-  // Secure Passcode/Bypass Login
-  app.post("/api/auth/bypass-login", (req, res) => {
+  // The passcode ("bypass") login was removed: people sign in with Google or through the portal.
+  app.post("/api/auth/bypass-login", (_req, res) => {
+    res.status(410).json({ success: false, message: "כניסה עם קוד גישה בוטלה. יש להתחבר עם Google או דרך הפורטל." });
+  });
+
+  // Machine login for the WhatsApp system's "edit the bot's prompt" proxy (replaces the passcode
+  // it used). Needs BOTAPP_SERVICE_KEY set on this server; the caller sends the same key plus the
+  // e-mail of the business owner whose agents it edits, which must be an allowed e-mail.
+  app.post("/api/auth/service-login", (req, res) => {
     try {
-      const { passcode } = req.body;
-      if (!passcode) {
-        return res.status(400).json({ success: false, message: "אנא הזן מפתח מעקף" });
+      const expected = process.env.BOTAPP_SERVICE_KEY || "";
+      const { key, email } = req.body || {};
+      const given = String(key || "");
+      const a = Buffer.from(given);
+      const b = Buffer.from(expected);
+      const keyOk = expected.length >= 16 && a.length === b.length && crypto.timingSafeEqual(a, b);
+      if (!keyOk) {
+        return res.status(401).json({ success: false, message: "מפתח שירות שגוי או שלא הוגדר בשרת" });
       }
-
-      const currentSettings = readSettings();
-      const usersList = currentSettings.bypassUsers || defaultSettings.bypassUsers;
-
-      const rawPasscode = String(passcode || "").trim();
-      const lowerPasscode = rawPasscode.toLowerCase();
-      const digitsPasscode = rawPasscode.replace(/\D/g, "");
-
-      // Search for user by passcode in declared list
-      let matchingUser = usersList.find((u: any) => String(u.passcode).trim().toLowerCase() === lowerPasscode);
-
-      // Only an exact match to a declared passcode logs in. (It used to also accept anything
-      // merely containing "haim"/"252"/"hatova", the digits 2026, or simply an allowed e-mail
-      // address as the "passcode" — each of those was a way in without knowing any secret.)
-      void digitsPasscode;
-
-      if (matchingUser) {
-        const sessionToken = "session_dev_bypass_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
-        const userInfo = {
-          email: matchingUser.email || "bypass_user@cyber.com",
-          name: matchingUser.name || "משתמש מורשה (מעקף)",
-          picture: "https://lh3.googleusercontent.com/a/default-user=s96-c"
-        };
-
-        activeSessions.set(sessionToken, userInfo);
-        saveSessions(activeSessions);
-
-        console.log(`[SERVER] Successful passcode login: ${userInfo.name} (${userInfo.email})`);
-
-        return res.json({
-          success: true,
-          token: sessionToken,
-          user: userInfo
-        });
-      } else {
-        return res.status(401).json({ success: false, message: "מפתח מעקף שגוי. אנא נסה שוב או פנה למנהל המערכת." });
+      const ownerEmail = String(email || "").toLowerCase().trim();
+      const allowed = (readSettings().allowedEmails || []).map((e: string) => e.toLowerCase().trim());
+      if (!ownerEmail || !allowed.includes(ownerEmail)) {
+        return res.status(403).json({ success: false, message: "האימייל אינו מורשה" });
       }
+      const sessionToken = "session_service_" + crypto.randomBytes(24).toString("hex");
+      const userInfo = { email: ownerEmail, name: "שירות פנימי", picture: "" };
+      activeSessions.set(sessionToken, userInfo);
+      saveSessions(activeSessions);
+      return res.json({ success: true, token: sessionToken, user: userInfo });
     } catch (err: any) {
-      console.error("[SERVER] Bypass login error:", err);
-      return res.status(500).json({ success: false, message: "שגיאה בתהליך אימות מפתח מעקף" });
+      console.error("[SERVER] Service login error:", err);
+      return res.status(500).json({ success: false, message: "שגיאה בכניסת שירות" });
     }
   });
 
@@ -781,7 +760,7 @@ async function startServer() {
         success: true,
         googleClientId: finalClientId,
         allowedEmails: currentSettings.allowedEmails || defaultSettings.allowedEmails,
-        bypassUsers: currentSettings.bypassUsers || defaultSettings.bypassUsers
+        bypassUsers: []
       });
     } else {
       // Unauthenticated callers only get Google Client ID to mount the login button
@@ -799,16 +778,18 @@ async function startServer() {
       return res.status(403).json({ success: false, error: "forbidden", message: "אינך מורשה לשנות הגדרות אבטחה. פעולה זו מיועדת למנהל המערכת הראשי בלבד." });
     }
 
-    const { googleClientId, allowedEmails, bypassUsers } = req.body;
-    
+    const { googleClientId, allowedEmails } = req.body;
+
     if (!googleClientId || !Array.isArray(allowedEmails) || allowedEmails.length === 0) {
       return res.status(400).json({ success: false, error: "invalid_payload", message: "נתונים שגויים. חובה לציין לפחות אימייל מורשה אחד" });
     }
 
+    // Keep the other stored settings (e.g. the strict-sessions marker); passcodes no longer exist.
     const updatedSettings = {
+      ...(getSettingsDoc() || {}),
       googleClientId: googleClientId.trim(),
-      allowedEmails: allowedEmails.map(email => email.toLowerCase().trim()),
-      bypassUsers: Array.isArray(bypassUsers) ? bypassUsers : []
+      allowedEmails: allowedEmails.map((email: string) => email.toLowerCase().trim()),
+      bypassUsers: []
     };
 
     const saved = saveSettings(updatedSettings);
