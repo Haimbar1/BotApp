@@ -2672,20 +2672,8 @@ export default function App() {
         console.warn("Server Google auth failed, evaluating client payload fallback:", fetchErr);
       }
 
-      // If server returned 404 (static hosting on custom domain) but Google token was verified by Google:
-      if (!backendSuccess && googleUserPayload && googleUserPayload.email) {
-        console.log("[CLIENT] Logging in via verified client Google credential:", googleUserPayload);
-        const clientToken = "session_google_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
-        localStorage.removeItem("has_logged_out");
-        localStorage.setItem("cyber_session_token", clientToken);
-        setSessionToken(clientToken);
-        setSessionUser(googleUserPayload);
-        setIsAuthenticated(true);
-        setIsLandingPage(false);
-
-        fetchAgentsFromServer(clientToken, googleUserPayload.email);
-        fetchFullSettingsFromServer(clientToken);
-      } else if (!backendSuccess) {
+      // No client-side fallback login any more: a session only exists if the server issued it.
+      if (!backendSuccess) {
         setAuthError("שגיאה באימות מול שרת גוגל. אנא נסה שנית.");
       }
     } catch (err: any) {
@@ -2791,21 +2779,8 @@ export default function App() {
       console.warn("Server bypass login fetch failed, evaluating client fallback:", err);
     }
 
-    // If server returned 404 (e.g. static domain hosting) or error, but passcode is recognized client-side:
-    if (!backendSuccess && clientMatchedUser) {
-      console.log("[CLIENT] Passcode matched client-side:", clientMatchedUser);
-      const clientToken = "session_client_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
-      localStorage.removeItem("has_logged_out");
-      localStorage.setItem("cyber_session_token", clientToken);
-      setSessionToken(clientToken);
-      setSessionUser(clientMatchedUser as any);
-      setIsAuthenticated(true);
-      setIsLandingPage(false);
-
-      // Load data & presets
-      fetchAgentsFromServer(clientToken, clientMatchedUser.email);
-      fetchFullSettingsFromServer(clientToken);
-    } else if (!backendSuccess) {
+    // No client-side fallback login any more: a session only exists if the server issued it.
+    if (!backendSuccess) {
       setAuthError("מפתח מעקף שגוי. אנא נסה שוב.");
     }
   };

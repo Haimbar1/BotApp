@@ -6,6 +6,17 @@ import jwt from "jsonwebtoken";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.ts";
+import {
+  initStorage,
+  getSettingsDoc,
+  setSettingsDoc,
+  getAgentsDoc,
+  setAgentsDoc,
+  getChatsDoc,
+  setChatsDoc,
+  getSessionsDoc,
+  setSessionsDoc,
+} from "./storage.ts";
 
 async function startServer() {
   const app = express();
@@ -193,24 +204,22 @@ async function startServer() {
     ],
   };
 
-  if (!fs.existsSync(SETTINGS_FILE)) {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2), "utf8");
-  }
+  // Storage: Postgres when DATABASE_URL is set (see storage.ts), otherwise the local JSON files.
+  const CHATS_FILE = path.join(DATA_DIR, "chats.json");
+  const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+  await initStorage(
+    { settings: SETTINGS_FILE, agents: AGENTS_FILE, chats: CHATS_FILE, sessions: SESSIONS_FILE },
+    { settings: defaultSettings, agents: [SEED_AGENT_252] }
+  );
 
-  if (!fs.existsSync(AGENTS_FILE)) {
-    fs.writeFileSync(AGENTS_FILE, JSON.stringify([SEED_AGENT_252], null, 2), "utf8");
-  }
-
-  // Helper Functions to read/write JSON files
+  // Helper Functions to read/write settings, agents, chats and sessions
   function readSettings() {
     let settings = { ...defaultSettings };
     try {
-      if (fs.existsSync(SETTINGS_FILE)) {
-        const parsed = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
-        settings = { ...settings, ...parsed };
-      }
+      const parsed = getSettingsDoc();
+      if (parsed) settings = { ...settings, ...parsed };
     } catch (e) {
-      console.error("[SERVER] Error reading settings file:", e);
+      console.error("[SERVER] Error reading settings:", e);
     }
 
     // Support environment variables override for serverless environments (like Vercel)
@@ -244,10 +253,10 @@ async function startServer() {
 
   function saveSettings(settings: any) {
     try {
-      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf8");
+      setSettingsDoc(settings);
       return true;
     } catch (e) {
-      console.error("[SERVER] Error saving settings file:", e);
+      console.error("[SERVER] Error saving settings:", e);
       return false;
     }
   }
@@ -255,11 +264,9 @@ async function startServer() {
   function readAgents() {
     let list: any[] = [];
     try {
-      if (fs.existsSync(AGENTS_FILE)) {
-        list = JSON.parse(fs.readFileSync(AGENTS_FILE, "utf8"));
-      }
+      list = getAgentsDoc();
     } catch (e) {
-      console.error("[SERVER] Error reading agents file:", e);
+      console.error("[SERVER] Error reading agents:", e);
     }
     if (!Array.isArray(list)) {
       list = [];
@@ -268,11 +275,9 @@ async function startServer() {
     if (!list.some((a: any) => a.id === "agent_bot_generic_252" || a.botId === "bot_generic_252")) {
       list.push(SEED_AGENT_252);
       try {
-        if (fs.existsSync(DATA_DIR)) {
-          fs.writeFileSync(AGENTS_FILE, JSON.stringify(list, null, 2), "utf8");
-        }
+        setAgentsDoc(list);
       } catch (err) {
-        // ignore write error on readonly platforms
+        // ignore write error
       }
     }
     return list;
@@ -280,41 +285,29 @@ async function startServer() {
 
   function saveAgents(agentsList: any[]) {
     try {
-      fs.writeFileSync(AGENTS_FILE, JSON.stringify(agentsList, null, 2), "utf8");
+      setAgentsDoc(agentsList);
       return true;
     } catch (e) {
-      console.error("[SERVER] Error saving agents file:", e);
+      console.error("[SERVER] Error saving agents:", e);
       return false;
-    }
-  }
-
-  // Chats persistent store
-  const CHATS_FILE = path.join(DATA_DIR, "chats.json");
-  if (!fs.existsSync(CHATS_FILE)) {
-    try {
-      fs.writeFileSync(CHATS_FILE, JSON.stringify([], null, 2), "utf8");
-    } catch (e) {
-      console.error("[SERVER] Error creating default chats file:", e);
     }
   }
 
   function readChats(): any[] {
     try {
-      if (fs.existsSync(CHATS_FILE)) {
-        return JSON.parse(fs.readFileSync(CHATS_FILE, "utf8"));
-      }
+      return getChatsDoc();
     } catch (e) {
-      console.error("[SERVER] Error reading chats file:", e);
+      console.error("[SERVER] Error reading chats:", e);
     }
     return [];
   }
 
   function saveChats(chatsList: any[]): boolean {
     try {
-      fs.writeFileSync(CHATS_FILE, JSON.stringify(chatsList, null, 2), "utf8");
+      setChatsDoc(chatsList);
       return true;
     } catch (e) {
-      console.error("[SERVER] Error saving chats file:", e);
+      console.error("[SERVER] Error saving chats:", e);
       return false;
     }
   }
@@ -326,31 +319,31 @@ async function startServer() {
     picture: string;
   }
   
-  const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
-
   function readSessions(): Map<string, SessionInfo> {
     try {
-      if (fs.existsSync(SESSIONS_FILE)) {
-        const fileContent = fs.readFileSync(SESSIONS_FILE, "utf8");
-        const parsed = JSON.parse(fileContent);
-        const map = new Map<string, SessionInfo>();
-        for (const [key, value] of Object.entries(parsed)) {
-          map.set(key, value as SessionInfo);
-        }
-        return map;
-      }
+      return new Map<string, SessionInfo>(Object.entries(getSessionsDoc()) as [string, SessionInfo][]);
     } catch (e) {
-      console.error("[SERVER] Error reading sessions file:", e);
+      console.error("[SERVER] Error reading sessions:", e);
     }
     return new Map<string, SessionInfo>();
   }
 
   function saveSessions(map: Map<string, SessionInfo>) {
     try {
-      const obj = Object.fromEntries(map);
-      fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), "utf8");
+      setSessionsDoc(Object.fromEntries(map));
     } catch (e) {
-      console.error("[SERVER] Error saving sessions file:", e);
+      console.error("[SERVER] Error saving sessions:", e);
+    }
+  }
+
+  // One-time reset: sessions saved before authentication became strict include tokens that were
+  // simply invented for anyone who asked, so none of them can be trusted. Everyone signs in again.
+  {
+    const st = getSettingsDoc() || defaultSettings;
+    if (!(st as any).strictSessionsV1) {
+      setSessionsDoc({});
+      setSettingsDoc({ ...st, strictSessionsV1: true });
+      console.log("[SERVER] Strict authentication enabled: all earlier sessions were cleared.");
     }
   }
 
@@ -358,35 +351,10 @@ async function startServer() {
 
   function getSession(token: string): SessionInfo | null {
     if (!token) return null;
-    let session = activeSessions.get(token);
-    if (!session) {
-      const lower = token.toLowerCase();
-      if (lower.includes("252") || lower.includes("hatova") || lower.includes("optika") || lower.includes("tzvika")) {
-        session = {
-          email: "hatovaopt@gmail.com",
-          name: "האופטיקה הטובה (קוד 252)",
-          picture: "https://lh3.googleusercontent.com/a/default-user=s96-c"
-        };
-      } else if (lower.includes("haim") || lower.includes("admin") || lower.includes("bypass") || lower.startsWith("session_dev_bypass_")) {
-        session = {
-          email: "haim.bar@gmail.com",
-          name: "חיים בר (מנהל)",
-          picture: "https://lh3.googleusercontent.com/a/default-user=s96-c"
-        };
-      } else if (token.startsWith("session_") || token.length > 5) {
-        // Safe session token fallback so server restarts don't invalidate active user sessions
-        session = {
-          email: "haim.bar@gmail.com",
-          name: "חיים בר",
-          picture: "https://lh3.googleusercontent.com/a/default-user=s96-c"
-        };
-      }
-      if (session) {
-        activeSessions.set(token, session);
-        saveSessions(activeSessions);
-      }
-    }
-    return session || null;
+    // Only a token this server issued at login counts. (It used to invent a session — for
+    // haim.bar@gmail.com, the main admin — for almost any token, which meant no real
+    // authentication. Sessions now survive restarts because they live in the database.)
+    return activeSessions.get(token) || null;
   }
 
   // Auth Middleware using Bearer Tokens
@@ -404,18 +372,7 @@ async function startServer() {
       return next();
     }
     
-    // Support client session tokens (such as session_google_*, session_client_*, or persistent bearer credentials)
-    if (token && (token.startsWith("session_") || token.length >= 8)) {
-      req.user = {
-        userId: "haim_user",
-        email: "haim.bar@gmail.com",
-        name: "Haim Bar",
-        role: "admin"
-      };
-      return next();
-    }
-    
-    console.warn(`[SERVER] Unauthorized API access request layout with token: ${token || 'none'}`);
+    console.warn(`[SERVER] Unauthorized API request (${token ? "unknown or expired token" : "no token"})`);
     return res.status(401).json({ 
       success: false, 
       error: "unauthorized", 
@@ -747,46 +704,10 @@ async function startServer() {
       // Search for user by passcode in declared list
       let matchingUser = usersList.find((u: any) => String(u.passcode).trim().toLowerCase() === lowerPasscode);
 
-      // Special direct shortcuts
-      if (
-        digitsPasscode === "252" ||
-        lowerPasscode.includes("252") ||
-        lowerPasscode.includes("hatova") ||
-        lowerPasscode.includes("אופטיקה") ||
-        lowerPasscode.includes("haoptika") ||
-        lowerPasscode.includes("צביקה")
-      ) {
-        matchingUser = {
-          name: "האופטיקה הטובה",
-          email: "hatovaopt@gmail.com",
-          passcode: "252"
-        };
-      } else if (
-        lowerPasscode.includes("haim") ||
-        lowerPasscode.includes("חיים") ||
-        lowerPasscode === "haim.bar@gmail.com" ||
-        digitsPasscode === "2026"
-      ) {
-        matchingUser = {
-          name: "חיים בר (מנהל)",
-          email: "haim.bar@gmail.com",
-          passcode: "HaimBarAdmin2026!"
-        };
-      }
-
-      // Helper fallback: if not found in explicitly declared bypass keys list, but is found directly in allowed emails / allowed users list
-      if (!matchingUser) {
-        const isAllowedDirectly = (currentSettings.allowedEmails || []).some((emailOrPhone: string) => 
-          emailOrPhone.trim().toLowerCase() === passcode.trim().toLowerCase()
-        );
-        if (isAllowedDirectly) {
-          matchingUser = {
-            name: passcode.trim().includes("@") ? passcode.trim().split("@")[0] : `מורשה כניסה (${passcode.trim()})`,
-            email: passcode.trim().includes("@") ? passcode.trim() : `${passcode.trim()}@authorized-bypass.com`,
-            passcode: passcode.trim()
-          };
-        }
-      }
+      // Only an exact match to a declared passcode logs in. (It used to also accept anything
+      // merely containing "haim"/"252"/"hatova", the digits 2026, or simply an allowed e-mail
+      // address as the "passcode" — each of those was a way in without knowing any secret.)
+      void digitsPasscode;
 
       if (matchingUser) {
         const sessionToken = "session_dev_bypass_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
