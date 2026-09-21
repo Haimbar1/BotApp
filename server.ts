@@ -4,9 +4,8 @@ import fs from "fs";
 import crypto from "crypto";
 import cors from "cors";
 import jwt from "jsonwebtoken";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.ts";
+import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.js";
 import {
   initStorage,
   getSettingsDoc,
@@ -17,11 +16,14 @@ import {
   setChatsDoc,
   getSessionsDoc,
   setSessionsDoc,
-} from "./storage.ts";
+  syncStorage,
+  flushStorage,
+} from "./storage.js";
 
-async function startServer() {
+// Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
+// started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
+export async function createApp() {
   const app = express();
-  const PORT = 3000;
 
   // Cross-Origin Resource Sharing (CORS) support for production multi-origin deployment
   app.use((req, res, next) => {
@@ -110,25 +112,31 @@ async function startServer() {
   });
 
   // Directories & Files Paths
-  const DATA_DIR = path.join(process.cwd(), "data");
+  // On Vercel the project folder is read-only; only /tmp is writable (and it is not permanent —
+  // real data lives in Postgres, see storage.ts).
+  const DATA_DIR = process.env.VERCEL ? "/tmp/botapp-data" : path.join(process.cwd(), "data");
   const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
   const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
   const AGENTS_FILE = path.join(DATA_DIR, "agents.json");
 
   // Ensure data and uploads folders exist
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+  } catch (e) {
+    console.error("[SERVER] Could not create data folders:", e);
   }
 
-  // Serve public assets statically (such as /bot-widget.js)
+  // Serve public assets statically (such as /bot-widget.js). On Vercel the frontend's static
+  // files (public/ included) are served by Vercel itself.
   const PUBLIC_DIR = path.join(process.cwd(), "public");
-  if (!fs.existsSync(PUBLIC_DIR)) {
-    fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+  if (fs.existsSync(PUBLIC_DIR)) {
+    app.use(express.static(PUBLIC_DIR));
   }
-  app.use(express.static(PUBLIC_DIR));
 
   // Serve uploaded files statically at /uploads
   app.use("/uploads", express.static(UPLOADS_DIR));
@@ -206,6 +214,27 @@ async function startServer() {
     { settings: SETTINGS_FILE, agents: AGENTS_FILE, chats: CHATS_FILE, sessions: SESSIONS_FILE },
     { settings: defaultSettings, agents: [SEED_AGENT_252] }
   );
+
+  // Every request starts from the latest database state, and (on Vercel, where a function can be
+  // frozen the moment it responds) the response is held back until this request's writes have
+  // reached the database.
+  app.use((req, res, next) => {
+    syncStorage()
+      .then(() => {
+        // Logins/logouts done by another server instance show up here.
+        activeSessions.clear();
+        for (const [t, s] of Object.entries(getSessionsDoc())) activeSessions.set(t, s as SessionInfo);
+        if (process.env.VERCEL) {
+          const originalEnd = res.end.bind(res) as (...a: any[]) => any;
+          (res as any).end = (...args: any[]) => {
+            flushStorage().then(() => originalEnd(...args), () => originalEnd(...args));
+            return res;
+          };
+        }
+        next();
+      })
+      .catch(next);
+  });
 
   // Helper Functions to read/write settings, agents, chats and sessions
   function readSettings() {
@@ -3397,8 +3426,18 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
     }
   });
 
-  // Vite middleware for development
+  return app;
+}
+
+// Normal server (local dev, or a container): the API plus the frontend (Vite in development, the
+// built files in production).
+async function startServer() {
+  const app = await createApp();
+  const PORT = 3000;
+
   if (process.env.NODE_ENV !== "production") {
+    // Imported here (not at the top) so the serverless build never needs Vite.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -3417,6 +3456,9 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
   });
 }
 
-startServer().catch(err => {
-  console.error("[SERVER] Lifecycle failure:", err);
-});
+// On Vercel the app is created per function instance by api/index.ts instead.
+if (!process.env.VERCEL) {
+  startServer().catch(err => {
+    console.error("[SERVER] Lifecycle failure:", err);
+  });
+}

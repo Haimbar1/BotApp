@@ -1,12 +1,9 @@
 {
+  "functions": {
+    "api/index.ts": { "maxDuration": 60 }
+  },
   "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://service-1078804201809.us-west1.run.app/api/:path*"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

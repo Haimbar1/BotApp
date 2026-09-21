@@ -94,6 +94,72 @@ function collectDocs(): Doc[] {
   return docs;
 }
 
+// When each stored document was last written, as the database reports it. Used to notice what other
+// server instances changed (serverless: several instances share one database).
+const seen = new Map<string, string>();
+let lastSync = 0;
+
+function removeChatsOfTenant(tenant: string) {
+  cache.chats = cache.chats.filter((c) => tenantOfChat(c) !== tenant);
+}
+
+function applyDoc(kind: string, docId: string, data: any) {
+  if (kind === "settings") cache.settings = data;
+  else if (kind === "agent") {
+    const i = cache.agents.findIndex((a) => String(a.id) === docId);
+    if (i >= 0) cache.agents[i] = data; else cache.agents.push(data);
+  } else if (kind === "chats") {
+    removeChatsOfTenant(docId);
+    cache.chats.push(...(data as any[]));
+  } else if (kind === "session") cache.sessions[docId] = data;
+}
+
+function removeDoc(kind: string, docId: string) {
+  if (kind === "agent") cache.agents = cache.agents.filter((a) => String(a.id) !== docId);
+  else if (kind === "chats") removeChatsOfTenant(docId);
+  else if (kind === "session") delete cache.sessions[docId];
+}
+
+// Brings the in-memory copy up to date with the database: fetches only documents that changed since
+// last time and drops the ones deleted elsewhere. Cheap enough to run at the start of every request.
+export async function syncStorage(force = false) {
+  if (!pool) return;
+  const now = Date.now();
+  if (!force && now - lastSync < 400) return;
+  lastSync = now;
+  try {
+    const { rows } = await pool.query("SELECT kind, doc_id, updated_at FROM botapp_store");
+    const present = new Set<string>();
+    const changedKeys: string[] = [];
+    for (const r of rows) {
+      const k = key(r.kind, r.doc_id);
+      present.add(k);
+      if (seen.get(k) !== new Date(r.updated_at).toISOString()) changedKeys.push(k);
+    }
+    for (const k of Array.from(seen.keys())) {
+      if (present.has(k)) continue;
+      const [kind, ...rest] = k.split(":");
+      removeDoc(kind, rest.join(":"));
+      seen.delete(k);
+      persisted.delete(k);
+    }
+    if (changedKeys.length) {
+      const { rows: docs } = await pool.query(
+        "SELECT kind, doc_id, data, updated_at FROM botapp_store WHERE (kind || ':' || doc_id) = ANY($1::text[])",
+        [changedKeys]
+      );
+      for (const d of docs) {
+        const k = key(d.kind, d.doc_id);
+        applyDoc(d.kind, d.doc_id, d.data);
+        persisted.set(k, JSON.stringify(d.data));
+        seen.set(k, new Date(d.updated_at).toISOString());
+      }
+    }
+  } catch (e) {
+    console.error("[STORAGE] Could not refresh from Postgres (using the copy in memory):", e);
+  }
+}
+
 // Writes what changed since the last write. Never throws: a database hiccup must not crash a
 // request, it is logged and the next write retries whatever differs.
 function schedulePersist() {
@@ -106,19 +172,22 @@ function schedulePersist() {
         const k = key(d.kind, d.docId);
         wanted.add(k);
         if (persisted.get(k) === d.json) continue;
-        await pool.query(
+        const w = await pool.query(
           `INSERT INTO botapp_store (kind, doc_id, tenant_id, data, updated_at)
-           VALUES ($1, $2, $3, $4::jsonb, now())
-           ON CONFLICT (kind, doc_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, data = EXCLUDED.data, updated_at = now()`,
+           VALUES ($1, $2, $3, $4::jsonb, clock_timestamp())
+           ON CONFLICT (kind, doc_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, data = EXCLUDED.data, updated_at = clock_timestamp()
+           RETURNING updated_at`,
           [d.kind, d.docId, d.tenant, d.json]
         );
         persisted.set(k, d.json);
+        seen.set(k, new Date(w.rows[0].updated_at).toISOString());
       }
       for (const k of Array.from(persisted.keys())) {
         if (wanted.has(k)) continue;
         const [kind, ...rest] = k.split(":");
         await pool.query("DELETE FROM botapp_store WHERE kind = $1 AND doc_id = $2", [kind, rest.join(":")]);
         persisted.delete(k);
+        seen.delete(k);
       }
     } catch (e) {
       console.error("[STORAGE] Postgres write failed (will retry on the next change):", e);
@@ -150,9 +219,9 @@ export async function initStorage(p: StoragePaths, defaults: { settings: any; ag
           PRIMARY KEY (kind, doc_id)
         )`);
       await pool.query("CREATE INDEX IF NOT EXISTS botapp_store_tenant_idx ON botapp_store (tenant_id, kind)");
-      const { rows } = await pool.query("SELECT kind, doc_id, data FROM botapp_store");
+      const { rows: countRows } = await pool.query("SELECT count(*)::int AS n FROM botapp_store");
 
-      if (rows.length === 0) {
+      if (countRows[0].n === 0) {
         // First run against an empty database: start from whatever the local files hold.
         cache.settings = readJsonFile(p.settings, defaults.settings);
         cache.agents = readJsonFile<any[]>(p.agents, defaults.agents);
@@ -163,13 +232,7 @@ export async function initStorage(p: StoragePaths, defaults: { settings: any; ag
         await writeChain;
         console.log(`[STORAGE] Postgres was empty — imported ${cache.agents.length} agents, ${cache.chats.length} chat messages from local files.`);
       } else {
-        for (const r of rows) {
-          persisted.set(key(r.kind, r.doc_id), JSON.stringify(r.data));
-          if (r.kind === "settings") cache.settings = r.data;
-          else if (r.kind === "agent") cache.agents.push(r.data);
-          else if (r.kind === "chats") cache.chats.push(...(r.data as any[]));
-          else if (r.kind === "session") cache.sessions[r.doc_id] = r.data;
-        }
+        await syncStorage(true);
         if (!cache.settings) cache.settings = defaults.settings;
         console.log(`[STORAGE] Loaded from Postgres: ${cache.agents.length} agents, ${cache.chats.length} chat messages, ${Object.keys(cache.sessions).length} sessions.`);
       }
