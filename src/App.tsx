@@ -60,7 +60,7 @@ import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
 import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
 import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
-import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText } from "./lib/sourceHelper";
+import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText, getWhatsAppWebUrl } from "./lib/sourceHelper";
 import { synthesizePromptFixes, sanitizeBlockContent } from "./lib/promptDiagnosis";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
@@ -1188,7 +1188,7 @@ export default function App() {
   // Renders a human message body, replacing known "Label: value" lines with an icon + value,
   // and replaces raw "SOURCE:WH" lines with a source badge/emoji for WhatsApp, Web, or Facebook Post.
   // Fixed display order: Source badge, Name, Phone, then the actual chat message text (chatInput/content) last.
-  const renderHumanMessageLines = (text: string) => {
+  const renderHumanMessageLines = (text: string, fallbackPhone: string = "") => {
     if (!text) return null;
     const sourceInfo = getMessageSourceInfo(text);
     const cleanText = text.replace(/^(?:chatInput|chat_input|CHATINPUT|ChatInput|chatinput)[\s:\-=]*/i, "").trim() || text;
@@ -1224,12 +1224,26 @@ export default function App() {
       }
     });
 
+    const sourceWaUrl = sourceInfo?.type === "whatsapp" ? getWhatsAppWebUrl(matchedByField.Phone || fallbackPhone) : "";
     const renderedSource = sourceInfo ? (
       <div key="msg-source-badge" dir="rtl" className="flex items-center gap-1.5 pb-1 border-b border-slate-700/30 mb-0.5">
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-xs ${sourceInfo.badgeClass}`}>
-          <span className="text-xs">{sourceInfo.icon}</span>
-          <span>{sourceInfo.label}</span>
-        </span>
+        {sourceWaUrl ? (
+          <a
+            href={sourceWaUrl}
+            target="whatsapp_web"
+            rel="noopener noreferrer"
+            title="פתח שיחה ב-WhatsApp Web"
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-xs cursor-pointer hover:brightness-110 hover:underline ${sourceInfo.badgeClass}`}
+          >
+            <span className="text-xs">{sourceInfo.icon}</span>
+            <span>{sourceInfo.label}</span>
+          </a>
+        ) : (
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-xs ${sourceInfo.badgeClass}`}>
+            <span className="text-xs">{sourceInfo.icon}</span>
+            <span>{sourceInfo.label}</span>
+          </span>
+        )}
       </div>
     ) : null;
 
@@ -6802,12 +6816,27 @@ ${videos || "(לא הוגדר)"}
                                 {hasName ? `👤 ${session.name}` : (hasPhone ? `📞 ${formattedPhone}` : displayTitle)}
                               </span>
                               <div className="flex items-center gap-1.5 shrink-0">
-                                {sessionSource && (
-                                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border shadow-2xs ${sessionSource.badgeClass}`} title={sessionSource.label}>
-                                    <span>{sessionSource.icon}</span>
-                                    <span className="hidden sm:inline">{sessionSource.label}</span>
-                                  </span>
-                                )}
+                                {sessionSource && (() => {
+                                  const waUrl = sessionSource.type === "whatsapp" && hasPhone ? getWhatsAppWebUrl(rawPhone) : "";
+                                  return waUrl ? (
+                                    <a
+                                      href={waUrl}
+                                      target="whatsapp_web"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border shadow-2xs cursor-pointer hover:brightness-110 hover:underline ${sessionSource.badgeClass}`}
+                                      title="פתח שיחה ב-WhatsApp Web"
+                                    >
+                                      <span>{sessionSource.icon}</span>
+                                      <span className="hidden sm:inline">{sessionSource.label}</span>
+                                    </a>
+                                  ) : (
+                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border shadow-2xs ${sessionSource.badgeClass}`} title={sessionSource.label}>
+                                      <span>{sessionSource.icon}</span>
+                                      <span className="hidden sm:inline">{sessionSource.label}</span>
+                                    </span>
+                                  );
+                                })()}
                                 <span className="text-[9px] text-slate-300 font-mono font-bold bg-[#0d0e15] border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
                                   {session.lastTimestamp ? (() => {
                                     const d = new Date(session.lastTimestamp);
@@ -6956,6 +6985,21 @@ ${videos || "(לא הוגדר)"}
                             <div className="flex items-center gap-2 shrink-0">
                               {(() => {
                                 const threadSource = getSessionSourceInfo(activeSession);
+                                const threadWaUrl = threadSource?.type === "whatsapp" && hasPhone ? getWhatsAppWebUrl(rawPhone) : "";
+                                if (threadSource && threadWaUrl) {
+                                  return (
+                                    <a
+                                      href={threadWaUrl}
+                                      target="whatsapp_web"
+                                      rel="noopener noreferrer"
+                                      title="פתח שיחה ב-WhatsApp Web"
+                                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs cursor-pointer hover:brightness-110 hover:underline ${threadSource.badgeClass}`}
+                                    >
+                                      <span className="text-sm">{threadSource.icon}</span>
+                                      <span>{threadSource.label}</span>
+                                    </a>
+                                  );
+                                }
                                 return threadSource ? (
                                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs ${threadSource.badgeClass}`}>
                                     <span className="text-sm">{threadSource.icon}</span>
@@ -7047,7 +7091,7 @@ ${videos || "(לא הוגדר)"}
                                       </div>
                                     ) : (
                                       <div className="flex flex-col gap-1 select-text break-words text-right leading-relaxed" dir="rtl">
-                                        {renderHumanMessageLines(parsed.text)}
+                                        {renderHumanMessageLines(parsed.text, hasPhone ? rawPhone : "")}
                                       </div>
                                     )}
 

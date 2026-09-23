@@ -153,3 +153,16 @@ export function cleanSourceFromText(text: string): string {
     .replace(/(?:^|\n)[ \t]*(?:SOURCE|Source|source|מקור|CHANNEL|channel|PLATFORM|platform)[\s:\-=]+[^\n]+/gi, "")
     .trim();
 }
+
+/**
+ * Builds a WhatsApp Web link that opens a chat with the given phone number,
+ * or "" when the value isn't a usable phone number. Israeli local numbers (05x...)
+ * are converted to the international 972 format.
+ */
+export function getWhatsAppWebUrl(phone: string = ""): string {
+  let p = String(phone || "").trim().replace(/@(?:s\.whatsapp\.net|c\.us)/gi, "").replace(/\D/g, "");
+  if (p.startsWith("00")) p = p.slice(2);
+  if (p.startsWith("0")) p = "972" + p.slice(1);
+  if (p.length < 9 || p.length > 15) return "";
+  return `https://web.whatsapp.com/send?phone=${p}`;
+}
