@@ -1194,6 +1194,53 @@ export async function createApp() {
     }
   });
 
+  // Makes sure our Meta app (META_APP_ID) has an app-level webhook subscription for WhatsApp
+  // Business Accounts that includes the "messages" field. Never replaces a different existing
+  // callback URL (that would redirect every WABA of the app). Returns an error message, or null.
+  async function ensureAppMessagesSubscription(wabaToken: string, callbackUrl: string, verifyToken: string): Promise<string | null> {
+    const appId = process.env.META_APP_ID || "1950695432176191";
+    const appSecret = process.env.META_APP_SECRET || "";
+    if (!appSecret) {
+      return "חסר META_APP_SECRET בהגדרות השרת, ולכן אי אפשר להגדיר את ה-Webhook של האפליקציה אוטומטית. הגדר אותו ידנית ב-Meta: WhatsApp → Configuration → Webhook, והירשם לשדה messages.";
+    }
+    const appToken = `${appId}|${appSecret}`;
+    const graph = async (path: string, init?: any) => {
+      const r = await fetch(`https://graph.facebook.com/v19.0/${path}`, init);
+      const data: any = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data?.error?.message || `HTTP ${r.status}`);
+      return data;
+    };
+    try {
+      // The WABA token must belong to this app, otherwise the subscription we manage is irrelevant
+      const dbg = await graph(`debug_token?input_token=${encodeURIComponent(wabaToken)}&access_token=${encodeURIComponent(appToken)}`);
+      const tokenAppId = String(dbg?.data?.app_id || "");
+      if (tokenAppId && tokenAppId !== appId) {
+        return `הטוקן של הבוט שייך לאפליקציית Meta אחרת (${tokenAppId}), לא לאפליקציה של BotApp (${appId}). הגדר את ה-Webhook באפליקציה ${tokenAppId}: WhatsApp → Configuration → Webhook, והירשם לשדה messages.`;
+      }
+
+      const subs = await graph(`${appId}/subscriptions?access_token=${encodeURIComponent(appToken)}`);
+      const wa = (Array.isArray(subs.data) ? subs.data : []).find((x: any) => x.object === "whatsapp_business_account");
+      const fields: string[] = (wa?.fields || []).map((f: any) => (typeof f === "string" ? f : f?.name)).filter(Boolean);
+      if (wa && fields.includes("messages")) return null; // already set up
+
+      if (wa && wa.callback_url && wa.callback_url !== callbackUrl) {
+        return `לאפליקציה כבר מוגדרת כתובת Webhook אחרת (${wa.callback_url}) בלי השדה messages. כדי לא לשנות את היעד של כל המספרים, לא נגעתי בה — היכנס ל-Meta: WhatsApp → Configuration → Webhook ולחץ Subscribe ליד messages.`;
+      }
+
+      const body = new URLSearchParams({
+        object: "whatsapp_business_account",
+        callback_url: callbackUrl,
+        verify_token: verifyToken,
+        fields: Array.from(new Set([...fields, "messages"])).join(","),
+        access_token: appToken
+      });
+      await graph(`${appId}/subscriptions`, { method: "POST", body });
+      return null;
+    } catch (e: any) {
+      return `הגדרת ה-Webhook של האפליקציה נכשלה: ${e?.message || e}. אם כתוב שהאימות נכשל — בדוק שה-workflow ב-n8n פעיל ומחזיר את hub.challenge כשה-Verify Token תואם.`;
+    }
+  }
+
   // Subscribe the agent's WABA to our Meta app so its incoming messages are delivered, optionally to
   // a callback URL of its own (override_callback_uri). Uses the WABA ID and token stored on the
   // agent, never ones sent by the browser.
@@ -1241,6 +1288,12 @@ export async function createApp() {
         return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה (חיבור ה-WABA לאפליקציה): ${plainError}` });
       }
       if (callbackUrl) {
+        // The app itself must be subscribed to the "messages" field of WhatsApp webhooks before a
+        // per-WABA callback is accepted. Set that up with the app credentials if it's missing.
+        const appError = await ensureAppMessagesSubscription(token, callbackUrl, verifyToken);
+        if (appError) {
+          return res.json({ success: false, error: "app_subscription", message: appError });
+        }
         const overrideError = await subscribe({ override_callback_uri: callbackUrl, verify_token: verifyToken });
         if (overrideError) {
           return res.json({ success: false, error: "graph_error", message: `ה-WABA חובר לאפליקציה, אבל הגדרת כתובת ה-Webhook נכשלה: ${overrideError}` });
