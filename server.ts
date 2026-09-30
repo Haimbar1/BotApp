@@ -1212,10 +1212,18 @@ export async function createApp() {
     };
     try {
       // The WABA token must belong to this app, otherwise the subscription we manage is irrelevant
-      const dbg = await graph(`debug_token?input_token=${encodeURIComponent(wabaToken)}&access_token=${encodeURIComponent(appToken)}`);
-      const tokenAppId = String(dbg?.data?.app_id || "");
+      let tokenAppId = "";
+      try {
+        const dbg = await graph(`debug_token?input_token=${encodeURIComponent(wabaToken)}&access_token=${encodeURIComponent(appToken)}`);
+        tokenAppId = String(dbg?.data?.app_id || "");
+      } catch (e: any) {
+        // Meta refuses to inspect another app's token ("did not match the Viewing App")
+        if (/did not match the Viewing App/i.test(String(e?.message))) tokenAppId = "another";
+        else throw e;
+      }
       if (tokenAppId && tokenAppId !== appId) {
-        return `הטוקן של הבוט שייך לאפליקציית Meta אחרת (${tokenAppId}), לא לאפליקציה של BotApp (${appId}). הגדר את ה-Webhook באפליקציה ${tokenAppId}: WhatsApp → Configuration → Webhook, והירשם לשדה messages.`;
+        const other = tokenAppId === "another" ? "" : ` (${tokenAppId})`;
+        return `הטוקן של הבוט שייך לאפליקציית Meta אחרת${other}, לא לאפליקציה של BotApp (${appId}). כדי שהכול יוגדר אוטומטית, חבר את הבוט מחדש עם "התחבר באמצעות Facebook" ואז לחץ שוב "חבר Webhook". לחלופין, הגדר את ה-Webhook באפליקציה שממנה הטוקן: WhatsApp → Configuration → Webhook, והירשם לשדה messages.`;
       }
 
       const subs = await graph(`${appId}/subscriptions?access_token=${encodeURIComponent(appToken)}`);
