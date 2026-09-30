@@ -2823,6 +2823,90 @@ export async function createApp() {
   });
 
   // ---------------- PUBLIC DEMO BOT CREATION ROUTE ----------------
+  // Website explorer for the agent wizard: scrapes the site (home page + a few internal pages) and
+  // returns the text plus a short AI summary. Called by "סרוק את האתר" in the prompt builder.
+  const fetchPageHtml = async (targetUrl: string, timeoutMs: number): Promise<string> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const r = await fetch(targetUrl, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"
+        }
+      });
+      return r.ok ? await r.text() : "";
+    } catch (e: any) {
+      console.warn(`[EXPLORE] Failed fetching ${targetUrl}:`, e?.message || e);
+      return "";
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
+  // Don't let the scraper be pointed at the server's own network
+  const isPrivateHost = (hostname: string) =>
+    /^(localhost|0\.0\.0\.0|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd])/i.test(hostname) ||
+    hostname.endsWith(".internal") || hostname.endsWith(".local");
+
+  app.post("/api/ai/explore-website", requireAuth, async (req: any, res: any) => {
+    let url = String(req.body?.url || "").trim();
+    if (!url) {
+      return res.status(400).json({ success: false, error: "אנא הזן כתובת אתר" });
+    }
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return res.status(400).json({ success: false, error: "כתובת האתר אינה תקינה" });
+    }
+    if (isPrivateHost(parsed.hostname)) {
+      return res.status(400).json({ success: false, error: "לא ניתן לסרוק כתובת פנימית" });
+    }
+
+    try {
+      const mainHtml = await fetchPageHtml(url, 10000);
+      if (!mainHtml) {
+        return res.json({ success: false, error: "לא הצלחנו לטעון את האתר. ייתכן שהוא חוסם סריקה, איטי מדי או שהכתובת שגויה — אפשר להדביק את הטקסט ידנית." });
+      }
+
+      const parts: string[] = [extractCleanText(mainHtml)];
+      const subPages = extractInternalPageLinks(mainHtml, url).slice(0, 3);
+      const subTexts = await Promise.all(subPages.map(async (p) => {
+        const html = await fetchPageHtml(p, 6000);
+        return html ? extractCleanText(html) : "";
+      }));
+      subTexts.forEach((t, i) => { if (t) parts.push(`--- ${subPages[i]} ---\n${t}`); });
+      const docLinks = extractDocumentLinks(mainHtml, url);
+      if (docLinks.length) parts.push(`קישורים למסמכים/ברושורים:\n${docLinks.join("\n")}`);
+      const scrapedText = parts.join("\n\n").substring(0, 20000);
+
+      let analysis = `נסרקו ${1 + subTexts.filter(Boolean).length} עמודים מהאתר ${parsed.hostname}. הטקסט ישמש לבניית השכל של הבוט.`;
+      if (ai) {
+        try {
+          const response = await generateWithFallback(ai, {
+            model: "gemini-3.5-flash",
+            contents:
+              "לפניך טקסט שנסרק מאתר של עסק. כתוב בעברית סיכום קצר (עד 8 שורות) למי שבונה בוט מכירות/שירות לעסק: " +
+              "מה העסק עושה, מוצרים ושירותים עיקריים, מחירים אם מופיעים, קהל יעד, ופרטי קשר/כתובת אם מופיעים. " +
+              "אל תמציא מידע שלא מופיע בטקסט.\n\n" + scrapedText.substring(0, 12000)
+          });
+          if (response?.text) analysis = response.text.trim();
+        } catch (e: any) {
+          console.warn("[EXPLORE] AI summary failed, returning scrape only:", e?.message || e);
+        }
+      }
+
+      return res.json({ success: true, scrapedText, analysis });
+    } catch (err: any) {
+      console.error("[EXPLORE] Error:", err);
+      return res.status(500).json({ success: false, error: "שגיאה בסריקת האתר" });
+    }
+  });
+
   app.post("/api/public/create-demo-bot", async (req, res) => {
     try {
       let { url, phone, agentType, additionalContext, agentName } = req.body;

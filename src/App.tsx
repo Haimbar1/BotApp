@@ -2171,7 +2171,8 @@ export default function App() {
         body: JSON.stringify({ url: wizardWebsiteUrl })
       });
       
-      const data = await res.json();
+      // A timeout or a missing route answers with HTML, not JSON
+      const data = await res.json().catch(() => ({ success: false, error: res.status === 504 ? "הסריקה לקחה יותר מדי זמן. נסה שוב או הדבק את הטקסט ידנית." : `שגיאת שרת (${res.status}) בעת סריקת האתר.` }));
       if (res.ok && data.success) {
         setScrapedText(data.scrapedText);
         setExplorerAnalysis(data.analysis);
