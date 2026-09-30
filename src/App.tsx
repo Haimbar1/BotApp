@@ -2728,10 +2728,10 @@ export default function App() {
   const fetchAgentsFromServer = async (token: string, emailUserOverride?: string) => {
     try {
       const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
-      const isAdmin = activeEmail === "haim.bar@gmail.com";
 
       let fetchedList: any[] = [];
       let fetchSuccess = false;
+      let serverReached = false;
 
       try {
         const res = await apiFetch("/api/agents", {
@@ -2741,6 +2741,7 @@ export default function App() {
         });
         if (res.ok) {
           const data = await res.json();
+          serverReached = !!data.success;
           if (data.success && Array.isArray(data.data) && data.data.length > 0) {
             fetchedList = data.data;
             fetchSuccess = true;
@@ -2760,31 +2761,22 @@ export default function App() {
           : (activeOnly[0] || fetchedList[0]);
         setActiveId(targetAgent.id);
         loadAgentToForm(targetAgent);
-        
-        // For administrator login, we always fetch & restore all live projects/agents directly from the n8n webhook
-        if (isAdmin) {
-          console.log("[CLIENT] Admin logged in/initialized, automatically fetching all live projects from n8n webhook...");
-          setTimeout(() => {
-            handlePullAllAgentsFromN8n(token);
-          }, 800);
-        }
+        // The server list is the source of truth. Pulling from n8n is a manual action only —
+        // doing it automatically on every admin login brought deleted agents back.
       } else {
-        // No server response or empty list: load from local / embedded presets (guarantees agents for 252, admin, etc.)
-        loadFromLocalOldPresetOrCreate(token, activeEmail);
-        if (isAdmin) {
-          setTimeout(() => {
-            handlePullAllAgentsFromN8n(token);
-          }, 800);
-        }
+        // No server response or empty list: load from local / embedded presets (guarantees agents for 252, admin, etc.).
+        // Only write them to the server if it actually answered; otherwise a network hiccup would
+        // overwrite the stored list with a stale local copy.
+        loadFromLocalOldPresetOrCreate(token, activeEmail, serverReached);
       }
     } catch (e) {
       console.error("Error loading server-saved agents, falling back to local:", e);
       const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
-      loadFromLocalOldPresetOrCreate(token, activeEmail);
+      loadFromLocalOldPresetOrCreate(token, activeEmail, false);
     }
   };
 
-  const loadFromLocalOldPresetOrCreate = (token: string, userEmail?: string) => {
+  const loadFromLocalOldPresetOrCreate = (token: string, userEmail?: string, persist = true) => {
     const activeEmail = (userEmail || sessionUser?.email || "").toLowerCase().trim();
     const isAdmin = activeEmail === "haim.bar@gmail.com";
     const isHatova = activeEmail.includes("hatova") || activeEmail.includes("252") || activeEmail === "haoptika" || activeEmail.includes("אופטיקה") || activeEmail.includes("צביקה");
@@ -2827,15 +2819,15 @@ export default function App() {
       const targetAgent = activeOnly[0] || candidates[0];
       setActiveId(targetAgent.id);
       loadAgentToForm(targetAgent);
-      saveAgentsToServer(candidates, token);
+      if (persist) saveAgentsToServer(candidates, token);
       return;
     }
 
     // If still empty (new custom user), create an initial active bot for them
-    createNewAgentStateOnlyAndSave(token, userEmail);
+    createNewAgentStateOnlyAndSave(token, userEmail, persist);
   };
 
-  const createNewAgentStateOnlyAndSave = (token: string, userEmail?: string) => {
+  const createNewAgentStateOnlyAndSave = (token: string, userEmail?: string, persist = true) => {
     const activeEmail = (userEmail || sessionUser?.email || "").toLowerCase().trim();
     const isHatova = activeEmail.includes("hatova") || activeEmail.includes("252") || activeEmail === "haoptika" || activeEmail.includes("אופטיקה") || activeEmail.includes("צביקה");
 
@@ -2844,7 +2836,7 @@ export default function App() {
       setAgents(list);
       setActiveId(SEED_AGENT_252.id);
       loadAgentToForm(SEED_AGENT_252);
-      saveAgentsToServer(list, token);
+      if (persist) saveAgentsToServer(list, token);
       return;
     }
 
@@ -2872,7 +2864,7 @@ export default function App() {
     setAgents(list);
     setActiveId(newId);
     loadAgentToForm(newAgent);
-    saveAgentsToServer(list, token);
+    if (persist) saveAgentsToServer(list, token);
   };
 
   // Fetch settings from the backend (client ID & allowed emails & bypass users)
@@ -3686,6 +3678,17 @@ ${videos || "(לא הוגדר)"}
 
     setAgentIdToDelete(null);
     setDeleteConfirmInput("");
+  };
+
+  // Super user cleanup: delete every agent except the selected one
+  const keepOnlyActiveAgent = () => {
+    const keep = agents.find(a => a.id === activeId);
+    if (!keep || agents.length <= 1) return;
+    const names = agents.filter(a => a.id !== activeId).map(a => `• ${a.businessName || a.name || a.botId}`).join("\n");
+    if (!window.confirm(`יימחקו ${agents.length - 1} סוכנים וישאר רק "${keep.businessName || keep.name}":\n\n${names}\n\nלא ניתן לבטל. להמשיך?`)) return;
+    const updated = [keep];
+    setAgents(updated);
+    saveAgentsToServer(updated);
   };
 
   // Switch between agents
@@ -4505,6 +4508,7 @@ ${videos || "(לא הוגדר)"}
     const rawUrl = customWebhookUrl || webhookUrl;
     const urlToUse = (rawUrl && rawUrl !== DEFAULT_POST_WEBHOOK_URL) ? rawUrl : DEFAULT_GET_WEBHOOK_URL;
     if (!tokenToUse) return;
+    if (!window.confirm("משיכה מ-n8n תחליף את רשימת הסוכנים ברשימה שב-n8n.\nסוכנים שמחקת כאן אבל עדיין קיימים ב-n8n יחזרו.\n\nלהמשיך?")) return;
 
     setIsPullingAll(true);
     setSyncStatus("idle");
@@ -4719,6 +4723,11 @@ ${videos || "(לא הוגדר)"}
         });
 
         if (parsedAgents.length > 0) {
+          // Keep what only BotApp stores (WhatsApp connection, tenant, etc.) for agents that already exist.
+          for (let i = 0; i < parsedAgents.length; i++) {
+            const existing = agents.find(a => a.id === parsedAgents[i].id || (!!a.botId && a.botId === parsedAgents[i].botId));
+            if (existing) parsedAgents[i] = { ...existing, ...parsedAgents[i], id: existing.id };
+          }
           setAgents(parsedAgents);
           const currentId = activeId;
           const activeOnly = parsedAgents.filter((a: any) => a.status === "Active");
@@ -5903,6 +5912,17 @@ ${videos || "(לא הוגדר)"}
                   <Copy className="w-3.5 h-3.5" />
                   שכפל פעיל
                 </button>
+                {sessionUser?.email === "haim.bar@gmail.com" && agents.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={keepOnlyActiveAgent}
+                    className="flex-1 py-1.5 text-[10px] bg-red-950/40 text-red-300 hover:bg-red-900/40 font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border border-red-900/60 cursor-pointer"
+                    title="מחק את כל הסוכנים חוץ מהסוכן הנבחר"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    השאר רק את הנבחר
+                  </button>
+                )}
               </div>
               
               <button
