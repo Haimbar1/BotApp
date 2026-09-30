@@ -1194,6 +1194,60 @@ export async function createApp() {
     }
   });
 
+  // Subscribe the agent's WABA to our Meta app so its incoming messages are delivered, optionally to
+  // a callback URL of its own (override_callback_uri). Uses the WABA ID and token stored on the
+  // agent, never ones sent by the browser.
+  app.post("/api/whatsapp/subscribe-webhook", requireAuth, async (req: any, res: any) => {
+    const botId = String(req.body?.botId || "").trim();
+    const callbackUrl = String(req.body?.callbackUrl || "").trim();
+    const verifyToken = String(req.body?.verifyToken || "").trim();
+
+    const allAgents = readAgents();
+    const idx = allAgents.findIndex((a: any) => a.botId === botId || a.id === botId);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, error: "not_found", message: "לא נמצא סוכן" });
+    }
+    if (!canAccessAgent(req.user, allAgents[idx])) {
+      return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
+    }
+    const config = allAgents[idx].whatsappConfig || {};
+    const wabaId = String(config.wabaId || "").trim();
+    const token = String(config.systemUserAccessToken || "").trim();
+    if (!wabaId || !token) {
+      return res.status(400).json({ success: false, error: "not_configured", message: "יש לשמור קודם WABA ID ו-Access Token" });
+    }
+    if (callbackUrl && !/^https:\/\//i.test(callbackUrl)) {
+      return res.status(400).json({ success: false, error: "invalid_url", message: "כתובת ה-Webhook חייבת להתחיל ב-https://" });
+    }
+    if (callbackUrl && !verifyToken) {
+      return res.status(400).json({ success: false, error: "missing_verify_token", message: "יש להזין Verify Token (המילה הסודית שה-Webhook בודק)" });
+    }
+
+    try {
+      const body: any = callbackUrl ? { override_callback_uri: callbackUrl, verify_token: verifyToken } : {};
+      const r = await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data: any = await r.json().catch(() => ({}));
+      if (!r.ok || data.error || data.success !== true) {
+        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${data?.error?.message || `HTTP ${r.status}`}` });
+      }
+
+      allAgents[idx].whatsappConfig = {
+        ...config,
+        webhookCallbackUrl: callbackUrl,
+        webhookVerifyToken: verifyToken,
+        webhookSubscribedAt: new Date().toISOString()
+      };
+      saveAgents(allAgents);
+      return res.json({ success: true, message: "ה-Webhook חובר בהצלחה" });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: "server_error", message: err?.message || "שגיאה בחיבור ה-Webhook" });
+    }
+  });
+
   // Meta Token Exchange for Embedded Signup
   const handleMetaTokenExchange = async (req: any, res: any) => {
     try {
