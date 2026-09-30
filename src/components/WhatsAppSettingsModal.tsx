@@ -50,6 +50,8 @@ const META_APP_ID = "1950695432176191";
 const META_CONFIG_ID = "4827048247578784";
 // Default n8n webhook for incoming WhatsApp messages (editable per bot)
 const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt";
+// Must match the word the n8n webhook checks against hub.verify_token
+const DEFAULT_VERIFY_TOKEN = "smartesek_wa_verify";
 
 export default function WhatsAppSettingsModal({
   isOpen,
@@ -73,7 +75,7 @@ export default function WhatsAppSettingsModal({
 
   // Incoming-messages webhook (subscribes the saved WABA to the app via /api/whatsapp/subscribe-webhook)
   const [webhookUrl, setWebhookUrl] = useState(DEFAULT_WEBHOOK_URL);
-  const [webhookVerifyToken, setWebhookVerifyToken] = useState("");
+  const [webhookVerifyToken, setWebhookVerifyToken] = useState(DEFAULT_VERIFY_TOKEN);
   const [webhookSubscribedAt, setWebhookSubscribedAt] = useState("");
   const [isSubscribing, setIsSubscribing] = useState(false);
   // What is stored on the server, so the webhook uses saved values rather than unsaved edits
@@ -107,7 +109,7 @@ export default function WhatsAppSettingsModal({
         setSystemUserAccessToken(data.config.systemUserAccessToken || "");
         setWabaId(data.config.wabaId || "");
         setWebhookUrl(data.config.webhookCallbackUrl || DEFAULT_WEBHOOK_URL);
-        setWebhookVerifyToken(data.config.webhookVerifyToken || "");
+        setWebhookVerifyToken(data.config.webhookVerifyToken || DEFAULT_VERIFY_TOKEN);
         setWebhookSubscribedAt(data.config.webhookSubscribedAt || "");
         setSavedCredentials(!!(data.config.wabaId && data.config.systemUserAccessToken));
 
