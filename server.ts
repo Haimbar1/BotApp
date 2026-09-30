@@ -732,15 +732,17 @@ export async function createApp() {
   // Machine login for the WhatsApp system's "edit the bot's prompt" proxy (replaces the passcode
   // it used). Needs BOTAPP_SERVICE_KEY set on this server; the caller sends the same key plus the
   // e-mail of the business owner whose agents it edits, which must be an allowed e-mail.
+  const isValidServiceKey = (given: unknown) => {
+    const expected = process.env.BOTAPP_SERVICE_KEY || "";
+    const a = Buffer.from(String(given || ""));
+    const b = Buffer.from(expected);
+    return expected.length >= 16 && a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
+
   app.post("/api/auth/service-login", (req, res) => {
     try {
-      const expected = process.env.BOTAPP_SERVICE_KEY || "";
       const { key, email } = req.body || {};
-      const given = String(key || "");
-      const a = Buffer.from(given);
-      const b = Buffer.from(expected);
-      const keyOk = expected.length >= 16 && a.length === b.length && crypto.timingSafeEqual(a, b);
-      if (!keyOk) {
+      if (!isValidServiceKey(key)) {
         return res.status(401).json({ success: false, message: "מפתח שירות שגוי או שלא הוגדר בשרת" });
       }
       const ownerEmail = String(email || "").toLowerCase().trim();
@@ -961,9 +963,17 @@ export async function createApp() {
 
     const userEmail = (req.user?.email || "").toLowerCase().trim();
 
+    // The WhatsApp connection is written only by the /api/whatsapp/* and /api/evolution/* routes.
+    // The browser's copy of it can be stale, so a save of the agent list never overwrites it.
+    const storedAgents = readAgents();
+    const keepStoredWhatsappConfig = (agent: any) => {
+      const stored = storedAgents.find((a: any) => a.id === agent?.id);
+      return stored?.whatsappConfig ? { ...agent, whatsappConfig: stored.whatsappConfig } : agent;
+    };
+
     if (isSuper(req.user)) {
       // Admin has full access to overwrite the file
-      const saved = saveAgents(agents);
+      const saved = saveAgents(agents.map(keepStoredWhatsappConfig));
       if (saved) {
         return res.json({ success: true });
       } else {
@@ -1039,7 +1049,7 @@ export async function createApp() {
       });
 
       // Merge and save
-      const mergedList = [...otherAgents, ...userProposedAgents];
+      const mergedList = [...otherAgents, ...userProposedAgents.map(keepStoredWhatsappConfig)];
       const saved = saveAgents(mergedList);
       if (saved) {
         return res.json({ success: true });
@@ -1291,23 +1301,32 @@ export async function createApp() {
   app.post("/api/meta/exchange-code", handleMetaTokenExchange);
 
   // Export N8N Credentials Endpoint
+  // Returns an agent's WhatsApp access token, so it needs either a signed-in session that may
+  // access that agent (Bearer header or ?token=) or the server's BOTAPP_SERVICE_KEY
+  // (X-Service-Key header or ?key=) for server-to-server callers such as n8n.
   app.get("/api/whatsapp/n8n-credentials", (req: any, res: any) => {
-    const botId = (req.query?.botId || "").trim();
-    const token = (req.query?.token || "").trim();
-    const allAgents = readAgents();
+    const botId = String(req.query?.botId || "").trim();
+    const authHeader = String(req.headers.authorization || "");
+    const token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : String(req.query?.token || "").trim();
+    const session = token ? getSession(token) : null;
+    const serviceOk = isValidServiceKey(req.headers["x-service-key"] || req.query?.key);
 
+    if (!session && !serviceOk) {
+      return res.status(401).json({ success: false, error: "unauthorized", message: "נדרש חיבור או מפתח שירות" });
+    }
+
+    const allAgents = readAgents();
     let agent = null;
     if (botId) {
       agent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+    } else if (session) {
+      agent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === String(session.email || "").toLowerCase().trim());
     }
-    if (!agent && token) {
-      const session = getSession(token);
-      if (session) {
-        agent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === session.email.toLowerCase().trim());
-      }
+    if (!agent) {
+      return res.status(404).json({ success: false, error: "not_found", message: "לא נמצא סוכן" });
     }
-    if (!agent && allAgents.length > 0) {
-      agent = allAgents[0];
+    if (!serviceOk && !canAccessAgent(session, agent)) {
+      return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
 
     const config = agent?.whatsappConfig || {};

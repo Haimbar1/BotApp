@@ -246,7 +246,8 @@ export default function WhatsAppSettingsModal({
           type: "success",
           message: "הגדרות WhatsApp נשמרו בהצלחה!"
         });
-        if (onConfigSaved) onConfigSaved(payload as any);
+        // The server answers with the full stored config
+        if (onConfigSaved) onConfigSaved((data.config || payload) as any);
       } else {
         setFeedback({
           type: "error",

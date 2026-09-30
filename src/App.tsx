@@ -8794,7 +8794,8 @@ ${videos || "(לא הוגדר)"}
               return {
                 ...a,
                 ownerPhone: updated.phoneNumber || a.ownerPhone,
-                whatsappConfig: updated
+                // Merge: the stored config also holds fields this modal doesn't manage (e.g. Evolution)
+                whatsappConfig: { ...(a.whatsappConfig || {}), ...updated }
               };
             }
             return a;
