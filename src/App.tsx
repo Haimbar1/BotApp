@@ -1381,14 +1381,18 @@ export default function App() {
   // Which bot the chats currently on screen belong to
   const chatsLoadedForBotRef = useRef<string>("");
 
+  // The chat log depends only on which bot is selected (and the list of bot ids), not on the full
+  // agents array: editing the prompt updates that array on every keystroke, and each change used to
+  // re-download the whole chat history, flooding the server until saves timed out.
+  const chatsTargetBotId = agents.find(a => a.id === activeId)?.botId || botId;
+  const knownBotIdsKey = agents.map(a => a.botId).filter(Boolean).join("|");
+
   // Fetch chats for the currently active bot
   useEffect(() => {
     let active = true;
 
     const fetchChats = async () => {
-      // Synchronously retrieve the active agent's botId to bypass state-update delay race conditions
-      const currentAgent = agents.find(a => a.id === activeId);
-      const targetBotId = currentAgent?.botId || botId;
+      const targetBotId = chatsTargetBotId;
 
       if (!targetBotId) {
         if (active) {
@@ -1407,7 +1411,7 @@ export default function App() {
 
       setIsChatsLoading(true);
 
-      const allKnownBotIds = agents.map(a => a.botId).filter(Boolean);
+      const allKnownBotIds = knownBotIdsKey ? knownBotIdsKey.split("|") : [];
 
       const cleanContent = (rawContent: any): string => {
         if (!rawContent) return "";
@@ -1593,7 +1597,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [activeId, botId, agents, chatsRefreshTrigger, isAuthenticated, sessionToken]);
+  }, [chatsTargetBotId, knownBotIdsKey, chatsRefreshTrigger, isAuthenticated, sessionToken]);
 
   // Group fetched chats by sessionId for lists and filters
   const chatSessions = useMemo(() => {
