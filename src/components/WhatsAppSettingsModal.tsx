@@ -301,6 +301,10 @@ export default function WhatsAppSettingsModal({
         const details = data.apps.map((a: any) =>
           `${a.name || a.appId || "אפליקציה"}: ${a.callbackUrl ? a.callbackUrl : "כתובת ברירת המחדל של האפליקציה"}`
         );
+        if (data.tokenApp) {
+          details.push(`הטוקן שייך לאפליקציה: ${data.tokenApp.name} (${data.tokenApp.id})` +
+            (data.configuredAppId && data.configuredAppId !== data.tokenApp.id ? ` — שונה מזו שב-Vercel (${data.configuredAppId})` : ""));
+        }
         setWebhookResult({
           type: "success",
           message: afterSubscribe ? "✓ ה-Webhook חובר. Meta מאשרת:" : "✓ מחובר. Meta מדווחת:",

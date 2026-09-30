@@ -1194,15 +1194,26 @@ export async function createApp() {
     }
   });
 
-  // Makes sure our Meta app (META_APP_ID) has an app-level webhook subscription for WhatsApp
-  // Business Accounts that includes the "messages" field. Never replaces a different existing
-  // callback URL (that would redirect every WABA of the app). Returns an error message, or null.
-  async function ensureAppMessagesSubscription(wabaToken: string, callbackUrl: string, verifyToken: string): Promise<string | null> {
-    const appId = process.env.META_APP_ID || "1950695432176191";
-    const appSecret = process.env.META_APP_SECRET || "";
-    if (!appSecret) {
-      return "חסר META_APP_SECRET בהגדרות השרת, ולכן אי אפשר להגדיר את ה-Webhook של האפליקציה אוטומטית. הגדר אותו ידנית ב-Meta: WhatsApp → Configuration → Webhook, והירשם לשדה messages.";
+  // Which Meta app a WhatsApp token was issued for (GET /app with the token itself)
+  async function getTokenApp(token: string): Promise<{ id: string; name: string } | null> {
+    try {
+      const r = await fetch(`https://graph.facebook.com/v19.0/app?fields=id,name&access_token=${encodeURIComponent(token)}`);
+      const data: any = await r.json().catch(() => ({}));
+      return r.ok && data.id ? { id: String(data.id), name: String(data.name || "") } : null;
+    } catch {
+      return null;
     }
+  }
+
+  // If the bot's token belongs to the app configured in Vercel (META_APP_ID/META_APP_SECRET), make
+  // sure that app has an app-level WhatsApp webhook subscription with the "messages" field — Meta
+  // requires it before a per-WABA callback is accepted. For a token from another app this can't be
+  // done from here; it's skipped and the override attempt that follows reports what to do.
+  // Never replaces a different existing app callback URL. Returns an error message, or null.
+  async function ensureAppMessagesSubscription(tokenAppId: string, callbackUrl: string, verifyToken: string): Promise<string | null> {
+    const appId = process.env.META_APP_ID || "";
+    const appSecret = process.env.META_APP_SECRET || "";
+    if (!appId || !appSecret || !tokenAppId || tokenAppId !== appId) return null;
     const appToken = `${appId}|${appSecret}`;
     const graph = async (path: string, init?: any) => {
       const r = await fetch(`https://graph.facebook.com/v19.0/${path}`, init);
@@ -1211,21 +1222,6 @@ export async function createApp() {
       return data;
     };
     try {
-      // The WABA token must belong to this app, otherwise the subscription we manage is irrelevant
-      let tokenAppId = "";
-      try {
-        const dbg = await graph(`debug_token?input_token=${encodeURIComponent(wabaToken)}&access_token=${encodeURIComponent(appToken)}`);
-        tokenAppId = String(dbg?.data?.app_id || "");
-      } catch (e: any) {
-        // Meta refuses to inspect another app's token ("did not match the Viewing App")
-        if (/did not match the Viewing App/i.test(String(e?.message))) tokenAppId = "another";
-        else throw e;
-      }
-      if (tokenAppId && tokenAppId !== appId) {
-        const other = tokenAppId === "another" ? "" : ` (${tokenAppId})`;
-        return `הטוקן של הבוט שייך לאפליקציית Meta אחרת${other}, לא לאפליקציה של BotApp (${appId}). כדי שהכול יוגדר אוטומטית, חבר את הבוט מחדש עם "התחבר באמצעות Facebook" ואז לחץ שוב "חבר Webhook". לחלופין, הגדר את ה-Webhook באפליקציה שממנה הטוקן: WhatsApp → Configuration → Webhook, והירשם לשדה messages.`;
-      }
-
       const subs = await graph(`${appId}/subscriptions?access_token=${encodeURIComponent(appToken)}`);
       const wa = (Array.isArray(subs.data) ? subs.data : []).find((x: any) => x.object === "whatsapp_business_account");
       const fields: string[] = (wa?.fields || []).map((f: any) => (typeof f === "string" ? f : f?.name)).filter(Boolean);
@@ -1296,15 +1292,21 @@ export async function createApp() {
         return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה (חיבור ה-WABA לאפליקציה): ${plainError}` });
       }
       if (callbackUrl) {
-        // The app itself must be subscribed to the "messages" field of WhatsApp webhooks before a
-        // per-WABA callback is accepted. Set that up with the app credentials if it's missing.
-        const appError = await ensureAppMessagesSubscription(token, callbackUrl, verifyToken);
+        const tokenApp = await getTokenApp(token);
+        const appError = await ensureAppMessagesSubscription(tokenApp?.id || "", callbackUrl, verifyToken);
         if (appError) {
           return res.json({ success: false, error: "app_subscription", message: appError });
         }
         const overrideError = await subscribe({ override_callback_uri: callbackUrl, verify_token: verifyToken });
         if (overrideError) {
-          return res.json({ success: false, error: "graph_error", message: `ה-WABA חובר לאפליקציה, אבל הגדרת כתובת ה-Webhook נכשלה: ${overrideError}` });
+          const appLabel = tokenApp ? `"${tokenApp.name}" (${tokenApp.id})` : "האפליקציה שממנה נוצר הטוקן";
+          const hint = /must be subscribed/i.test(overrideError)
+            ? ` הטוקן של הבוט שייך לאפליקציה ${appLabel}. היכנס לאפליקציה הזו ב-developers.facebook.com → WhatsApp → Configuration → Webhook, הגדר את הכתובת וה-Verify Token והירשם לשדה messages` +
+              (tokenApp && process.env.META_APP_ID && tokenApp.id !== process.env.META_APP_ID
+                ? ` (או שים ב-Vercel את META_APP_ID=${tokenApp.id} ואת הסוד של האפליקציה הזו, ו-BotApp יעשה זאת לבד).`
+                : ".")
+            : "";
+          return res.json({ success: false, error: "graph_error", message: `ה-WABA חובר לאפליקציה, אבל הגדרת כתובת ה-Webhook נכשלה: ${overrideError}.${hint}` });
         }
       }
 
@@ -1342,14 +1344,17 @@ export async function createApp() {
       });
       const data: any = await r.json().catch(() => ({}));
       if (!r.ok || data.error) {
-        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${data?.error?.message || `HTTP ${r.status}`}` });
+        const tokenApp = await getTokenApp(token);
+        const who = tokenApp ? ` (הטוקן שייך לאפליקציה "${tokenApp.name}" ${tokenApp.id})` : "";
+        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${data?.error?.message || `HTTP ${r.status}`}${who}` });
       }
       const apps = (Array.isArray(data.data) ? data.data : []).map((a: any) => ({
         name: a.whatsapp_business_api_data?.name || a.name || "",
         appId: a.whatsapp_business_api_data?.id || a.id || "",
         callbackUrl: a.override_callback_uri || ""
       }));
-      return res.json({ success: true, subscribed: apps.length > 0, apps });
+      const tokenApp = await getTokenApp(token);
+      return res.json({ success: true, subscribed: apps.length > 0, apps, tokenApp, configuredAppId: process.env.META_APP_ID || "" });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: "server_error", message: err?.message || "שגיאה בבדיקת החיבור" });
     }
