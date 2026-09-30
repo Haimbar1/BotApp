@@ -1223,16 +1223,28 @@ export async function createApp() {
       return res.status(400).json({ success: false, error: "missing_verify_token", message: "יש להזין Verify Token (המילה הסודית שה-Webhook בודק)" });
     }
 
-    try {
-      const body: any = callbackUrl ? { override_callback_uri: callbackUrl, verify_token: verifyToken } : {};
+    const subscribe = async (body: any) => {
       const r = await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(wabaId)}/subscribed_apps`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
       const data: any = await r.json().catch(() => ({}));
-      if (!r.ok || data.error || data.success !== true) {
-        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${data?.error?.message || `HTTP ${r.status}`}` });
+      return r.ok && !data.error && data.success === true ? null : (data?.error?.message || `HTTP ${r.status}`);
+    };
+
+    try {
+      // Meta only accepts override_callback_uri once the app is already subscribed to the WABA,
+      // so subscribe plainly first (repeating it is harmless), then set the callback URL.
+      const plainError = await subscribe({});
+      if (plainError) {
+        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה (חיבור ה-WABA לאפליקציה): ${plainError}` });
+      }
+      if (callbackUrl) {
+        const overrideError = await subscribe({ override_callback_uri: callbackUrl, verify_token: verifyToken });
+        if (overrideError) {
+          return res.json({ success: false, error: "graph_error", message: `ה-WABA חובר לאפליקציה, אבל הגדרת כתובת ה-Webhook נכשלה: ${overrideError}` });
+        }
       }
 
       allAgents[idx].whatsappConfig = {
@@ -1245,6 +1257,40 @@ export async function createApp() {
       return res.json({ success: true, message: "ה-Webhook חובר בהצלחה" });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: "server_error", message: err?.message || "שגיאה בחיבור ה-Webhook" });
+    }
+  });
+
+  // Ask Meta which apps (and callback URL) the agent's WABA is subscribed to
+  app.get("/api/whatsapp/webhook-status", requireAuth, async (req: any, res: any) => {
+    const botId = String(req.query?.botId || "").trim();
+    const agent = readAgents().find((a: any) => a.botId === botId || a.id === botId);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: "not_found", message: "לא נמצא סוכן" });
+    }
+    if (!canAccessAgent(req.user, agent)) {
+      return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
+    }
+    const wabaId = String(agent.whatsappConfig?.wabaId || "").trim();
+    const token = String(agent.whatsappConfig?.systemUserAccessToken || "").trim();
+    if (!wabaId || !token) {
+      return res.json({ success: false, error: "not_configured", message: "לא שמורים WABA ID ו-Access Token" });
+    }
+    try {
+      const r = await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data: any = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${data?.error?.message || `HTTP ${r.status}`}` });
+      }
+      const apps = (Array.isArray(data.data) ? data.data : []).map((a: any) => ({
+        name: a.whatsapp_business_api_data?.name || a.name || "",
+        appId: a.whatsapp_business_api_data?.id || a.id || "",
+        callbackUrl: a.override_callback_uri || ""
+      }));
+      return res.json({ success: true, subscribed: apps.length > 0, apps });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: "server_error", message: err?.message || "שגיאה בבדיקת החיבור" });
     }
   });
 

@@ -78,6 +78,9 @@ export default function WhatsAppSettingsModal({
   const [webhookVerifyToken, setWebhookVerifyToken] = useState(DEFAULT_VERIFY_TOKEN);
   const [webhookSubscribedAt, setWebhookSubscribedAt] = useState("");
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [isCheckingWebhook, setIsCheckingWebhook] = useState(false);
+  // Result shown right under the webhook buttons (the top feedback bar is often scrolled out of view)
+  const [webhookResult, setWebhookResult] = useState<{ type: "success" | "error"; message: string; details?: string[] } | null>(null);
   // What is stored on the server, so the webhook uses saved values rather than unsaved edits
   const [savedCredentials, setSavedCredentials] = useState(false);
 
@@ -99,6 +102,7 @@ export default function WhatsAppSettingsModal({
     setFeedback(null);
     setManualMode(false);
     setVerifiedInfo(null);
+    setWebhookResult(null);
     try {
       const res = await apiFetch(`/api/whatsapp/config?botId=${encodeURIComponent(botId)}`, {
         headers: { Authorization: `Bearer ${sessionToken}` }
@@ -282,8 +286,37 @@ export default function WhatsAppSettingsModal({
     }
   };
 
+  const handleCheckWebhook = async (afterSubscribe = false) => {
+    setIsCheckingWebhook(true);
+    try {
+      const res = await apiFetch(`/api/whatsapp/webhook-status?botId=${encodeURIComponent(botId)}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` }
+      });
+      const data = await res.json().catch(() => ({ success: false, message: `שגיאת שרת (${res.status})` }));
+      if (!data.success) {
+        setWebhookResult({ type: "error", message: data.message || "בדיקת החיבור נכשלה" });
+      } else if (!data.subscribed) {
+        setWebhookResult({ type: "error", message: "ה-WABA לא מחובר לאף אפליקציה ב-Meta — הודעות לא יגיעו. לחץ \"חבר Webhook\"." });
+      } else {
+        const details = data.apps.map((a: any) =>
+          `${a.name || a.appId || "אפליקציה"}: ${a.callbackUrl ? a.callbackUrl : "כתובת ברירת המחדל של האפליקציה"}`
+        );
+        setWebhookResult({
+          type: "success",
+          message: afterSubscribe ? "✓ ה-Webhook חובר. Meta מאשרת:" : "✓ מחובר. Meta מדווחת:",
+          details
+        });
+      }
+    } catch (err: any) {
+      setWebhookResult({ type: "error", message: err?.message || "שגיאת תקשורת עם השרת" });
+    } finally {
+      setIsCheckingWebhook(false);
+    }
+  };
+
   const handleSubscribeWebhook = async () => {
     setFeedback(null);
+    setWebhookResult(null);
     setIsSubscribing(true);
     try {
       const res = await apiFetch("/api/whatsapp/subscribe-webhook", {
@@ -297,12 +330,13 @@ export default function WhatsAppSettingsModal({
       const data = await res.json().catch(() => ({ success: false, message: `שגיאת שרת (${res.status})` }));
       if (data.success) {
         setWebhookSubscribedAt(new Date().toISOString());
-        setFeedback({ type: "success", message: "ה-Webhook חובר! הודעות למספר הזה יישלחו לכתובת שהוגדרה." });
+        // Confirm with Meta and show exactly where messages will go
+        await handleCheckWebhook(true);
       } else {
-        setFeedback({ type: "error", message: data.message || "חיבור ה-Webhook נכשל" });
+        setWebhookResult({ type: "error", message: data.message || "חיבור ה-Webhook נכשל" });
       }
     } catch (err: any) {
-      setFeedback({ type: "error", message: err?.message || "שגיאת תקשורת עם השרת" });
+      setWebhookResult({ type: "error", message: err?.message || "שגיאת תקשורת עם השרת" });
     } finally {
       setIsSubscribing(false);
     }
@@ -646,11 +680,12 @@ export default function WhatsAppSettingsModal({
                 />
               </div>
             </div>
+            <div className="flex gap-2">
             <button
               type="button"
               onClick={handleSubscribeWebhook}
               disabled={isSubscribing || !savedCredentials || manualMode || !webhookUrl.trim() || !webhookVerifyToken.trim()}
-              className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+              className="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {isSubscribing ? (
                 <>
@@ -664,6 +699,33 @@ export default function WhatsAppSettingsModal({
                 </>
               )}
             </button>
+              <button
+                type="button"
+                onClick={() => handleCheckWebhook(false)}
+                disabled={isCheckingWebhook || !savedCredentials || manualMode}
+                className="px-4 py-2.5 bg-[#141822] hover:bg-[#1E2433] text-slate-300 border border-slate-800 disabled:opacity-50 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isCheckingWebhook ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>בדוק חיבור</span>
+              </button>
+            </div>
+            {webhookResult && (
+              <div className={`p-3 rounded-xl border text-xs space-y-1 ${
+                webhookResult.type === "success"
+                  ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-100"
+                  : "bg-red-950/60 border-red-500/50 text-red-100"
+              }`}>
+                <div className="font-bold flex items-center gap-2">
+                  {webhookResult.type === "success"
+                    ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                  <span>{webhookResult.message}</span>
+                </div>
+                {webhookResult.details?.map((d, i) => (
+                  <div key={i} className="font-mono text-[11px] break-all" dir="ltr">{d}</div>
+                ))}
+              </div>
+            )}
             {(!savedCredentials || manualMode) && (
               <p className="text-[11px] text-slate-500">יש לשמור קודם את פרטי החיבור (WABA ID ו-Access Token) ורק אז לחבר Webhook.</p>
             )}
