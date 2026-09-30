@@ -48,6 +48,8 @@ interface WhatsAppSettingsModalProps {
 
 const META_APP_ID = "1950695432176191";
 const META_CONFIG_ID = "4827048247578784";
+// Default n8n webhook for incoming WhatsApp messages (editable per bot)
+const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt";
 
 export default function WhatsAppSettingsModal({
   isOpen,
@@ -70,7 +72,7 @@ export default function WhatsAppSettingsModal({
   const [verifiedInfo, setVerifiedInfo] = useState<{ displayPhoneNumber: string; verifiedName: string; wabaName: string } | null>(null);
 
   // Incoming-messages webhook (subscribes the saved WABA to the app via /api/whatsapp/subscribe-webhook)
-  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_WEBHOOK_URL);
   const [webhookVerifyToken, setWebhookVerifyToken] = useState("");
   const [webhookSubscribedAt, setWebhookSubscribedAt] = useState("");
   const [isSubscribing, setIsSubscribing] = useState(false);
@@ -104,7 +106,7 @@ export default function WhatsAppSettingsModal({
         setPhoneNumberId(data.config.phoneNumberId || "");
         setSystemUserAccessToken(data.config.systemUserAccessToken || "");
         setWabaId(data.config.wabaId || "");
-        setWebhookUrl(data.config.webhookCallbackUrl || "");
+        setWebhookUrl(data.config.webhookCallbackUrl || DEFAULT_WEBHOOK_URL);
         setWebhookVerifyToken(data.config.webhookVerifyToken || "");
         setWebhookSubscribedAt(data.config.webhookSubscribedAt || "");
         setSavedCredentials(!!(data.config.wabaId && data.config.systemUserAccessToken));
