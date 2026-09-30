@@ -1304,8 +1304,17 @@ export async function createApp() {
   // Returns an agent's WhatsApp access token, so it needs either a signed-in session that may
   // access that agent (Bearer header or ?token=) or the server's BOTAPP_SERVICE_KEY
   // (X-Service-Key header or ?key=) for server-to-server callers such as n8n.
+  // Look the agent up by ?botId=, or — for an incoming Meta webhook — by ?phoneNumberId=
+  // (metadata.phone_number_id) or ?displayPhoneNumber= (metadata.display_phone_number).
   app.get("/api/whatsapp/n8n-credentials", (req: any, res: any) => {
     const botId = String(req.query?.botId || "").trim();
+    const phoneNumberId = String(req.query?.phoneNumberId || "").trim();
+    // Compare phone numbers as international digits: "052-470-1380" and "972524701380" match
+    const toIntlDigits = (v: any) => {
+      const d = String(v || "").replace(/\D/g, "");
+      return d.startsWith("0") ? "972" + d.substring(1) : d;
+    };
+    const displayPhone = toIntlDigits(req.query?.displayPhoneNumber);
     const authHeader = String(req.headers.authorization || "");
     const token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : String(req.query?.token || "").trim();
     const session = token ? getSession(token) : null;
@@ -1319,6 +1328,11 @@ export async function createApp() {
     let agent = null;
     if (botId) {
       agent = allAgents.find((a: any) => a.botId === botId || a.id === botId);
+    } else if (phoneNumberId) {
+      agent = allAgents.find((a: any) => String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId);
+    } else if (displayPhone) {
+      agent = allAgents.find((a: any) => toIntlDigits(a.whatsappConfig?.phoneNumber) === displayPhone)
+        || allAgents.find((a: any) => a.whatsappConfig?.phoneNumberId && toIntlDigits(a.ownerPhone) === displayPhone);
     } else if (session) {
       agent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === String(session.email || "").toLowerCase().trim());
     }
