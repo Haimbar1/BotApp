@@ -189,6 +189,7 @@ function schedulePersist() {
         persisted.delete(k);
         seen.delete(k);
       }
+      await persistPhoneMap();
     } catch (e) {
       console.error("[STORAGE] Postgres write failed (will retry on the next change):", e);
     }
@@ -219,6 +220,26 @@ export async function initStorage(p: StoragePaths, defaults: { settings: any; ag
           PRIMARY KEY (kind, doc_id)
         )`);
       await pool.query("CREATE INDEX IF NOT EXISTS botapp_store_tenant_idx ON botapp_store (tenant_id, kind)");
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS botapp_phone_bot_map (
+          phone_number_id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL DEFAULT '',
+          tenant_id TEXT NOT NULL DEFAULT '_global',
+          display_phone TEXT NOT NULL DEFAULT '',
+          waba_id TEXT NOT NULL DEFAULT '',
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`);
+      await pool.query("CREATE INDEX IF NOT EXISTS botapp_phone_bot_map_display_idx ON botapp_phone_bot_map (display_phone)");
+      const { rows: mapRows } = await pool.query(
+        "SELECT phone_number_id, bot_id, agent_id, tenant_id, display_phone, waba_id FROM botapp_phone_bot_map"
+      );
+      for (const r of mapRows) {
+        persistedPhoneMap.set(r.phone_number_id, JSON.stringify({
+          phoneNumberId: r.phone_number_id, botId: r.bot_id, agentId: r.agent_id,
+          tenant: r.tenant_id, displayPhone: r.display_phone, wabaId: r.waba_id,
+        }));
+      }
       const { rows: countRows } = await pool.query("SELECT count(*)::int AS n FROM botapp_store");
 
       if (countRows[0].n === 0) {
@@ -234,6 +255,9 @@ export async function initStorage(p: StoragePaths, defaults: { settings: any; ag
       } else {
         await syncStorage(true);
         if (!cache.settings) cache.settings = defaults.settings;
+        // Fill in / correct the phone → bot mapping from the agents as they are now.
+        schedulePersist();
+        await writeChain;
         console.log(`[STORAGE] Loaded from Postgres: ${cache.agents.length} agents, ${cache.chats.length} chat messages, ${Object.keys(cache.sessions).length} sessions.`);
       }
       return;
@@ -278,6 +302,97 @@ export const setSessionsDoc = (v: Record<string, any>) => {
   cache.sessions = clone(v);
   persistFile("sessions");
 };
+
+// ---------------- Phone number → bot mapping ----------------
+// Table botapp_phone_bot_map: one row per WhatsApp phone number id (Meta's metadata.phone_number_id),
+// saying which bot it belongs to. Derived from the agents' whatsappConfig and rewritten whenever the
+// agents change, so n8n (via /api/whatsapp/n8n-credentials) or anything reading the database can go
+// from an incoming webhook's phone number to the bot.
+
+// "052-470-1380" and "972524701380" both become "972524701380".
+export const toIntlDigits = (v: any) => {
+  const d = String(v || "").replace(/\D/g, "");
+  return d.startsWith("0") ? "972" + d.substring(1) : d;
+};
+
+interface PhoneMapRow {
+  phoneNumberId: string;
+  botId: string;
+  agentId: string;
+  tenant: string;
+  displayPhone: string;
+  wabaId: string;
+}
+
+// What is currently stored, as JSON text per phone number id.
+const persistedPhoneMap = new Map<string, string>();
+
+function collectPhoneMap(): Map<string, PhoneMapRow> {
+  const rows = new Map<string, PhoneMapRow>();
+  for (const a of cache.agents) {
+    const cfg = a?.whatsappConfig || {};
+    const phoneNumberId = String(cfg.phoneNumberId || "").trim();
+    const botId = String(a?.botId || a?.id || "").trim();
+    if (!phoneNumberId || !botId) continue;
+    // Two agents claiming one number: keep the one that actually holds a token.
+    const existing = rows.get(phoneNumberId);
+    if (existing && !cfg.systemUserAccessToken) continue;
+    rows.set(phoneNumberId, {
+      phoneNumberId,
+      botId,
+      agentId: String(a.id || ""),
+      tenant: a.tenantId ? String(a.tenantId) : GLOBAL_TENANT,
+      displayPhone: toIntlDigits(cfg.phoneNumber),
+      wabaId: String(cfg.wabaId || ""),
+    });
+  }
+  return rows;
+}
+
+async function persistPhoneMap() {
+  if (!pool) return;
+  const rows = collectPhoneMap();
+  for (const [id, r] of Array.from(rows)) {
+    const json = JSON.stringify(r);
+    if (persistedPhoneMap.get(id) === json) continue;
+    await pool.query(
+      `INSERT INTO botapp_phone_bot_map (phone_number_id, bot_id, agent_id, tenant_id, display_phone, waba_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (phone_number_id) DO UPDATE SET bot_id = EXCLUDED.bot_id, agent_id = EXCLUDED.agent_id,
+         tenant_id = EXCLUDED.tenant_id, display_phone = EXCLUDED.display_phone, waba_id = EXCLUDED.waba_id, updated_at = now()`,
+      [r.phoneNumberId, r.botId, r.agentId, r.tenant, r.displayPhone, r.wabaId]
+    );
+    persistedPhoneMap.set(id, json);
+  }
+  for (const id of Array.from(persistedPhoneMap.keys())) {
+    if (rows.has(id)) continue;
+    await pool.query("DELETE FROM botapp_phone_bot_map WHERE phone_number_id = $1", [id]);
+    persistedPhoneMap.delete(id);
+  }
+}
+
+// The bot id stored for a phone number id (or, failing that, a display phone number). null when the
+// database has no such mapping or there is no database.
+export async function lookupBotIdByPhone(phoneNumberId: string, displayPhone?: string): Promise<string | null> {
+  if (!pool) return null;
+  try {
+    if (phoneNumberId) {
+      const { rows } = await pool.query("SELECT bot_id FROM botapp_phone_bot_map WHERE phone_number_id = $1", [phoneNumberId]);
+      if (rows[0]) return String(rows[0].bot_id);
+    }
+    const digits = toIntlDigits(displayPhone);
+    if (digits) {
+      const { rows } = await pool.query(
+        "SELECT bot_id FROM botapp_phone_bot_map WHERE display_phone = $1 ORDER BY updated_at DESC LIMIT 1",
+        [digits]
+      );
+      if (rows[0]) return String(rows[0].bot_id);
+    }
+  } catch (e) {
+    console.error("[STORAGE] Phone → bot lookup failed:", e);
+  }
+  return null;
+}
 
 // For tests / shutdown.
 export async function flushStorage() {
