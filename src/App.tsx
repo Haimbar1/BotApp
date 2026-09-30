@@ -4009,7 +4009,6 @@ ${videos || "(לא הוגדר)"}
       "Business Name": currentBusinessName,
       "Owner Phone": currentOwnerPhone,
       "Bot ID": currentBotId,
-      botId: currentBotId, // same value, for n8n expressions like {{ $json.body.botId }}
       "WhatsApp Instance Name": currentWhatsappInstance,
       "Key": currentKey,
       "Welcome Message": currentWelcomeMessage,
