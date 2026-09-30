@@ -13,7 +13,9 @@ import {
   RefreshCw,
   ShieldCheck,
   Building2,
-  Hash
+  Hash,
+  PencilLine,
+  BadgeCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { connectWhatsAppBusiness } from "../lib/meta/whatsapp";
@@ -61,6 +63,11 @@ export default function WhatsAppSettingsModal({
   const [wabaId, setWabaId] = useState("");
   const [showToken, setShowToken] = useState(false);
 
+  // Manual entry (alternative to Embedded Signup): user pastes WABA ID, Phone Number ID and Token
+  const [manualMode, setManualMode] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifiedInfo, setVerifiedInfo] = useState<{ displayPhoneNumber: string; verifiedName: string; wabaName: string } | null>(null);
+
   // UI States
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -77,6 +84,8 @@ export default function WhatsAppSettingsModal({
 
   const loadWhatsAppConfig = async () => {
     setFeedback(null);
+    setManualMode(false);
+    setVerifiedInfo(null);
     try {
       const res = await apiFetch(`/api/whatsapp/config?botId=${encodeURIComponent(botId)}`, {
         headers: { Authorization: `Bearer ${sessionToken}` }
@@ -156,9 +165,52 @@ export default function WhatsAppSettingsModal({
     }
   };
 
-  const handleSaveConfig = async () => {
-    setIsSaving(true);
+  const handleVerifyCredentials = async () => {
     setFeedback(null);
+    setVerifiedInfo(null);
+    if (!wabaId.trim() || !phoneNumberId.trim() || !systemUserAccessToken.trim()) {
+      setFeedback({ type: "error", message: "יש למלא WABA ID, Phone Number ID ו-Access Token לפני הבדיקה" });
+      return;
+    }
+    setIsVerifying(true);
+    try {
+      const res = await apiFetch("/api/whatsapp/verify-credentials", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({
+          wabaId: wabaId.trim(),
+          phoneNumberId: phoneNumberId.trim(),
+          systemUserAccessToken: systemUserAccessToken.trim()
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setVerifiedInfo({
+          displayPhoneNumber: data.displayPhoneNumber || "",
+          verifiedName: data.verifiedName || "",
+          wabaName: data.wabaName || ""
+        });
+        setFeedback({ type: "success", message: "הפרטים אומתו מול Meta בהצלחה! לחץ \"שמור הגדרות\" כדי לחבר." });
+      } else {
+        setFeedback({ type: "error", message: data.message || "אימות הפרטים נכשל" });
+      }
+    } catch (err: any) {
+      setFeedback({ type: "error", message: err?.message || "שגיאת תקשורת עם השרת" });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setFeedback(null);
+    if (manualMode && (!wabaId.trim() || !phoneNumberId.trim() || !systemUserAccessToken.trim())) {
+      setFeedback({ type: "error", message: "בהזנה ידנית יש למלא את שלושת השדות: WABA ID, Phone Number ID ו-Access Token" });
+      return;
+    }
+    setIsSaving(true);
 
     const calculatedStatus = (phoneNumberId.trim() && systemUserAccessToken.trim() && wabaId.trim())
       ? "Connected" 
@@ -173,7 +225,8 @@ export default function WhatsAppSettingsModal({
         appId: META_APP_ID,
         configId: META_CONFIG_ID,
         connectionType: "official_meta",
-        status: calculatedStatus
+        status: calculatedStatus,
+        ...(verifiedInfo?.displayPhoneNumber ? { phoneNumber: verifiedInfo.displayPhoneNumber.replace(/\D/g, "") } : {})
       };
 
       const res = await apiFetch("/api/whatsapp/config", {
@@ -188,6 +241,7 @@ export default function WhatsAppSettingsModal({
       const data = await res.json();
       if (data.success) {
         setStatus(calculatedStatus);
+        setManualMode(false);
         setFeedback({
           type: "success",
           message: "הגדרות WhatsApp נשמרו בהצלחה!"
@@ -328,12 +382,43 @@ export default function WhatsAppSettingsModal({
             </button>
           </div>
 
+          {/* ALTERNATIVE: Manual credentials entry */}
+          <div className="p-4 rounded-2xl bg-[#131625] border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-black text-white flex items-center gap-2">
+                  <PencilLine className="w-4 h-4 text-amber-400" />
+                  <span>או: הזנת פרטי חיבור ידנית</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  כבר יש לך WABA ID, Phone Number ID ו-Access Token (למשל מ-Meta Business Manager / System User)? הזן אותם ידנית במקום להתחבר דרך Facebook.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setManualMode(!manualMode);
+                  setVerifiedInfo(null);
+                  setFeedback(null);
+                  if (manualMode) loadWhatsAppConfig();
+                }}
+                className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${
+                  manualMode
+                    ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
+                    : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/40"
+                }`}
+              >
+                {manualMode ? "ביטול" : "הזנה ידנית"}
+              </button>
+            </div>
+          </div>
+
           {/* CONNECTION RESULTS / OUTPUTS SECTION */}
           <div className="space-y-3 pt-1">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="text-xs font-bold text-slate-300 flex items-center gap-2">
                 <Key className="w-4 h-4 text-sky-400" />
-                <span>תוצרי החיבור (Credentials)</span>
+                <span>{manualMode ? "הזנת פרטי החיבור (Credentials)" : "תוצרי החיבור (Credentials)"}</span>
               </h3>
               {status === "Connected" && (
                 <span className="text-[11px] text-emerald-400 font-bold">✓ פרטי החיבור פעילים</span>
@@ -361,9 +446,12 @@ export default function WhatsAppSettingsModal({
                 </div>
                 <input
                   type="text"
-                  readOnly
-                  value={wabaId || "ממתין להתחברות..."}
-                  className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-800 rounded-lg font-mono text-xs text-white focus:outline-none"
+                  readOnly={!manualMode}
+                  value={manualMode ? wabaId : (wabaId || "ממתין להתחברות...")}
+                  onChange={(e) => { setWabaId(e.target.value); setVerifiedInfo(null); }}
+                  placeholder="לדוגמה: 102938475612345"
+                  inputMode="numeric"
+                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
               </div>
@@ -388,9 +476,12 @@ export default function WhatsAppSettingsModal({
                 </div>
                 <input
                   type="text"
-                  readOnly
-                  value={phoneNumberId || "ממתין להתחברות..."}
-                  className="w-full px-3 py-1.5 bg-[#080A12] border border-slate-800 rounded-lg font-mono text-xs text-white focus:outline-none"
+                  readOnly={!manualMode}
+                  value={manualMode ? phoneNumberId : (phoneNumberId || "ממתין להתחברות...")}
+                  onChange={(e) => { setPhoneNumberId(e.target.value); setVerifiedInfo(null); }}
+                  placeholder="לדוגמה: 109876543210987"
+                  inputMode="numeric"
+                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
               </div>
@@ -419,9 +510,12 @@ export default function WhatsAppSettingsModal({
               <div className="relative">
                 <input
                   type={showToken ? "text" : "password"}
-                  readOnly
-                  value={systemUserAccessToken || "ממתין להתחברות..."}
-                  className="w-full pl-8 pr-3 py-1.5 bg-[#080A12] border border-slate-800 rounded-lg font-mono text-xs text-white focus:outline-none"
+                  readOnly={!manualMode}
+                  value={manualMode ? systemUserAccessToken : (systemUserAccessToken || "ממתין להתחברות...")}
+                  onChange={(e) => { setSystemUserAccessToken(e.target.value); setVerifiedInfo(null); }}
+                  placeholder="EAAG..."
+                  autoComplete="off"
+                  className={`w-full pl-8 pr-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
                 <button
@@ -433,6 +527,41 @@ export default function WhatsAppSettingsModal({
                 </button>
               </div>
             </div>
+
+            {manualMode && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleVerifyCredentials}
+                  disabled={isVerifying}
+                  className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 text-amber-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-amber-500/40"
+                >
+                  {isVerifying ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>בודק מול Meta...</span>
+                    </>
+                  ) : (
+                    <>
+                      <BadgeCheck className="w-4 h-4" />
+                      <span>בדוק את הפרטים מול Meta</span>
+                    </>
+                  )}
+                </button>
+                {verifiedInfo && (
+                  <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs text-emerald-100 space-y-0.5">
+                    {verifiedInfo.displayPhoneNumber && (
+                      <div>מספר: <strong dir="ltr">{verifiedInfo.displayPhoneNumber}</strong></div>
+                    )}
+                    {verifiedInfo.verifiedName && <div>שם מאומת: <strong>{verifiedInfo.verifiedName}</strong></div>}
+                    {verifiedInfo.wabaName && <div>חשבון WABA: <strong>{verifiedInfo.wabaName}</strong></div>}
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  מומלץ להשתמש בטוקן קבוע של System User (ולא בטוקן זמני של 24 שעות) עם ההרשאות whatsapp_business_messaging ו-whatsapp_business_management.
+                </p>
+              </div>
+            )}
           </div>
 
         </div>

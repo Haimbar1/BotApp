@@ -1116,6 +1116,8 @@ export async function createApp() {
 
     const currentConfig = allAgents[targetIndex].whatsappConfig || {};
     const updatedConfig = {
+      // Keep fields this route doesn't manage (e.g. Evolution API settings)
+      ...currentConfig,
       phoneNumberId: phoneNumberId !== undefined ? String(phoneNumberId).trim() : (currentConfig.phoneNumberId || ""),
       systemUserAccessToken: systemUserAccessToken !== undefined ? String(systemUserAccessToken).trim() : (currentConfig.systemUserAccessToken || ""),
       wabaId: wabaId !== undefined ? String(wabaId).trim() : (currentConfig.wabaId || ""),
@@ -1141,6 +1143,44 @@ export async function createApp() {
       });
     } else {
       return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת ההגדרות בשרת" });
+    }
+  });
+
+  // Verify manually entered Meta credentials (WABA ID, Phone Number ID, Access Token) against the Graph API
+  app.post("/api/whatsapp/verify-credentials", requireAuth, async (req: any, res: any) => {
+    const wabaId = String(req.body?.wabaId || "").trim();
+    const phoneNumberId = String(req.body?.phoneNumberId || "").trim();
+    const token = String(req.body?.systemUserAccessToken || "").trim();
+    if (!wabaId || !phoneNumberId || !token) {
+      return res.status(400).json({ success: false, error: "missing_fields", message: "יש למלא WABA ID, Phone Number ID ו-Access Token" });
+    }
+    if (!/^\d+$/.test(wabaId) || !/^\d+$/.test(phoneNumberId)) {
+      return res.status(400).json({ success: false, error: "invalid_ids", message: "WABA ID ו-Phone Number ID חייבים להכיל ספרות בלבד" });
+    }
+
+    const graphGet = async (path: string) => {
+      const r = await fetch(`https://graph.facebook.com/v19.0/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data: any = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data?.error?.message || `Graph API error ${r.status}`);
+      return data;
+    };
+
+    try {
+      const phone = await graphGet(`${phoneNumberId}?fields=display_phone_number,verified_name`);
+      const waba = await graphGet(`${wabaId}?fields=name`);
+      const numbers = await graphGet(`${wabaId}/phone_numbers?fields=id`);
+      const belongs = Array.isArray(numbers.data) && numbers.data.some((n: any) => String(n.id) === phoneNumberId);
+      if (!belongs) {
+        return res.json({ success: false, error: "phone_not_in_waba", message: "ה-Phone Number ID לא שייך לחשבון ה-WABA שהוזן" });
+      }
+      return res.json({
+        success: true,
+        displayPhoneNumber: phone.display_phone_number || "",
+        verifiedName: phone.verified_name || "",
+        wabaName: waba.name || ""
+      });
+    } catch (err: any) {
+      return res.json({ success: false, error: "graph_error", message: `Meta החזירה שגיאה: ${err.message}` });
     }
   });
 
