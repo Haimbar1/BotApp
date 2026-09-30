@@ -5963,7 +5963,7 @@ ${videos || "(לא הוגדר)"}
                   <button
                     type="button"
                     onClick={() => { setBulkDeleteMode(true); setBulkSelectedIds([]); }}
-                    className="flex-1 py-1.5 text-[10px] bg-red-950/40 text-red-300 hover:bg-red-900/40 font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border border-red-900/60 cursor-pointer"
+                    className="flex-1 py-1.5 text-[10px] bg-[#141822] text-slate-300 hover:bg-[#1E2433] font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border border-slate-800 cursor-pointer"
                     title="בחר כמה סוכנים ומחק אותם בבת אחת"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

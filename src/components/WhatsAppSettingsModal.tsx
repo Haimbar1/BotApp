@@ -366,7 +366,7 @@ export default function WhatsAppSettingsModal({
               type="button"
               onClick={handleLaunchFacebookSignup}
               disabled={isConnecting}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer border border-blue-400/30"
+              className="w-full py-3 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-black text-sm rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {isConnecting ? (
                 <>
@@ -387,7 +387,7 @@ export default function WhatsAppSettingsModal({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-black text-white flex items-center gap-2">
-                  <PencilLine className="w-4 h-4 text-amber-400" />
+                  <PencilLine className="w-4 h-4 text-sky-400" />
                   <span>או: הזנת פרטי חיבור ידנית</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">
@@ -402,11 +402,7 @@ export default function WhatsAppSettingsModal({
                   setFeedback(null);
                   if (manualMode) loadWhatsAppConfig();
                 }}
-                className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${
-                  manualMode
-                    ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
-                    : "bg-amber-500 hover:bg-amber-400 text-black font-black border-amber-600 shadow-md"
-                }`}
+                className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-[#141822] hover:bg-[#1E2433] text-slate-300 border border-slate-800"
               >
                 {manualMode ? "ביטול" : "הזנה ידנית"}
               </button>
@@ -451,7 +447,7 @@ export default function WhatsAppSettingsModal({
                   onChange={(e) => { setWabaId(e.target.value); setVerifiedInfo(null); }}
                   placeholder="לדוגמה: 102938475612345"
                   inputMode="numeric"
-                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
+                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-sky-500/50 focus:border-sky-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
               </div>
@@ -481,7 +477,7 @@ export default function WhatsAppSettingsModal({
                   onChange={(e) => { setPhoneNumberId(e.target.value); setVerifiedInfo(null); }}
                   placeholder="לדוגמה: 109876543210987"
                   inputMode="numeric"
-                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
+                  className={`w-full px-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-sky-500/50 focus:border-sky-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
               </div>
@@ -515,7 +511,7 @@ export default function WhatsAppSettingsModal({
                   onChange={(e) => { setSystemUserAccessToken(e.target.value); setVerifiedInfo(null); }}
                   placeholder="EAAG..."
                   autoComplete="off"
-                  className={`w-full pl-8 pr-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-amber-500/50 focus:border-amber-400" : "border-slate-800"}`}
+                  className={`w-full pl-8 pr-3 py-1.5 bg-[#080A12] border rounded-lg font-mono text-xs text-white focus:outline-none ${manualMode ? "border-sky-500/50 focus:border-sky-400" : "border-slate-800"}`}
                   dir="ltr"
                 />
                 <button
@@ -534,7 +530,7 @@ export default function WhatsAppSettingsModal({
                   type="button"
                   onClick={handleVerifyCredentials}
                   disabled={isVerifying}
-                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer border border-amber-600"
+                  className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {isVerifying ? (
                     <>
@@ -571,7 +567,7 @@ export default function WhatsAppSettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+            className="px-5 py-2.5 bg-[#141822] hover:bg-[#1E2433] text-slate-300 border border-slate-800 rounded-xl text-xs font-bold transition cursor-pointer"
           >
             סגור
           </button>
