@@ -1378,6 +1378,9 @@ export default function App() {
     );
   };
 
+  // Which bot the chats currently on screen belong to
+  const chatsLoadedForBotRef = useRef<string>("");
+
   // Fetch chats for the currently active bot
   useEffect(() => {
     let active = true;
@@ -1390,8 +1393,16 @@ export default function App() {
       if (!targetBotId) {
         if (active) {
           setChats([]);
+          chatsLoadedForBotRef.current = "";
         }
         return;
+      }
+
+      // Switched to another bot: don't keep showing the previous bot's conversations
+      if (chatsLoadedForBotRef.current !== targetBotId) {
+        setChats([]);
+        setSelectedSessionId("");
+        chatsLoadedForBotRef.current = targetBotId;
       }
 
       setIsChatsLoading(true);
@@ -1473,7 +1484,9 @@ export default function App() {
             },
             timestamp: item.created_at || item.createdAt || item.timestamp || item.time || item.date || item.sent_at || item.sentAt || item.ts || item.inserted_at || item.insertedAt || item.updated_at || item.updatedAt || item.message_time || item.created || ""
           };
-        }).filter((c: any) => c && c.sessionId && !isMessageDeleted(c.sessionId, c.id));
+        }).filter((c: any) => c && c.sessionId && !isMessageDeleted(c.sessionId, c.id))
+          // Drop messages that clearly belong to another of our bots
+          .filter((c: any) => c.botId === targetBotId || !allKnownBotIds.includes(c.botId));
       };
 
       const extractRecordsFromPayload = (rawData: any): any[] => {
@@ -1932,6 +1945,9 @@ export default function App() {
 
   // Safe Delete Agent state variables
   const [agentIdToDelete, setAgentIdToDelete] = useState<string | null>(null);
+  // Bulk delete (super user): pick several agents and delete them at once
+  const [bulkDeleteMode, setBulkDeleteMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState<string>("");
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [wizardTemplateId, setWizardTemplateId] = useState<string>("sales");
@@ -3680,15 +3696,33 @@ ${videos || "(לא הוגדר)"}
     setDeleteConfirmInput("");
   };
 
-  // Super user cleanup: delete every agent except the selected one
-  const keepOnlyActiveAgent = () => {
-    const keep = agents.find(a => a.id === activeId);
-    if (!keep || agents.length <= 1) return;
-    const names = agents.filter(a => a.id !== activeId).map(a => `• ${a.businessName || a.name || a.botId}`).join("\n");
-    if (!window.confirm(`יימחקו ${agents.length - 1} סוכנים וישאר רק "${keep.businessName || keep.name}":\n\n${names}\n\nלא ניתן לבטל. להמשיך?`)) return;
-    const updated = [keep];
+  // Super user cleanup: delete the agents ticked in bulk-delete mode
+  const toggleBulkSelected = (id: string) => {
+    setBulkSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const exitBulkDeleteMode = () => {
+    setBulkDeleteMode(false);
+    setBulkSelectedIds([]);
+  };
+
+  const executeBulkDelete = () => {
+    const toDelete = agents.filter(a => bulkSelectedIds.includes(a.id));
+    if (toDelete.length === 0) return;
+    if (toDelete.length >= agents.length) {
+      alert("חייב להישאר לפחות סוכן אחד במערכת.");
+      return;
+    }
+    const names = toDelete.map(a => `• ${a.businessName || a.name || a.botId}`).join("\n");
+    if (!window.confirm(`יימחקו ${toDelete.length} סוכנים:\n\n${names}\n\nלא ניתן לבטל. להמשיך?`)) return;
+    const updated = agents.filter(a => !bulkSelectedIds.includes(a.id));
     setAgents(updated);
     saveAgentsToServer(updated);
+    if (bulkSelectedIds.includes(activeId)) {
+      setActiveId(updated[0].id);
+      loadAgentToForm(updated[0]);
+    }
+    exitBulkDeleteMode();
   };
 
   // Switch between agents
@@ -5814,17 +5848,30 @@ ${videos || "(לא הוגדר)"}
               ) : (
                 filteredAgents.map((agent, index) => {
                   const isActive = agent.id === activeId;
+                  const isBulkSelected = bulkDeleteMode && bulkSelectedIds.includes(agent.id);
                   return (
                     <div
                       key={agent.id ? `agent-${agent.id}-${index}` : `agent-fallback-${index}`}
-                      onClick={() => selectAgent(agent.id)}
+                      onClick={() => bulkDeleteMode ? toggleBulkSelected(agent.id) : selectAgent(agent.id)}
                       className={`group relative p-3 rounded-xl border text-right transition-all duration-200 cursor-pointer ${
-                        isActive
+                        isBulkSelected
+                          ? "bg-red-950/40 border-red-500/60 ring-1 ring-red-500/30"
+                          : isActive
                           ? "bg-[#181D29] border-sky-500/40 shadow-lg shadow-sky-950/20 ring-1 ring-sky-500/20"
                           : "bg-slate-950/10 hover:bg-[#131722]/30 border-slate-850 text-slate-300"
                       }`}
                     >
                       <div className="flex items-start justify-between">
+                        {bulkDeleteMode && (
+                          <input
+                            type="checkbox"
+                            checked={isBulkSelected}
+                            onChange={() => toggleBulkSelected(agent.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-0.5 ml-2 w-4 h-4 shrink-0 accent-red-500 cursor-pointer"
+                            aria-label={`בחר את ${agent.businessName || "הסוכן"} למחיקה`}
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
                           <h3 className={`text-xs font-black truncate ${isActive ? "text-sky-400" : "text-slate-200"}`}>
                             {agent.businessName || "ללא שם עסק"}
@@ -5912,18 +5959,38 @@ ${videos || "(לא הוגדר)"}
                   <Copy className="w-3.5 h-3.5" />
                   שכפל פעיל
                 </button>
-                {sessionUser?.email === "haim.bar@gmail.com" && agents.length > 1 && (
+                {sessionUser?.email === "haim.bar@gmail.com" && agents.length > 1 && !bulkDeleteMode && (
                   <button
                     type="button"
-                    onClick={keepOnlyActiveAgent}
+                    onClick={() => { setBulkDeleteMode(true); setBulkSelectedIds([]); }}
                     className="flex-1 py-1.5 text-[10px] bg-red-950/40 text-red-300 hover:bg-red-900/40 font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border border-red-900/60 cursor-pointer"
-                    title="מחק את כל הסוכנים חוץ מהסוכן הנבחר"
+                    title="בחר כמה סוכנים ומחק אותם בבת אחת"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    השאר רק את הנבחר
+                    מחיקה מרובה
                   </button>
                 )}
               </div>
+              {bulkDeleteMode && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={executeBulkDelete}
+                    disabled={bulkSelectedIds.length === 0}
+                    className="flex-1 py-1.5 text-[10px] bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-black rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    מחק נבחרים ({bulkSelectedIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exitBulkDeleteMode}
+                    className="px-3 py-1.5 text-[10px] bg-[#141822] text-slate-300 hover:bg-[#1E2433] font-bold rounded-lg transition-colors border border-slate-800 cursor-pointer"
+                  >
+                    ביטול
+                  </button>
+                </div>
+              )}
               
               <button
                 type="button"

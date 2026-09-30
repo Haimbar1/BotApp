@@ -405,7 +405,7 @@ export default function WhatsAppSettingsModal({
                 className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${
                   manualMode
                     ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
-                    : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/40"
+                    : "bg-amber-500 hover:bg-amber-400 text-black font-black border-amber-600 shadow-md"
                 }`}
               >
                 {manualMode ? "ביטול" : "הזנה ידנית"}
@@ -534,7 +534,7 @@ export default function WhatsAppSettingsModal({
                   type="button"
                   onClick={handleVerifyCredentials}
                   disabled={isVerifying}
-                  className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 text-amber-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer border border-amber-500/40"
+                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer border border-amber-600"
                 >
                   {isVerifying ? (
                     <>
