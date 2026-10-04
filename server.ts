@@ -21,7 +21,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret } from "./secrets.js";
+import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues } from "./secrets.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
 // started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
@@ -323,9 +323,32 @@ export async function createApp() {
     return list;
   }
 
+  // Every place that saves an agent's WhatsApp (Meta) connection goes through here: when it changed
+  // for an agent of a business, the new values are written to the portal vault too (one value per
+  // thing across the apps). Routes that want it done before answering await flushVaultWrites().
+  const pendingVaultWrites = new Set<Promise<void>>();
+  const flushVaultWrites = () => Promise.all(Array.from(pendingVaultWrites));
+  function copyWhatsappChangesToVault(before: any[], after: any[]) {
+    const sig = (c: any) => [c?.phoneNumberId, c?.systemUserAccessToken, c?.wabaId].map((v) => String(v || "").trim()).join("|");
+    for (const agent of after) {
+      if (agent?.tenantId == null || !agent.whatsappConfig) continue;
+      const prev = before.find((a: any) => (a.botId && a.botId === agent.botId) || (a.id && a.id === agent.id));
+      if (prev && sig(prev.whatsappConfig) === sig(agent.whatsappConfig)) continue;
+      const p: Promise<void> = saveToVault(agent.tenantId, whatsappVaultValues(agent.whatsappConfig), agent.agentEmail).finally(() => pendingVaultWrites.delete(p));
+      pendingVaultWrites.add(p);
+    }
+  }
+
   function saveAgents(agentsList: any[]) {
     try {
+      let before: any[] = [];
+      try {
+        before = readAgents();
+      } catch {
+        /* nothing to compare with */
+      }
       setAgentsDoc(agentsList);
+      copyWhatsappChangesToVault(before, agentsList);
       return true;
     } catch (e) {
       console.error("[SERVER] Error saving agents:", e);
@@ -1079,7 +1102,7 @@ export async function createApp() {
   // ---------------- WHATSAPP BUSINESS & N8N API ROUTES ----------------
 
   // Get WhatsApp Business Config for current user/agent
-  app.get("/api/whatsapp/config", requireAuth, (req: any, res: any) => {
+  app.get("/api/whatsapp/config", requireAuth, async (req: any, res: any) => {
     const userEmail = (req.user?.email || "").toLowerCase().trim();
     const botId = (req.query?.botId || "").trim();
     const allAgents = readAgents();
@@ -1098,7 +1121,8 @@ export async function createApp() {
       return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
 
-    const config = targetAgent?.whatsappConfig || {
+    // Another business's agent shows the portal vault's connection (see effectiveWhatsappConfig).
+    const config = targetAgent?.whatsappConfig ? await effectiveWhatsappConfig(targetAgent) : {
       phoneNumberId: "",
       systemUserAccessToken: "",
       wabaId: "",
@@ -1117,7 +1141,7 @@ export async function createApp() {
   });
 
   // Save WhatsApp Business Config
-  app.post("/api/whatsapp/config", requireAuth, (req: any, res: any) => {
+  app.post("/api/whatsapp/config", requireAuth, async (req: any, res: any) => {
     const userEmail = (req.user?.email || "").toLowerCase().trim();
     const { botId, phoneNumberId, systemUserAccessToken, wabaId, phoneNumber, code, appId, status } = req.body;
 
@@ -1162,6 +1186,7 @@ export async function createApp() {
 
     const saved = saveAgents(allAgents);
     if (saved) {
+      await flushVaultWrites(); // the portal vault has it before we answer
       console.log(`[SERVER] Saved WhatsApp Business Config for bot "${allAgents[targetIndex].botId}"`);
       return res.json({
         success: true,
@@ -1531,7 +1556,7 @@ export async function createApp() {
       return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
 
-    const config = agent?.whatsappConfig || {};
+    const config = await effectiveWhatsappConfig(agent);
 
     return res.json({
       botId: agent?.botId || agent?.id || "N/A",
