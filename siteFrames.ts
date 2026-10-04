@@ -91,6 +91,12 @@ export function withFramesTopic(text: string, topic: string): string {
   return base ? `${base}\n\n${topic}` : topic;
 }
 
+// How many frames the bot gets (for the "מסגרות מהפורטל" line in the agent screen)
+export async function siteFramesCount(tenantId: string): Promise<{ count: number; inStock: number }> {
+  const { frames } = await fetchSiteFrames(tenantId);
+  return { count: frames.length, inStock: frames.filter((f) => f.inStock !== false).length };
+}
+
 // The n8n payload fields that carry the media section and the full prompt (see App.tsx's sync)
 const MEDIA_FIELDS = ["Pics"];
 const PROMPT_FIELDS = ["Prompt", "prompt", "businessPrompt", "Business Prompt", "systemPrompt", "System Prompt", "הנחיות", "שכל"];

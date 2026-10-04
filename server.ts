@@ -22,7 +22,7 @@ import {
   toIntlDigits,
 } from "./storage.js";
 import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, ORIGINAL_TENANT } from "./secrets.js";
-import { withSiteFrames, forgetSiteFrames } from "./siteFrames.js";
+import { withSiteFrames, forgetSiteFrames, siteFramesCount } from "./siteFrames.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
 // started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
@@ -978,22 +978,33 @@ export async function createApp() {
     !!agent && (isSuper(user) || isAgentOwnedByUser(agent, String(user?.email || ""), user?.tenantId));
 
   // Get cloud agents list
-  app.get("/api/agents", requireAuth, (req: any, res: any) => {
+  app.get("/api/agents", requireAuth, async (req: any, res: any) => {
     const list = readAgents();
     const userEmail = (req.user?.email || "").toLowerCase().trim();
 
     // A platform administrator sees everything. Everyone else only sees their own agents:
     // listed under their e-mail, or belonging to their business.
     // The last n8n sync (kept for re-sending when the portal's frames change) stays on the server
-    const forBrowser = (agents: any[]) => agents.map(({ n8nSync, ...agent }: any) => agent);
+    // framesStatus: when the portal's frames last reached the bot ({ at, count, inStock }), or
+    // { pending: true } when the business has frames but the agent was never synced since.
+    const forBrowser = (agents: any[]) =>
+      Promise.all(
+        agents.map(async ({ n8nSync, framesSync, ...agent }: any) => {
+          const tenant = agentTenant(agent);
+          if (!tenant) return agent;
+          if (framesSync) return { ...agent, framesStatus: framesSync };
+          const { count } = await siteFramesCount(tenant).catch(() => ({ count: 0 }));
+          return count ? { ...agent, framesStatus: { pending: true, count } } : agent;
+        })
+      );
     if (isSuper(req.user)) {
-      return res.json({ success: true, data: forBrowser(list) });
+      return res.json({ success: true, data: await forBrowser(list) });
     } else {
       let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail, req.user?.tenantId));
       if (filtered.length === 0 && (userEmail.includes("hatova") || userEmail.includes("252") || userEmail === "haoptika")) {
         filtered = [SEED_AGENT_252];
       }
-      return res.json({ success: true, data: forBrowser(filtered) });
+      return res.json({ success: true, data: await forBrowser(filtered) });
     }
   });
 
@@ -1011,9 +1022,11 @@ export async function createApp() {
     const storedAgents = readAgents();
     const keepStoredWhatsappConfig = (agent: any) => {
       const stored = storedAgents.find((a: any) => a.id === agent?.id);
-      let next = stored?.whatsappConfig ? { ...agent, whatsappConfig: stored.whatsappConfig } : agent;
-      // The last n8n sync is server-only (never sent to the browser), so keep the stored copy
+      const { framesStatus, framesSync, ...fromBrowser } = agent || {};
+      let next = stored?.whatsappConfig ? { ...fromBrowser, whatsappConfig: stored.whatsappConfig } : fromBrowser;
+      // The last n8n sync and the frames it carried are written by the server only, so keep the stored copy
       if (stored?.n8nSync) next = { ...next, n8nSync: stored.n8nSync };
+      if (stored?.framesSync) next = { ...next, framesSync: stored.framesSync };
       return next;
     };
 
@@ -2756,17 +2769,20 @@ export async function createApp() {
       }
 
       console.log("[SERVER] Webhook sync successful!", responseText);
+      const syncedAt = new Date().toISOString();
+      const framesSync = tenant ? { at: syncedAt, ...(await siteFramesCount(tenant)) } : undefined;
       if (ownAgent) {
         const allAgents = readAgents();
         const idx = allAgents.findIndex((a: any) => a.id === ownAgent.id);
         if (idx !== -1) {
-          allAgents[idx] = { ...allAgents[idx], n8nSync: { payload: rawPayload, syncedAt: new Date().toISOString() } };
+          allAgents[idx] = { ...allAgents[idx], n8nSync: { payload: rawPayload, syncedAt }, ...(framesSync ? { framesSync } : {}) };
           saveAgents(allAgents);
         }
       }
       return res.json({
         success: true,
         data: responseData,
+        ...(ownAgent && framesSync ? { framesStatus: framesSync } : {}),
       });
 
     } catch (err: any) {
@@ -2801,12 +2817,18 @@ export async function createApp() {
       agents.map(async (a: any) => {
         try {
           const r = await postSyncToN8n(await withSiteFrames(a.n8nSync.payload, tenant));
-          return { botId: a.botId, ok: r.ok, status: r.status };
+          return { id: a.id, botId: a.botId, ok: r.ok, status: r.status };
         } catch (err: any) {
-          return { botId: a.botId, ok: false, error: err?.message };
+          return { id: a.id, botId: a.botId, ok: false, error: err?.message };
         }
       })
     );
+    const sent = results.filter((r) => r.ok).map((r) => r.id);
+    if (sent.length) {
+      const framesSync = { at: new Date().toISOString(), ...(await siteFramesCount(tenant)) };
+      const allAgents = readAgents();
+      saveAgents(allAgents.map((a: any) => (sent.includes(a.id) ? { ...a, framesSync } : a)));
+    }
     console.log(`[SERVER] Re-synced ${results.length} agent(s) of business ${tenant} after a frames change:`, results);
     res.json({ ok: true, agents: results });
   });
