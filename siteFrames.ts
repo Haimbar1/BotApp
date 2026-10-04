@@ -14,6 +14,7 @@ interface SiteFrame {
   id: string;
   name: string;
   style?: string;
+  description?: string;
   price: number;
 }
 
@@ -54,15 +55,17 @@ function framesTopic(frames: SiteFrame[], siteUrl: string): string {
   if (!frames.length) return "";
   const lines = [
     FRAMES_TOPIC_HEADER,
-    "- תיאור: המסגרות שאפשר לקנות בחנות ולמדוד על הפנים באתר — שם הדגם, סגנון ומחיר.",
-    "- הנחיות: כשלקוח שואל על מסגרות, דגמים או מחירים, או מבקש לראות משקפיים — הצג לו עד 3 דגמים מתאימים מהרשימה הזו בלבד: שם, מחיר ותמונה (שלח את קישור התמונה כמו שהוא)." +
+    "- תיאור: המסגרות שאפשר לקנות בחנות ולמדוד על הפנים באתר — שם הדגם, סגנון, מחיר ותיאור.",
+    "- הנחיות: כשלקוח שואל על מסגרות, דגמים או מחירים, או מבקש לראות משקפיים — הצג לו עד 3 דגמים מתאימים מהרשימה הזו בלבד: שם, מחיר ותמונה (שלח את קישור התמונה כמו שהוא). בחר לפי התיאור של כל דגם את מה שמתאים למה שהלקוח ביקש, והשתמש בתיאור כדי לספר עליו." +
       (siteUrl ? " הצע לו למדוד את המסגרת על הפנים שלו דרך הקישור של הדגם." : "") +
       " אל תמציא דגמים, מחירים או תמונות שלא מופיעים כאן.",
     "- דגמים זמינים:",
   ];
   frames.forEach((f, i) => {
     lines.push(`  ${i + 1}. ${f.name}`);
-    lines.push(`     - תיאור: ${f.style ? `${f.style} · ` : ""}${f.price} ₪`);
+    // One line: the media section's format reads a single "- תיאור:" line per model
+    const about = String(f.description || "").replace(/\s+/g, " ").trim();
+    lines.push(`     - תיאור: ${f.style ? `${f.style} · ` : ""}${f.price} ₪${about ? ` — ${about}` : ""}`);
     lines.push(`     - תמונה: ${PORTAL_URL}/api/public/site/frames/${f.id}.png`);
     if (siteUrl) lines.push(`     - קישור: ${siteUrl}/?page=tryon&frame=${f.id}`);
   });
