@@ -21,7 +21,8 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues } from "./secrets.js";
+import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, ORIGINAL_TENANT } from "./secrets.js";
+import { withSiteFrames, forgetSiteFrames } from "./siteFrames.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
 // started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
@@ -983,14 +984,16 @@ export async function createApp() {
 
     // A platform administrator sees everything. Everyone else only sees their own agents:
     // listed under their e-mail, or belonging to their business.
+    // The last n8n sync (kept for re-sending when the portal's frames change) stays on the server
+    const forBrowser = (agents: any[]) => agents.map(({ n8nSync, ...agent }: any) => agent);
     if (isSuper(req.user)) {
-      return res.json({ success: true, data: list });
+      return res.json({ success: true, data: forBrowser(list) });
     } else {
       let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail, req.user?.tenantId));
       if (filtered.length === 0 && (userEmail.includes("hatova") || userEmail.includes("252") || userEmail === "haoptika")) {
         filtered = [SEED_AGENT_252];
       }
-      return res.json({ success: true, data: filtered });
+      return res.json({ success: true, data: forBrowser(filtered) });
     }
   });
 
@@ -1008,7 +1011,10 @@ export async function createApp() {
     const storedAgents = readAgents();
     const keepStoredWhatsappConfig = (agent: any) => {
       const stored = storedAgents.find((a: any) => a.id === agent?.id);
-      return stored?.whatsappConfig ? { ...agent, whatsappConfig: stored.whatsappConfig } : agent;
+      let next = stored?.whatsappConfig ? { ...agent, whatsappConfig: stored.whatsappConfig } : agent;
+      // The last n8n sync is server-only (never sent to the browser), so keep the stored copy
+      if (stored?.n8nSync) next = { ...next, n8nSync: stored.n8nSync };
+      return next;
     };
 
     if (isSuper(req.user)) {
@@ -2660,23 +2666,25 @@ export async function createApp() {
     }
   });
 
-  // Proxy payload POST to n8n Webhook
-  app.post("/api/sync", requireAuth, async (req, res) => {
-    try {
-      const payload = req.body;
-      const defaultUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
-      let webhookUrl = payload.webhookUrl || defaultUrl;
+  // ---- n8n agent sync ----
+  const N8N_SYNC_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/be853a5a-7092-4d75-88e8-d846e604e661";
 
-      // Add botId as parameter as requested
-      const botId = payload.botId || "";
-      if (botId) {
-        const hasQuery = webhookUrl.includes("?");
-        webhookUrl += `${hasQuery ? "&" : "?"}botId=${encodeURIComponent(botId)}`;
-      }
+  // POSTs an agent's sync payload to n8n (payload.webhookUrl or the default), with ?botId= and a
+  // fallback between the /webhook/ and /webhook-test/ URLs on 404.
+  async function postSyncToN8n(payload: any): Promise<Response> {
+    let webhookUrl = payload.webhookUrl || N8N_SYNC_URL;
 
-      console.log("[SERVER] Syncing agent configuration to n8n webhook:", webhookUrl);
+    // Add botId as parameter as requested
+    const botId = payload.botId || "";
+    if (botId) {
+      const hasQuery = webhookUrl.includes("?");
+      webhookUrl += `${hasQuery ? "&" : "?"}botId=${encodeURIComponent(botId)}`;
+    }
 
-      let response = await fetch(webhookUrl, {
+    console.log("[SERVER] Syncing agent configuration to n8n webhook:", webhookUrl);
+
+    const send = (url: string) =>
+      fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2686,29 +2694,49 @@ export async function createApp() {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok && response.status === 404) {
-        let altUrl = "";
-        if (webhookUrl.includes("/webhook-test/")) {
-          altUrl = webhookUrl.replace("/webhook-test/", "/webhook/");
-        } else if (webhookUrl.includes("/webhook/")) {
-          altUrl = webhookUrl.replace("/webhook/", "/webhook-test/");
-        }
-        if (altUrl) {
-          console.log(`[SERVER] Primary webhook returned 404. Fallback attempt to alternate URL: ${altUrl}`);
-          const altRes = await fetch(altUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/json, text/plain, */*",
-            },
-            body: JSON.stringify(payload),
-          });
-          if (altRes.ok) {
-            response = altRes;
-          }
+    let response = await send(webhookUrl);
+    if (!response.ok && response.status === 404) {
+      let altUrl = "";
+      if (webhookUrl.includes("/webhook-test/")) {
+        altUrl = webhookUrl.replace("/webhook-test/", "/webhook/");
+      } else if (webhookUrl.includes("/webhook/")) {
+        altUrl = webhookUrl.replace("/webhook/", "/webhook-test/");
+      }
+      if (altUrl) {
+        console.log(`[SERVER] Primary webhook returned 404. Fallback attempt to alternate URL: ${altUrl}`);
+        const altRes = await send(altUrl);
+        if (altRes.ok) {
+          response = altRes;
         }
       }
+    }
+    return response;
+  }
+
+  // The portal business an agent belongs to. Agents created through the portal carry it; the
+  // original optics bot (created before the portal) is the portal's original business.
+  const agentTenant = (agent: any): string | null =>
+    agent?.tenantId != null
+      ? String(agent.tenantId)
+      : agent?.id === "agent_bot_generic_252" || agent?.botId === "bot_generic_252"
+        ? ORIGINAL_TENANT
+        : null;
+
+  const findAgentByBotId = (botId: string) =>
+    botId ? readAgents().find((a: any) => a.botId === botId || a.id === botId) : undefined;
+
+  // Proxy payload POST to n8n Webhook. The business's frames from the portal are added to the media
+  // section and prompt on the way (see siteFrames.ts), and the payload is kept so it can be re-sent
+  // when the frames change.
+  app.post("/api/sync", requireAuth, async (req: any, res) => {
+    try {
+      const rawPayload = req.body;
+      const agent = findAgentByBotId(String(rawPayload?.["Bot ID"] || rawPayload?.botId || "").trim());
+      const ownAgent = agent && canAccessAgent(req.user, agent) ? agent : null;
+      const tenant = agentTenant(ownAgent);
+      const payload = tenant ? await withSiteFrames(rawPayload, tenant) : rawPayload;
+
+      const response = await postSyncToN8n(payload);
 
       const responseText = await response.text();
       let responseData;
@@ -2728,6 +2756,14 @@ export async function createApp() {
       }
 
       console.log("[SERVER] Webhook sync successful!", responseText);
+      if (ownAgent) {
+        const allAgents = readAgents();
+        const idx = allAgents.findIndex((a: any) => a.id === ownAgent.id);
+        if (idx !== -1) {
+          allAgents[idx] = { ...allAgents[idx], n8nSync: { payload: rawPayload, syncedAt: new Date().toISOString() } };
+          saveAgents(allAgents);
+        }
+      }
       return res.json({
         success: true,
         data: responseData,
@@ -2741,6 +2777,38 @@ export async function createApp() {
         details: err?.message || String(err),
       });
     }
+  });
+
+  // The portal calls this after a business's website frames changed (added / hidden / deleted):
+  // each of the business's agents is re-sent to n8n — its last sync, with the current frames.
+  // Server-to-server: a short-lived JWT { typ: 'site-frames-changed', tenantId } signed with
+  // SSO_SHARED_SECRET.
+  app.post("/api/portal/site-frames-changed", async (req: any, res: any) => {
+    const secret = process.env.SSO_SHARED_SECRET;
+    if (!secret) return res.status(500).json({ error: "sso-not-configured" });
+    let claims: any;
+    try {
+      claims = jwt.verify(String(req.body?.token || ""), secret);
+    } catch {
+      return res.status(401).json({ error: "invalid-token" });
+    }
+    const tenant = claims?.tenantId != null ? String(claims.tenantId) : "";
+    if (claims?.typ !== "site-frames-changed" || !tenant) return res.status(400).json({ error: "bad-request" });
+
+    forgetSiteFrames(tenant);
+    const agents = readAgents().filter((a: any) => agentTenant(a) === tenant && a.n8nSync?.payload);
+    const results = await Promise.all(
+      agents.map(async (a: any) => {
+        try {
+          const r = await postSyncToN8n(await withSiteFrames(a.n8nSync.payload, tenant));
+          return { botId: a.botId, ok: r.ok, status: r.status };
+        } catch (err: any) {
+          return { botId: a.botId, ok: false, error: err?.message };
+        }
+      })
+    );
+    console.log(`[SERVER] Re-synced ${results.length} agent(s) of business ${tenant} after a frames change:`, results);
+    res.json({ ok: true, agents: results });
   });
 
   // Fetch fields content FROM n8n (GET/POST URL Webhook payload with POST fallback)
