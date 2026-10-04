@@ -21,6 +21,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
+import { tenantSecret } from "./secrets.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
 // started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
@@ -65,6 +66,20 @@ export async function createApp() {
     }
   } else {
     console.warn("[SERVER] Warning: GEMINI_API_KEY environment variable is not defined.");
+  }
+
+  // A business that entered its own Gemini key in the portal vault ("מזהים וחיבורים") uses it;
+  // everyone else uses the client above (SmartEsek's key). One client per key.
+  const aiByKey = new Map<string, GoogleGenAI>();
+  async function geminiFor(tenantId: string | undefined): Promise<GoogleGenAI | null> {
+    const key = await tenantSecret("GEMINI_API_KEY", tenantId);
+    if (!key || key === geminiApiKey) return ai;
+    let client = aiByKey.get(key);
+    if (!client) {
+      client = new GoogleGenAI({ apiKey: key, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+      aiByKey.set(key, client);
+    }
+    return client;
   }
 
   // Middleware
@@ -3434,6 +3449,8 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
         answers // object of custom answers
       } = req.body;
 
+      const ai = await geminiFor((req as any).user?.tenantId);
+
       if (!ai) {
         console.log("[SERVER] GoogleGenAI client NOT initialized. Generating fallback prompts locally.");
         const fallback = generateFallbackPrompts(templateId, businessName, ownerName, answers);
@@ -3560,6 +3577,8 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
         });
       }
 
+      const ai = await geminiFor((req as any).user?.tenantId);
+
       if (!ai) {
         console.warn("[SERVER] GoogleGenAI client NOT initialized for improvement. Using simple fallback.");
         const enhancedText = `${currentValue || ""}\n\n[הערת שיפור AI (מצב לא מקוון)]: שופר בהתאם לבקשה "${instruction || "שיפור סגנון"}"`;
@@ -3662,6 +3681,8 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
       }
 
       const safeParts = parts || {};
+
+      const ai = await geminiFor((req as any).user?.tenantId);
 
       if (!ai) {
         console.warn("[SERVER] GoogleGenAI client NOT initialized, using deep semantic prompt synthesizer.");
