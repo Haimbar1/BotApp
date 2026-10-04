@@ -9,6 +9,8 @@ export interface AgentConfig {
   key: string;
   leadFollowUpDays?: string;
   lastSyncedAt?: string;
+  // Set by the server: when the portal's frames last reached the bot, or pending (never synced since)
+  framesStatus?: { at?: string; count: number; inStock?: number; pending?: boolean };
   welcomeMessage?: string;
   botIdentity?: string;
   coursesInfo?: string;

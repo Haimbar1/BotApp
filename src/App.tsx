@@ -220,6 +220,31 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
 
 let globalSaveTimeoutId: any = null;
 
+// The eyeglass frames from the portal (אתר ← מסגרות) are added to the bot automatically on every sync
+// and whenever they change in the portal — this line shows when they last reached the bot.
+function SiteFramesLine({ status }: { status?: AgentConfig["framesStatus"] }) {
+  if (!status || !status.count) return null;
+  if (status.pending) {
+    return (
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-300" dir="rtl">
+        👓 מסגרות מהפורטל: {status.count} דגמים — עוד לא נשלחו לבוט. לחץ "עדכן וסנכרן ל-Webhook" פעם אחת, ומאז הם יתעדכנו לבד.
+      </div>
+    );
+  }
+  const at = status.at ? new Date(status.at) : null;
+  const when = at && !isNaN(at.getTime())
+    ? `${at.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })} · ${at.toLocaleDateString("he-IL")}`
+    : "";
+  const outOfStock = status.inStock != null ? status.count - status.inStock : 0;
+  return (
+    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300" dir="rtl">
+      👓 מסגרות מהפורטל: {status.count} דגמים{outOfStock > 0 ? ` (${outOfStock} לא במלאי)` : ""}
+      {when ? ` · עודכן בבוט לאחרונה ${when}` : ""}
+      <span className="block font-medium text-emerald-200/70 mt-0.5">מתעדכן לבד בכל שינוי מסגרות בפורטל.</span>
+    </div>
+  );
+}
+
 export default function App() {
   // Language & Translation states
   const [language, setLanguage] = useState<Language>(() => {
@@ -4058,6 +4083,7 @@ ${videos || "(לא הוגדר)"}
 
     let syncSuccess = false;
     let syncErrorMessage = "";
+    let framesStatus: AgentConfig["framesStatus"] | undefined;
 
     // -------------------------------------------------------------
     // Tier 1: Try Server Backend Proxy (/api/sync)
@@ -4077,6 +4103,7 @@ ${videos || "(לא הוגדר)"}
         const data = await response.json();
         if (data.success) {
           syncSuccess = true;
+          if (data.framesStatus) framesStatus = data.framesStatus;
           console.log(`[CLIENT] [Tier 1] Webhook sync succeeded via backend proxy.`);
         } else {
           syncErrorMessage = data.error || "נכשל בסנכרון הנתונים";
@@ -4130,7 +4157,7 @@ ${videos || "(לא הוגדר)"}
       setAgents(prevAgents => {
         const freshUpdated = prevAgents.map(agent => {
           if (agent.id === targetId) {
-            return { ...agent, lastSyncedAt: nowStr };
+            return { ...agent, lastSyncedAt: nowStr, ...(framesStatus ? { framesStatus } : {}) };
           }
           return agent;
         });
@@ -8153,6 +8180,7 @@ ${videos || "(לא הוגדר)"}
                         {/* Textarea or Firebase Media Uploader Component */}
                         {(sec.key === "imagesInfo" || sec.key === "videosInfo") ? (
                           <div className="flex-1 flex flex-col gap-3 min-h-[350px]">
+                            {sec.key === "imagesInfo" && <SiteFramesLine status={agents.find(a => a.id === activeId)?.framesStatus} />}
                             <FirebaseMediaUploader
                               mediaType={sec.key === "imagesInfo" ? "image" : "video"}
                               title={sec.title}
