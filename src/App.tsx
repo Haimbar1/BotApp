@@ -4185,6 +4185,7 @@ ${videos || "(לא הוגדר)"}
     let syncSuccess = false;
     let syncErrorMessage = "";
     let framesStatus: AgentConfig["framesStatus"] | undefined;
+    let syncedImagesInfo: string | undefined; // the media section with the portal's frames, as the server stored it
 
     // -------------------------------------------------------------
     // Tier 1: Try Server Backend Proxy (/api/sync)
@@ -4205,6 +4206,7 @@ ${videos || "(לא הוגדר)"}
         if (data.success) {
           syncSuccess = true;
           if (data.framesStatus) framesStatus = data.framesStatus;
+          if (typeof data.imagesInfo === "string") syncedImagesInfo = data.imagesInfo;
           console.log(`[CLIENT] [Tier 1] Webhook sync succeeded via backend proxy.`);
         } else {
           syncErrorMessage = data.error || "נכשל בסנכרון הנתונים";
@@ -4258,7 +4260,12 @@ ${videos || "(לא הוגדר)"}
       setAgents(prevAgents => {
         const freshUpdated = prevAgents.map(agent => {
           if (agent.id === targetId) {
-            return { ...agent, lastSyncedAt: nowStr, ...(framesStatus ? { framesStatus } : {}) };
+            return {
+              ...agent,
+              lastSyncedAt: nowStr,
+              ...(framesStatus ? { framesStatus } : {}),
+              ...(syncedImagesInfo !== undefined ? { imagesInfo: syncedImagesInfo } : {}),
+            };
           }
           return agent;
         });
@@ -4266,6 +4273,13 @@ ${videos || "(לא הוגדר)"}
         return freshUpdated;
       });
       setDirtyAgents(prev => ({ ...prev, [targetId]: false }));
+      if (syncedImagesInfo !== undefined && targetId === activeId) {
+        setImagesInfo(syncedImagesInfo);
+        setBusinessPrompt(compilePromptFromParts(
+          welcomeMessage, botIdentity, coursesInfo, kidsCourses, conversationFlow, writingStyle,
+          faqAnswers, whatNotToDo, syllabusLinks, humanEscalation, syncedImagesInfo, videosInfo
+        ));
+      }
     } else {
       setSyncStatus("error");
       setSyncMessage(syncErrorMessage || "נכשל בסנכרון השכל וההגדרות מול ה-Webhook");
