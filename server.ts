@@ -23,7 +23,7 @@ import {
   toIntlDigits,
 } from "./storage.js";
 import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, ORIGINAL_TENANT } from "./secrets.js";
-import { withSiteFrames, forgetSiteFrames, siteFramesCount } from "./siteFrames.js";
+import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -989,16 +989,28 @@ export async function createApp() {
     // The last n8n sync (kept for re-sending when the portal's frames change) stays on the server
     // framesStatus: when the portal's frames last reached the bot ({ at, count, inStock }), or
     // { pending: true } when the business has frames but the agent was never synced since.
-    const forBrowser = (agents: any[]) =>
-      Promise.all(
-        agents.map(async ({ n8nSync, framesSync, ...agent }: any) => {
-          const tenant = agentTenant(agent);
-          if (!tenant) return agent;
+    // The portal's current frames are also shown in the media section (imagesInfo); an agent whose
+    // section had an older list is saved with the current one.
+    const forBrowser = async (agents: any[]) => {
+      const updatedImages = new Map<string, { imagesInfo: string; framesTopic: string }>();
+      const out = await Promise.all(
+        agents.map(async ({ n8nSync, framesSync, framesTopic, ...stored }: any) => {
+          const tenant = agentTenant(stored);
+          if (!tenant) return stored;
+          const topic = await siteFramesTopic(tenant).catch(() => null);
+          const images = agentImagesWithFrames(stored, topic);
+          if (images !== null && topic !== null) updatedImages.set(stored.id, { imagesInfo: images, framesTopic: topic });
+          const agent = images !== null ? { ...stored, imagesInfo: images } : stored;
           if (framesSync) return { ...agent, framesStatus: framesSync };
           const { count } = await siteFramesCount(tenant).catch(() => ({ count: 0 }));
           return count ? { ...agent, framesStatus: { pending: true, count } } : agent;
         })
       );
+      if (updatedImages.size) {
+        saveAgents(readAgents().map((a: any) => (updatedImages.has(a.id) ? { ...a, ...updatedImages.get(a.id) } : a)));
+      }
+      return out;
+    };
     if (isSuper(req.user)) {
       return res.json({ success: true, data: await forBrowser(list) });
     } else {
@@ -1024,11 +1036,18 @@ export async function createApp() {
     const storedAgents = readAgents();
     const keepStoredWhatsappConfig = (agent: any) => {
       const stored = storedAgents.find((a: any) => a.id === agent?.id);
-      const { framesStatus, framesSync, ...fromBrowser } = agent || {};
+      const { framesStatus, framesSync, framesTopic, ...fromBrowser } = agent || {};
       let next = stored?.whatsappConfig ? { ...fromBrowser, whatsappConfig: stored.whatsappConfig } : fromBrowser;
       // The last n8n sync and the frames it carried are written by the server only, so keep the stored copy
       if (stored?.n8nSync) next = { ...next, n8nSync: stored.n8nSync };
       if (stored?.framesSync) next = { ...next, framesSync: stored.framesSync };
+      // The portal's frames topic in the media section is the server's too: a browser copy from before
+      // the frames changed (or one that dropped the topic) gets the stored topic back
+      if (stored?.framesTopic != null) {
+        next = { ...next, framesTopic: stored.framesTopic };
+        const images = agentImagesWithFrames(next, stored.framesTopic);
+        if (images !== null) next = { ...next, imagesInfo: images };
+      }
       return next;
     };
 
@@ -2793,11 +2812,22 @@ export async function createApp() {
       console.log("[SERVER] Webhook sync successful!", responseText);
       const syncedAt = new Date().toISOString();
       const framesSync = tenant ? { at: syncedAt, ...(await siteFramesCount(tenant)) } : undefined;
+      // The frames that were sent are also kept in the agent's media section, so the screen shows them
+      const topic = tenant ? await siteFramesTopic(tenant).catch(() => null) : null;
+      let imagesInfo: string | undefined;
       if (ownAgent) {
         const allAgents = readAgents();
         const idx = allAgents.findIndex((a: any) => a.id === ownAgent.id);
         if (idx !== -1) {
-          allAgents[idx] = { ...allAgents[idx], n8nSync: { payload: rawPayload, syncedAt }, ...(framesSync ? { framesSync } : {}) };
+          const images = agentImagesWithFrames(allAgents[idx], topic);
+          if (images !== null) imagesInfo = images;
+          allAgents[idx] = {
+            ...allAgents[idx],
+            n8nSync: { payload: rawPayload, syncedAt },
+            ...(framesSync ? { framesSync } : {}),
+            ...(topic !== null ? { framesTopic: topic } : {}),
+            ...(imagesInfo !== undefined ? { imagesInfo } : {}),
+          };
           saveAgents(allAgents);
         }
       }
@@ -2805,6 +2835,7 @@ export async function createApp() {
         success: true,
         data: responseData,
         ...(ownAgent && framesSync ? { framesStatus: framesSync } : {}),
+        ...(imagesInfo !== undefined ? { imagesInfo } : {}),
       });
 
     } catch (err: any) {
@@ -2834,6 +2865,17 @@ export async function createApp() {
     if (claims?.typ !== "site-frames-changed" || !tenant) return res.status(400).json({ error: "bad-request" });
 
     forgetSiteFrames(tenant);
+    // Every agent of the business shows the new list in its media section, synced to n8n or not
+    const topic = await siteFramesTopic(tenant).catch(() => null);
+    if (topic !== null) {
+      saveAgents(
+        readAgents().map((a: any) => {
+          if (agentTenant(a) !== tenant) return a;
+          const images = agentImagesWithFrames(a, topic);
+          return { ...a, framesTopic: topic, ...(images !== null ? { imagesInfo: images } : {}) };
+        })
+      );
+    }
     const agents = readAgents().filter((a: any) => agentTenant(a) === tenant && a.n8nSync?.payload);
     const results = await Promise.all(
       agents.map(async (a: any) => {
