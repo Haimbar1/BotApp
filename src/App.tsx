@@ -63,6 +63,7 @@ import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
 import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText, getWhatsAppWebUrl } from "./lib/sourceHelper";
 import { synthesizePromptFixes, sanitizeBlockContent } from "./lib/promptDiagnosis";
 import { withSiteFaq, type SiteFaq } from "./lib/siteFaq";
+import { withWebsiteImagesTopic } from "./lib/websiteImagesTopic";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
 export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
@@ -2239,6 +2240,18 @@ export default function App() {
   };
 
   // Function to build standard high-quality prompts locally (fallback or no-AI path)
+  // The scanned site's content that the wizard adds itself, whatever produced the prompts: every
+  // question of the site's FAQ, and the site's images as their own topic in the media section. Done
+  // when the preview is shown, so the bot is created exactly as previewed (and edited) there.
+  const withScannedSiteContent = (prompts: any) => {
+    if (!prompts) return prompts;
+    return {
+      ...prompts,
+      faqAnswers: withSiteFaq(prompts.faqAnswers || "", wizardSiteFaqs),
+      imagesInfo: wizardImagesTopic ? withWebsiteImagesTopic(prompts.imagesInfo || "", wizardImagesTopic) : prompts.imagesInfo || "",
+    };
+  };
+
   const handleGenerateDefaultLocalPrompts = () => {
     const biz = wizardBusinessName?.trim() || "העסק שלנו";
     const own = wizardOwnerName?.trim() || "מנהל הסוכנות";
@@ -2300,7 +2313,7 @@ export default function App() {
     };
 
     const targetTemplate = defaultPromptsByTemplate[wizardTemplateId] || defaultPromptsByTemplate.sales;
-    setGeneratedPrompts(targetTemplate);
+    setGeneratedPrompts(withScannedSiteContent(targetTemplate));
     setWizardStep(3);
   };
 
@@ -2335,7 +2348,7 @@ export default function App() {
       }
 
       if (res.ok && data?.success) {
-        setGeneratedPrompts(data.prompts);
+        setGeneratedPrompts(withScannedSiteContent(data.prompts));
         setWizardStep(3); // Advance to preview
       } else {
         alert(data?.error || `נכשל ביצירת הפרומפטים (סטטוס ${res.status}). ודא כי השרת זמין ומפתח Gemini API מוגדר.`);
@@ -2371,13 +2384,11 @@ export default function App() {
       const newKidsCourses = generatedPrompts?.kidsCourses || "";
       const newConversationFlow = generatedPrompts?.conversationFlow || "";
       const newWritingStyle = generatedPrompts?.writingStyle || "";
-      // Every question of the scanned site's FAQ goes into the bot's FAQ block
-      const newFaqAnswers = withSiteFaq(generatedPrompts?.faqAnswers || "", wizardSiteFaqs);
+      const newFaqAnswers = generatedPrompts?.faqAnswers || "";
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
-      // The scanned site's images go into the media section as their own topic
-      const newImagesInfo = [generatedPrompts?.imagesInfo || "", wizardImagesTopic].filter(t => t.trim()).join("\n\n");
+      const newImagesInfo = generatedPrompts?.imagesInfo || "";
       const newVideosInfo = generatedPrompts?.videosInfo || "";
 
       // Compile dynamic unified businessPrompt based on the generated parts!
@@ -7873,34 +7884,37 @@ ${videos || "(לא הוגדר)"}
               </div>
 
               {/* AI Diagnose & Auto-Fix Panel — describe a problem/capability in free text, AI decides which blocks to change */}
-              <div className="p-3 sm:p-4 border-b border-slate-850 bg-[#090a10]">
-                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+              <div className="px-3 sm:px-4 pt-2 pb-1 bg-[#090a10]">
+                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-xl px-3 py-2 flex flex-col gap-2">
+                  {/* One low row: title, free-text request, button (the explanation is in the ⓘ tooltip) */}
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <div className="flex items-center gap-1.5 shrink-0 sm:w-[240px] whitespace-nowrap">
                       <Stethoscope className="w-4 h-4 text-sky-400 shrink-0" />
-                      <span className="text-xs font-black text-sky-300">יש בעיה בבוט? ספר/י לנו בחופשיות ונתקן אוטומטית</span>
+                      <span className="text-xs font-black text-sky-300">יש בעיה בבוט? נתקן אוטומטית</span>
+                      <span
+                        className="text-slate-500 hover:text-sky-300 cursor-help"
+                        title={'לדוגמה: "הבוט לא מפרט את כתובת האתר, לא כששואלים ולא ביוזמתו, הוא רק מפנה לפייסבוק". המערכת תזהה בעצמה אילו חלקים בפרומפט צריך לשנות, תבצע את השינוי ותסביר בקצרה מה שונה — ואז רק בודקים ושומרים.'}
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                      </span>
                     </div>
-                    <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-500/20 rounded-full font-black px-2 py-0.5">אבחון חכם</span>
-                  </div>
-                  <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
-                    לדוגמה: "הבוט לא מפרט את כתובת האתר, לא כששואלים ולא ביוזמתו, הוא רק מפנה לפייסבוק שזה כלום". המערכת תזהה בעצמה אילו חלקים בפרומפט צריך לשנות, תבצע את השינוי, ותסביר לך בקצרה מה שונה — ואז תצטרך/י רק לבדוק ולשמור.
-                  </p>
-
-                  <div className="flex flex-col sm:flex-row gap-2 items-stretch">
-                    <textarea
+                    <input
+                      type="text"
                       value={issueDescription}
                       onChange={(e) => setIssueDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isDiagnosingIssue && issueDescription.trim()) diagnoseAndFixAgentIssue();
+                      }}
                       placeholder="תארו כאן את הבעיה או היכולת החדשה שתרצו..."
                       dir="rtl"
-                      rows={2}
                       disabled={isDiagnosingIssue}
-                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 resize-none disabled:opacity-60"
+                      className="flex-1 min-w-0 px-3 py-1.5 bg-[#050608] border border-slate-800 rounded-lg text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 disabled:opacity-60"
                     />
                     <button
                       type="button"
                       disabled={isDiagnosingIssue || !issueDescription.trim()}
                       onClick={diagnoseAndFixAgentIssue}
-                      className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[130px] ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[120px] ${
                         isDiagnosingIssue
                           ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
                           : issueDescription.trim()
@@ -7973,40 +7987,45 @@ ${videos || "(לא הוגדר)"}
               </div>
 
               {/* Refresh from website — re-scan the business's site after it was updated and refresh the knowledge blocks */}
-              <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-b border-slate-850 bg-[#090a10]">
-                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3" dir="rtl">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+              <div className="px-3 sm:px-4 pt-1 pb-2 border-b border-slate-850 bg-[#090a10]">
+                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-xl px-3 py-2" dir="rtl">
+                  {/* One low row: title, site address, button (the explanation and last update are in the ⓘ tooltip) */}
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <div className="flex items-center gap-1.5 shrink-0 sm:w-[240px] whitespace-nowrap">
                       <Globe className="w-4 h-4 text-sky-400 shrink-0" />
-                      <span className="text-xs font-black text-sky-300">עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
+                      <span className="text-xs font-black text-sky-300">עדכנת את האתר? עדכן/י את הבוט</span>
+                      {(() => {
+                        const at = agents.find(a => a.id === activeId)?.websiteRefreshedAt;
+                        return (
+                          <span
+                            className="text-slate-500 hover:text-sky-300 cursor-help"
+                            title={
+                              'המערכת תסרוק מחדש את האתר ותעדכן רק את בלוקי הידע (שירותים ומחירים, קהל יעד, שאלות נפוצות וקישורים) ואת התמונות מהאתר בגלריית המדיה — עם תיאור לכל תמונה. זהות הבוט, הודעת הפתיחה, זרימת השיחה וחוקי הברזל לא ישתנו. אחרי העדכון אפשר לבדוק, לבטל או ללחוץ "שמור 💾".' +
+                              (at ? `\n\nעודכן לאחרונה: ${new Date(at).toLocaleString("he-IL")}` : "")
+                            }
+                          >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                          </span>
+                        );
+                      })()}
                     </div>
-                    {(() => {
-                      const at = agents.find(a => a.id === activeId)?.websiteRefreshedAt;
-                      return at ? (
-                        <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-500/20 rounded-full font-black px-2 py-0.5">
-                          עודכן לאחרונה: {new Date(at).toLocaleString("he-IL")}
-                        </span>
-                      ) : null;
-                    })()}
-                  </div>
-                  <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
-                    המערכת תסרוק מחדש את האתר ותעדכן רק את בלוקי הידע (שירותים ומחירים, קהל יעד, שאלות נפוצות וקישורים) ואת התמונות מהאתר בגלריית המדיה — עם תיאור לכל תמונה, כדי שהבוט יצרף אותן לתשובות רלוונטיות. זהות הבוט, הודעת הפתיחה, זרימת השיחה וחוקי הברזל לא ישתנו. אחרי העדכון תוכלו לבדוק, לבטל או ללחוץ "שמור 💾".
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                     <input
                       type="text"
                       value={websiteRefreshUrl}
                       onChange={(e) => setWebsiteRefreshUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isRefreshingFromWebsite && websiteRefreshUrl.trim()) refreshAgentFromWebsite();
+                      }}
                       placeholder="https://www.your-business.co.il"
                       dir="ltr"
                       disabled={isRefreshingFromWebsite}
-                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 disabled:opacity-60"
+                      className="flex-1 min-w-0 px-3 py-1.5 bg-[#050608] border border-slate-800 rounded-lg text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 disabled:opacity-60"
                     />
                     <button
                       type="button"
                       disabled={isRefreshingFromWebsite || !websiteRefreshUrl.trim()}
                       onClick={refreshAgentFromWebsite}
-                      className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[130px] ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[120px] ${
                         isRefreshingFromWebsite
                           ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
                           : websiteRefreshUrl.trim()
@@ -8861,6 +8880,21 @@ ${videos || "(לא הוגדר)"}
                     </button>
                   ) : wizardStep === 2 ? (
                     <div className="flex items-center gap-2 select-none">
+                      {generatedPrompts && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Back to the prompts already made (with any edits); a new scan's images/FAQ are added
+                            setGeneratedPrompts((prev: any) => withScannedSiteContent(prev));
+                            setWizardStep(3);
+                          }}
+                          disabled={isGeneratingPrompts}
+                          className="px-4 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow transition"
+                          title="חזרה לפרומפטים שכבר נוצרו (כולל העריכות שלך) בלי ליצור אותם מחדש"
+                        >
+                          המשך בלי חילול מחדש ➜
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={handleGenerateDefaultLocalPrompts}

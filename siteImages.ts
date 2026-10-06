@@ -5,8 +5,9 @@
 // is owned by this module: it is replaced on every refresh, the rest of the section is never touched.
 import { Type } from "@google/genai";
 
-// Every website topic starts with this (followed by the business name), so a refresh can find it
-export const WEBSITE_IMAGES_TOPIC_PREFIX = "### נושא: תמונות מהאתר";
+// The topic's header and its replacement live in src/lib (the agent wizard uses them too)
+import { WEBSITE_IMAGES_TOPIC_PREFIX, withWebsiteImagesTopic } from "./src/lib/websiteImagesTopic.js";
+export { WEBSITE_IMAGES_TOPIC_PREFIX, withWebsiteImagesTopic };
 
 export interface SiteImage {
   url: string;
@@ -337,32 +338,4 @@ export function websiteImagesTopic(images: DescribedImage[], siteUrl: string, bu
     lines.push(`     - תמונה: ${img.url}`);
   });
   return lines.join("\n");
-}
-
-// Replaces the previous website topic (its header up to the next markdown header) with the new one,
-// in the same place; a first topic goes at the end. An empty topic removes the old one.
-export function withWebsiteImagesTopic(text: string, topic: string): string {
-  const lines = String(text || "").split("\n");
-  const out: string[] = [];
-  let skipping = false;
-  let insertAt = -1;
-  for (const line of lines) {
-    if (line.trim().startsWith(WEBSITE_IMAGES_TOPIC_PREFIX)) {
-      skipping = true;
-      if (insertAt < 0) insertAt = out.length;
-      continue;
-    }
-    if (skipping && /^\s*#{1,6}\s/.test(line)) skipping = false;
-    if (!skipping) out.push(line);
-  }
-  if (topic) {
-    if (insertAt < 0) {
-      while (out.length && !out[out.length - 1].trim()) out.pop();
-      if (out.length) out.push("");
-      out.push(topic);
-    } else {
-      out.splice(insertAt, 0, topic, "");
-    }
-  }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

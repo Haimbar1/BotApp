@@ -3236,6 +3236,15 @@ export async function createApp() {
     return lists.flat().filter((f) => (seen.has(f.q) ? false : (seen.add(f.q), true)));
   };
 
+  // Gemini sometimes writes a line break inside a JSON string as an escaped "\\n" (it then shows as
+  // a literal \n in the prompt). Turns those back into line breaks in every string of the answer.
+  const withRealNewlines = (value: any): any => {
+    if (typeof value === "string") return value.replace(/(?:\\r)?\\n/g, "\n");
+    if (Array.isArray(value)) return value.map(withRealNewlines);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withRealNewlines(v)]));
+    return value;
+  };
+
   // A Vercel function is cut at 60s (vercel.json), answering with a bare 504. The website routes keep
   // their own budget below that: an AI step that doesn't answer in time is skipped, not waited for.
   const WEBSITE_ROUTE_BUDGET_MS = 50000;
@@ -3374,7 +3383,7 @@ export async function createApp() {
       }), msLeft() - 2000, () => { textTimedOut = true; return null; });
       if (response?.text) {
         try {
-          parsed = JSON.parse(response.text.trim());
+          parsed = withRealNewlines(JSON.parse(response.text.trim()));
         } catch (e: any) {
           console.warn("[REFRESH-FROM-WEBSITE] Gemini's answer was not valid JSON:", e?.message || e);
           textTimedOut = true;
@@ -3866,7 +3875,7 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
       const parsedJSON = JSON.parse(responseText.trim());
       return res.json({
         success: true,
-        prompts: parsedJSON
+        prompts: withRealNewlines(parsedJSON)
       });
 
     } catch (err: any) {
