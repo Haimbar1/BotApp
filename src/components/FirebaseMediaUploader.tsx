@@ -1508,9 +1508,9 @@ export const FirebaseMediaUploader: React.FC<FirebaseMediaUploaderProps> = ({
                       <button
                         type="button"
                         onClick={() => handleAddItemToSubject(subj.id)}
-                        className="px-2.5 py-1 bg-sky-950/80 hover:bg-sky-900 text-sky-200 border border-sky-500/30 rounded-md text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white border border-sky-400/50 rounded-md text-[11px] font-black transition flex items-center gap-1 cursor-pointer shadow-sm"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5 text-white" />
                         <span>הוסף תמונה</span>
                       </button>
                     )}
