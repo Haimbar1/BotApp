@@ -3592,7 +3592,9 @@ ${videos || "(לא הוגדר)"}
         data = await response.json();
       }
       if (!data?.success) {
-        throw new Error(data?.error || `שגיאת שרת (${response.status})`);
+        throw new Error(data?.error || (response.status === 504
+          ? "העדכון לקח יותר מדי זמן (504). נסו שוב בעוד רגע."
+          : `שגיאת שרת (${response.status})`));
       }
 
       // Remember the site on the agent, so next time it's one click
