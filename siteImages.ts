@@ -87,6 +87,26 @@ function dedupeKey(u: string): string {
   return u.replace(/\/v1\/(fill|fit|crop)\/.*$/i, "").replace(/[?#].*$/, "").replace(/-\d{2,4}x\d{2,4}(?=\.\w+$)/, "").toLowerCase();
 }
 
+// The image's own caption: its <figure>'s <figcaption> when it has one, else the text right after it
+// (carousel captions usually follow the slide). Not the text before it — that's the previous slide's.
+function textNextTo(page: string, start: number, end: number): string {
+  const after = page.slice(end, end + 1500);
+  const figEnd = after.search(/<\/figure>/i);
+  const nextImg = after.search(/<(img|source)\b/i);
+  const cap = after.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+  if (cap && cap.index !== undefined && (figEnd < 0 || cap.index < figEnd) && (nextImg < 0 || cap.index < nextImg)) {
+    return textOf(cap[1]).slice(0, 240);
+  }
+  // A caption placed before the image inside the same <figure>
+  const before = page.slice(Math.max(0, start - 1000), start);
+  const figStart = before.search(/<figure\b[^>]*>(?![\s\S]*<figure\b)/i);
+  if (figStart >= 0) {
+    const capBefore = before.slice(figStart).match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+    if (capBefore) return textOf(capBefore[1]).slice(0, 240);
+  }
+  return textOf(after.slice(0, nextImg >= 0 ? Math.min(nextImg, 600) : 600)).slice(0, 240);
+}
+
 class Collector {
   list: SiteImage[] = [];
   private seen = new Set<string>();
@@ -122,9 +142,7 @@ export function extractImageCandidates(html: string, baseUrl: string): SiteImage
         a.src || "";
       const url = resolve(src, baseUrl);
       if (!url) continue;
-      // Text right around the image: carousel captions / headings usually sit next to the slide
-      const around = textOf(page.slice(Math.max(0, m.index - 200), m.index + 600)).slice(0, 240);
-      c.add(url, a.alt || a.title || a["aria-label"], around);
+      c.add(url, a.alt || a.title || a["aria-label"], textNextTo(page, m.index, m.index + m[0].length));
     } else {
       const css = m[2] || m[3] || "";
       const bgRe = /url\(\s*['"]?([^'")]+)['"]?\s*\)/gi;
@@ -239,12 +257,12 @@ export async function describeSiteImages(
         "לכל תמונה: החלט אם להשאיר אותה (keep) — השאר תמונות שמראות את המוצר/המערכת (צילומי מסך, מסכים, דשבורדים), השירותים, העבודות, המקום או הצוות. " +
         "השמט לוגואים, אייקונים, רקעים דקורטיביים, תמונות כלליות בלי תוכן, ותמונות כפולות.\n" +
         "לתמונות שנשארות כתוב בעברית: name — שם קצר (2-4 מילים, למשל \"דשבורד\"), description — שורה אחת שמתארת מה רואים בתמונה ומתי כדאי לשלוח אותה. " +
-        "השתמש בטקסט החלופי ובטקסט שליד התמונה באתר כשיש. אל תמציא פרטים שלא נראים בתמונה או כתובים באתר.\n\n" +
+        "כשלתמונה יש באתר כיתוב או טקסט חלופי — השם והתיאור מבוססים עליהם (זה מה שבעל העסק כתב), ומה שרואים בתמונה רק משלים. אל תמציא פרטים שלא נראים בתמונה או כתובים באתר.\n\n" +
         `טקסט מהאתר (להקשר):\n${siteText.slice(0, 4000)}`,
     },
   ];
   usable.forEach((d, i) => {
-    parts.push({ text: `תמונה ${i}${d.c.alt ? ` — טקסט חלופי: ${d.c.alt}` : ""}${d.c.context ? ` — טקסט ליד התמונה: ${d.c.context}` : ""}` });
+    parts.push({ text: `תמונה ${i}${d.c.alt ? ` — טקסט חלופי: ${d.c.alt}` : ""}${d.c.context ? ` — כיתוב/טקסט ליד התמונה: ${d.c.context}` : ""}` });
     parts.push({ inlineData: d.img });
   });
 
