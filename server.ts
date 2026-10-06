@@ -6,6 +6,7 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { GoogleGenAI, Type } from "@google/genai";
 import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.js";
+import { extractJsonLdFaq, faqAsText, withSiteFaq, type SiteFaq } from "./src/lib/siteFaq.js";
 import {
   initStorage,
   getSettingsDoc,
@@ -3173,7 +3174,7 @@ export async function createApp() {
   // Scrapes a site: home page + up to 3 internal pages + links to documents. Shared by the wizard's
   // explorer and by "עדכן מהאתר" on an existing agent.
   const scrapeWebsite = async (rawUrl: string): Promise<
-    { ok: true; url: string; hostname: string; scrapedText: string; pageCount: number; images: SiteImage[] } | { ok: false; status: number; error: string }
+    { ok: true; url: string; hostname: string; scrapedText: string; pageCount: number; images: SiteImage[]; faqs: SiteFaq[] } | { ok: false; status: number; error: string }
   > => {
     let url = String(rawUrl || "").trim();
     if (!url) return { ok: false, status: 400, error: "אנא הזן כתובת אתר" };
@@ -3193,11 +3194,22 @@ export async function createApp() {
       return { ok: false, status: 200, error: "לא הצלחנו לטעון את האתר. ייתכן שהוא חוסם סריקה, איטי מדי או שהכתובת שגויה — אפשר להדביק את הטקסט ידנית." };
     }
 
-    const parts: string[] = [extractCleanText(mainHtml)];
+    const mainText = extractCleanText(mainHtml);
+    const parts: string[] = [mainText];
     const subPages = extractInternalPageLinks(mainHtml, url).slice(0, 3);
-    const subHtmls = await Promise.all(subPages.map((p) => fetchPageHtml(p, 6000)));
-    const subTexts = subHtmls.map((html) => (html ? extractCleanText(html) : ""));
+    const [subHtmls, llmsTxt] = await Promise.all([
+      Promise.all(subPages.map((p) => fetchPageHtml(p, 6000))),
+      // A site's own summary for AI readers (llmstxt.org) — the cleanest copy of its content
+      fetchPageHtml(new URL("/llms.txt", url).href, 5000),
+    ]);
+    // A JavaScript app answers every path with the same page: don't count it twice
+    const subTexts = subHtmls.map((html) => {
+      const t = html ? extractCleanText(html) : "";
+      return t === mainText ? "" : t;
+    });
     subTexts.forEach((t, i) => { if (t) parts.push(`--- ${subPages[i]} ---\n${t}`); });
+    if (llmsTxt && !/^\s*</.test(llmsTxt)) parts.unshift(`--- סיכום האתר (llms.txt) ---\n${llmsTxt.substring(0, 10000)}`);
+    const faqs = mergeFaqs(...[mainHtml, ...subHtmls].map((html) => (html ? extractJsonLdFaq(html) : [])));
 
     // Images: home page first (a carousel at the top stays first), then the internal pages. A site
     // built as a JavaScript app has (almost) none in its HTML, so its script bundle is read too.
@@ -3215,13 +3227,19 @@ export async function createApp() {
       scrapedText: parts.join("\n\n").substring(0, 20000),
       pageCount: 1 + subTexts.filter(Boolean).length,
       images,
+      faqs,
     };
+  };
+
+  const mergeFaqs = (...lists: SiteFaq[][]): SiteFaq[] => {
+    const seen = new Set<string>();
+    return lists.flat().filter((f) => (seen.has(f.q) ? false : (seen.add(f.q), true)));
   };
 
   // The site's images as the media section's website topic ("" when none is worth showing)
   const websiteImagesTopicFor = async (aiClient: any, scraped: { url: string; scrapedText: string; images: SiteImage[] }, businessName: string) => {
     const described = await describeSiteImages(aiClient, generateWithFallback, scraped.images, scraped.scrapedText, businessName);
-    return { topic: websiteImagesTopic(described, scraped.url, businessName), count: described.length };
+    return { topic: websiteImagesTopic(described, scraped.url, businessName), count: described.length, found: scraped.images.length };
   };
 
   app.post("/api/ai/explore-website", requireAuth, async (req: any, res: any) => {
@@ -3235,7 +3253,7 @@ export async function createApp() {
         .then((client) => websiteImagesTopicFor(client, scraped, String(req.body?.businessName || "")))
         .catch((e: any) => {
           console.warn("[EXPLORE] Collecting the site's images failed:", e?.message || e);
-          return { topic: "", count: 0 };
+          return { topic: "", count: 0, found: scraped.images.length };
         });
 
       let analysis = `נסרקו ${scraped.pageCount} עמודים מהאתר ${scraped.hostname}. הטקסט ישמש לבניית השכל של הבוט.`;
@@ -3255,7 +3273,7 @@ export async function createApp() {
       }
 
       const images = await imagesPromise;
-      return res.json({ success: true, url: scraped.url, scrapedText, analysis, imagesTopic: images.topic, imagesCount: images.count });
+      return res.json({ success: true, url: scraped.url, scrapedText, analysis, imagesTopic: images.topic, imagesCount: images.count, imagesFound: images.found, siteFaqs: scraped.faqs });
     } catch (err: any) {
       console.error("[EXPLORE] Error:", err);
       return res.status(500).json({ success: false, error: "שגיאה בסריקת האתר" });
@@ -3301,12 +3319,14 @@ export async function createApp() {
         `${currentPartsBlock}\n\n` +
         "--- התוכן העדכני שנסרק מהאתר ---\n" +
         `${scraped.scrapedText}\n\n` +
+        (scraped.faqs.length ? `--- השאלות הנפוצות שבאתר (${scraped.faqs.length}) ---\n${faqAsText(scraped.faqs)}\n\n` : "") +
         "כללים:\n" +
         "1. האתר הוא מקור האמת לעובדות: שירותים, מוצרים, מחירים, מבצעים, שעות פעילות, כתובת, פרטי קשר וקישורים. כשהאתר סותר את הבלוק — עדכן לפי האתר. שירות/מוצר שמופיע באתר וחסר בבלוק — הוסף.\n" +
         "2. שמור על מידע קיים שאינו מופיע באתר ואינו סותר אותו (בעל העסק הוסיף אותו ידנית). הסר מידע רק אם האתר מראה בבירור שהוא כבר לא נכון (למשל מחיר אחר, או שירות שהוחלף).\n" +
         "3. שמור על סגנון הכתיבה, המבנה והעימוד של כל בלוק. אל תמציא מידע שלא מופיע באתר או בבלוק הקיים.\n" +
-        "4. החזר ב-changes טקסט מלא (לא דיף) רק לבלוקים שבאמת צריכים להשתנות. בלוק שאין בו שינוי — אל תחזיר אותו.\n" +
-        "5. כתוב summary: הסבר קצר וברור בעברית לבעל העסק מה עודכן בכל בלוק (מה נוסף, מה שונה, מה הוסר). אם לא נמצא שום שינוי — כתוב זאת.\n\n" +
+        "4. בלוק השאלות הנפוצות (faqAnswers) חייב לכלול את כל השאלות והתשובות שבאתר, בניסוח נאמן לאתר (אפשר לקצר מעט), בפורמט ש: / ת:. שאלות שבעל העסק הוסיף ידנית — שמור.\n" +
+        "5. החזר ב-changes טקסט מלא (לא דיף) רק לבלוקים שבאמת צריכים להשתנות. בלוק שאין בו שינוי — אל תחזיר אותו.\n" +
+        "6. כתוב summary: הסבר קצר וברור בעברית לבעל העסק מה עודכן בכל בלוק (מה נוסף, מה שונה, מה הוסר). אם לא נמצא שום שינוי — כתוב זאת.\n\n" +
         "החזר אובייקט JSON תואם לסכימה שסופקה.";
 
       const changesProperties: Record<string, any> = {};
@@ -3315,7 +3335,7 @@ export async function createApp() {
       // The images are described in parallel with the text update (both are Gemini calls)
       const imagesPromise = websiteImagesTopicFor(ai, scraped, String(businessName || "")).catch((e: any) => {
         console.warn("[REFRESH-FROM-WEBSITE] Collecting the site's images failed:", e?.message || e);
-        return { topic: "", count: 0 };
+        return { topic: "", count: 0, found: scraped.images.length };
       });
       const response = await generateWithFallback(ai, {
         model: "gemini-3.5-flash",
@@ -3345,9 +3365,21 @@ export async function createApp() {
         }
       });
 
+      // Every question of the site's FAQ ends up in the FAQ block, whatever the model returned
+      let faqAdded = 0;
+      if (scraped.faqs.length) {
+        const faqBase = changes.faqAnswers ?? String(safeParts.faqAnswers || "");
+        const faqNext = withSiteFaq(faqBase, scraped.faqs);
+        if (faqNext !== faqBase) {
+          faqAdded = faqNext.split("\nש: ").length - faqBase.split("\nש: ").length;
+          changes.faqAnswers = faqNext;
+        }
+      }
+
       // The media section's website topic is replaced with the site's current images. When none were
       // found (the site blocked them, a hiccup) the previous topic stays rather than being wiped.
       let summary = String(parsed.summary || "").trim();
+      if (faqAdded > 0) summary += `${summary ? "\n" : ""}שאלות פופולריות (FAQ): נוספו ${faqAdded} שאלות ותשובות מהאתר שלא היו בבוט.`;
       if (images.topic) {
         const currentImages = String(safeParts.imagesInfo || "");
         const nextImages = withWebsiteImagesTopic(currentImages, images.topic);
@@ -3356,7 +3388,9 @@ export async function createApp() {
           summary += `${summary ? "\n" : ""}תמונות וגלריית מדיה: עודכנו ${images.count} תמונות מהאתר עם תיאור לכל אחת, והבוט יצרף אותן לתשובות רלוונטיות.`;
         }
       } else {
-        summary += `${summary ? "\n" : ""}לא נמצאו באתר תמונות שאפשר לצרף לבוט (ייתכן שהאתר חוסם הורדת תמונות); התמונות הקיימות בבוט לא שונו.`;
+        summary += `${summary ? "\n" : ""}${images.found
+          ? `נמצאו באתר ${images.found} קבצי תמונה, אבל אף אחד מהם לא מתאים להצגה ללקוח (לוגואים/אייקונים) או שלא ניתן היה להוריד אותם`
+          : "לא נמצאו באתר קבצי תמונה — ייתכן שהתמונות/הקרוסלה מצוירות בקוד ולא כקבצי תמונה"}; התמונות הקיימות בבוט לא שונו.`;
       }
 
       return res.json({
@@ -3364,6 +3398,8 @@ export async function createApp() {
         url: scraped.url,
         pageCount: scraped.pageCount,
         imagesCount: images.count,
+        imagesFound: images.found,
+        faqCount: scraped.faqs.length,
         changes,
         touchedParts: Object.keys(changes),
         summary
