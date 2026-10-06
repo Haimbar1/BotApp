@@ -6,7 +6,7 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { GoogleGenAI, Type } from "@google/genai";
 import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.js";
-import { extractJsonLdFaq, faqAsText, withSiteFaq, type SiteFaq } from "./src/lib/siteFaq.js";
+import { extractJsonLdFaq, withSiteFaq, type SiteFaq } from "./src/lib/siteFaq.js";
 import {
   initStorage,
   getSettingsDoc,
@@ -3236,13 +3236,23 @@ export async function createApp() {
     return lists.flat().filter((f) => (seen.has(f.q) ? false : (seen.add(f.q), true)));
   };
 
+  // A Vercel function is cut at 60s (vercel.json), answering with a bare 504. The website routes keep
+  // their own budget below that: an AI step that doesn't answer in time is skipped, not waited for.
+  const WEBSITE_ROUTE_BUDGET_MS = 50000;
+  const withinMs = <T,>(promise: Promise<T>, ms: number, onTimeout: () => T): Promise<T> => {
+    let timer: any;
+    const timeout = new Promise<T>((resolve) => { timer = setTimeout(() => resolve(onTimeout()), Math.max(0, ms)); });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  };
+
   // The site's images as the media section's website topic ("" when none is worth showing)
-  const websiteImagesTopicFor = async (aiClient: any, scraped: { url: string; scrapedText: string; images: SiteImage[] }, businessName: string) => {
-    const described = await describeSiteImages(aiClient, generateWithFallback, scraped.images, scraped.scrapedText, businessName);
+  const websiteImagesTopicFor = async (aiClient: any, scraped: { url: string; scrapedText: string; images: SiteImage[] }, businessName: string, timeoutMs?: number) => {
+    const described = await describeSiteImages(aiClient, generateWithFallback, scraped.images, scraped.scrapedText, businessName, timeoutMs);
     return { topic: websiteImagesTopic(described, scraped.url, businessName), count: described.length, found: scraped.images.length };
   };
 
   app.post("/api/ai/explore-website", requireAuth, async (req: any, res: any) => {
+    const startedAt = Date.now();
     try {
       const scraped = await scrapeWebsite(req.body?.url);
       if ("error" in scraped) return res.status(scraped.status).json({ success: false, error: scraped.error });
@@ -3250,7 +3260,7 @@ export async function createApp() {
 
       // The site's images (with descriptions) for the new bot's media section, alongside the summary
       const imagesPromise = geminiFor(req.user?.tenantId)
-        .then((client) => websiteImagesTopicFor(client, scraped, String(req.body?.businessName || "")))
+        .then((client) => websiteImagesTopicFor(client, scraped, String(req.body?.businessName || ""), WEBSITE_ROUTE_BUDGET_MS - (Date.now() - startedAt) - 10000))
         .catch((e: any) => {
           console.warn("[EXPLORE] Collecting the site's images failed:", e?.message || e);
           return { topic: "", count: 0, found: scraped.images.length };
@@ -3259,20 +3269,20 @@ export async function createApp() {
       let analysis = `נסרקו ${scraped.pageCount} עמודים מהאתר ${scraped.hostname}. הטקסט ישמש לבניית השכל של הבוט.`;
       if (ai) {
         try {
-          const response = await generateWithFallback(ai, {
+          const response: any = await withinMs(generateWithFallback(ai, {
             model: "gemini-3.5-flash",
             contents:
               "לפניך טקסט שנסרק מאתר של עסק. כתוב בעברית סיכום קצר (עד 8 שורות) למי שבונה בוט מכירות/שירות לעסק: " +
               "מה העסק עושה, מוצרים ושירותים עיקריים, מחירים אם מופיעים, קהל יעד, ופרטי קשר/כתובת אם מופיעים. " +
               "אל תמציא מידע שלא מופיע בטקסט.\n\n" + scrapedText.substring(0, 12000)
-          });
+          }), WEBSITE_ROUTE_BUDGET_MS - (Date.now() - startedAt) - 2000, () => null);
           if (response?.text) analysis = response.text.trim();
         } catch (e: any) {
           console.warn("[EXPLORE] AI summary failed, returning scrape only:", e?.message || e);
         }
       }
 
-      const images = await imagesPromise;
+      const images = await withinMs(imagesPromise, WEBSITE_ROUTE_BUDGET_MS - (Date.now() - startedAt), () => ({ topic: "", count: 0, found: scraped.images.length }));
       return res.json({ success: true, url: scraped.url, scrapedText, analysis, imagesTopic: images.topic, imagesCount: images.count, imagesFound: images.found, siteFaqs: scraped.faqs });
     } catch (err: any) {
       console.error("[EXPLORE] Error:", err);
@@ -3293,6 +3303,8 @@ export async function createApp() {
   };
 
   app.post("/api/ai/refresh-from-website", requireAuth, async (req: any, res: any) => {
+    const startedAt = Date.now();
+    const msLeft = () => WEBSITE_ROUTE_BUDGET_MS - (Date.now() - startedAt);
     try {
       const { businessName, parts } = req.body || {};
       const safeParts = parts || {};
@@ -3319,12 +3331,13 @@ export async function createApp() {
         `${currentPartsBlock}\n\n` +
         "--- התוכן העדכני שנסרק מהאתר ---\n" +
         `${scraped.scrapedText}\n\n` +
-        (scraped.faqs.length ? `--- השאלות הנפוצות שבאתר (${scraped.faqs.length}) ---\n${faqAsText(scraped.faqs)}\n\n` : "") +
         "כללים:\n" +
         "1. האתר הוא מקור האמת לעובדות: שירותים, מוצרים, מחירים, מבצעים, שעות פעילות, כתובת, פרטי קשר וקישורים. כשהאתר סותר את הבלוק — עדכן לפי האתר. שירות/מוצר שמופיע באתר וחסר בבלוק — הוסף.\n" +
         "2. שמור על מידע קיים שאינו מופיע באתר ואינו סותר אותו (בעל העסק הוסיף אותו ידנית). הסר מידע רק אם האתר מראה בבירור שהוא כבר לא נכון (למשל מחיר אחר, או שירות שהוחלף).\n" +
         "3. שמור על סגנון הכתיבה, המבנה והעימוד של כל בלוק. אל תמציא מידע שלא מופיע באתר או בבלוק הקיים.\n" +
-        "4. בלוק השאלות הנפוצות (faqAnswers) חייב לכלול את כל השאלות והתשובות שבאתר, בניסוח נאמן לאתר (אפשר לקצר מעט), בפורמט ש: / ת:. שאלות שבעל העסק הוסיף ידנית — שמור.\n" +
+        (scraped.faqs.length
+          ? "4. את השאלות הנפוצות של האתר המערכת מוסיפה לבלוק faqAnswers בעצמה — אל תעתיק אותן. החזר faqAnswers רק אם תשובה שכבר כתובה בבלוק סותרת את האתר, ואז תקן רק אותה.\n"
+          : "4. בלוק השאלות הנפוצות (faqAnswers): הוסף שאלות ותשובות שמופיעות באתר וחסרות בבלוק, בפורמט ש: / ת:.\n") +
         "5. החזר ב-changes טקסט מלא (לא דיף) רק לבלוקים שבאמת צריכים להשתנות. בלוק שאין בו שינוי — אל תחזיר אותו.\n" +
         "6. כתוב summary: הסבר קצר וברור בעברית לבעל העסק מה עודכן בכל בלוק (מה נוסף, מה שונה, מה הוסר). אם לא נמצא שום שינוי — כתוב זאת.\n\n" +
         "החזר אובייקט JSON תואם לסכימה שסופקה.";
@@ -3333,11 +3346,12 @@ export async function createApp() {
       partKeys.forEach(k => { changesProperties[k] = { type: Type.STRING }; });
 
       // The images are described in parallel with the text update (both are Gemini calls)
-      const imagesPromise = websiteImagesTopicFor(ai, scraped, String(businessName || "")).catch((e: any) => {
+      // Downloading the images takes up to ~7s; Gemini then gets what's left of the budget
+      const imagesPromise = websiteImagesTopicFor(ai, scraped, String(businessName || ""), msLeft() - 10000).catch((e: any) => {
         console.warn("[REFRESH-FROM-WEBSITE] Collecting the site's images failed:", e?.message || e);
         return { topic: "", count: 0, found: scraped.images.length };
       });
-      const response = await generateWithFallback(ai, {
+      const textPromise = generateWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: promptToModel,
         config: {
@@ -3352,9 +3366,23 @@ export async function createApp() {
           }
         }
       });
-      if (!response?.text) throw new Error("Empty response returned from Gemini.");
-      const images = await imagesPromise;
-      const parsed = JSON.parse(response.text.trim());
+      let textTimedOut = false;
+      let parsed: any = { summary: "", changes: {} };
+      const response: any = await withinMs(textPromise.catch((e: any) => {
+        console.warn("[REFRESH-FROM-WEBSITE] Updating the knowledge blocks failed:", e?.message || e);
+        return null;
+      }), msLeft() - 2000, () => { textTimedOut = true; return null; });
+      if (response?.text) {
+        try {
+          parsed = JSON.parse(response.text.trim());
+        } catch (e: any) {
+          console.warn("[REFRESH-FROM-WEBSITE] Gemini's answer was not valid JSON:", e?.message || e);
+          textTimedOut = true;
+        }
+      } else {
+        textTimedOut = true;
+      }
+      const images = await withinMs(imagesPromise, msLeft(), () => ({ topic: "", count: 0, found: scraped.images.length }));
 
       const rawChanges = parsed.changes || {};
       const changes: Record<string, string> = {};
@@ -3378,7 +3406,9 @@ export async function createApp() {
 
       // The media section's website topic is replaced with the site's current images. When none were
       // found (the site blocked them, a hiccup) the previous topic stays rather than being wiped.
-      let summary = String(parsed.summary || "").trim();
+      let summary = textTimedOut
+        ? "בלוקי הידע (שירותים, קהל יעד, קישורים) לא עודכנו הפעם — ה-AI לא הספיק לענות בזמן. אפשר ללחוץ שוב על \"עדכן מהאתר\"."
+        : String(parsed.summary || "").trim();
       if (faqAdded > 0) summary += `${summary ? "\n" : ""}שאלות פופולריות (FAQ): נוספו ${faqAdded} שאלות ותשובות מהאתר שלא היו בבוט.`;
       if (images.topic) {
         const currentImages = String(safeParts.imagesInfo || "");
@@ -3739,6 +3769,7 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
 
   // Endpoint to generate full 10-part structured prompt using Gemini
   app.post("/api/ai/generate-agent-prompt", requireAuth, async (req, res) => {
+    const startedAt = Date.now();
     try {
       const {
         templateId,
@@ -3798,7 +3829,8 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
 
       console.log("[SERVER] Generating full 10-part structured prompt using gemini-3.5-flash...");
 
-      const response = await generateWithFallback(ai, {
+      // Ten long parts can take a while: past the budget the fallback prompts below answer instead
+      const response: any = await withinMs(generateWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: promptToModel,
         config: {
@@ -3823,7 +3855,8 @@ function generateFallbackPrompts(templateId: string, businessName: string, owner
             ]
           }
         }
-      });
+      }), WEBSITE_ROUTE_BUDGET_MS - (Date.now() - startedAt), () => null);
+      if (!response) throw new Error("Gemini did not answer within the time budget");
 
       const responseText = response.text;
       if (!responseText) {

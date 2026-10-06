@@ -157,7 +157,7 @@ export function extractImageCandidates(html: string, baseUrl: string): SiteImage
   }
 
   const og = page.match(/<meta[^>]+property=["']og:image["'][^>]*>/i);
-  if (og) c.add(resolve(attrs(og[0]).content || "", baseUrl), "תמונת השיתוף של האתר");
+  if (og) c.add(resolve(attrs(og[0]).content || "", baseUrl));
 
   // Absolute image URLs inside scripts / JSON blobs (escaped slashes included)
   const scripts = page.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) || [];
@@ -238,16 +238,23 @@ export async function describeSiteImages(
   generate: (ai: any, params: any) => Promise<any>,
   candidates: SiteImage[],
   siteText: string,
-  businessName: string
+  businessName: string,
+  // Gemini looking at the images is the slow part: past this, only the site's own captions are used
+  timeoutMs = 25000
 ): Promise<DescribedImage[]> {
   const downloaded = await Promise.all(candidates.slice(0, MAX_DESCRIBED * 2).map(async (c) => ({ c, img: await downloadImage(c.url) })));
   const usable = downloaded.filter((d) => d.img).slice(0, MAX_DESCRIBED);
   if (!usable.length) return [];
 
+  // Without AI: images the site itself named (alt text), described by their caption when they have one
   const byAlt = () =>
     usable
-      .filter((d) => d.c.alt)
-      .map((d) => ({ url: d.c.url, name: oneLine(d.c.alt!).slice(0, 60), description: oneLine(d.c.alt!) }));
+      .filter((d) => d.c.alt && !/logo/i.test(d.c.url))
+      .map((d) => {
+        const name = oneLine(d.c.alt!).slice(0, 60);
+        const caption = oneLine(d.c.context || "").replace(new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[—–-]?\\s*`), "");
+        return { url: d.c.url, name, description: caption || name };
+      });
   if (!ai) return byAlt();
 
   const parts: any[] = [
@@ -267,7 +274,11 @@ export async function describeSiteImages(
   });
 
   try {
-    const response = await generate(ai, {
+    let timer: any;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs}ms`)), timeoutMs);
+    });
+    const response = await Promise.race([timeout, generate(ai, {
       model: "gemini-3.5-flash",
       contents: [{ role: "user", parts }],
       config: {
@@ -292,7 +303,7 @@ export async function describeSiteImages(
           required: ["images"],
         },
       },
-    });
+    })]).finally(() => clearTimeout(timer));
     const parsed = JSON.parse(String(response?.text || "{}").trim());
     const out: DescribedImage[] = [];
     const used = new Set<number>();
