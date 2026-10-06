@@ -62,6 +62,7 @@ import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
 import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText, getWhatsAppWebUrl } from "./lib/sourceHelper";
 import { synthesizePromptFixes, sanitizeBlockContent } from "./lib/promptDiagnosis";
+import { withSiteFaq, type SiteFaq } from "./lib/siteFaq";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
 export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
@@ -1997,6 +1998,8 @@ export default function App() {
   const [wizardImagesTopic, setWizardImagesTopic] = useState<string>("");
   const [wizardImagesCount, setWizardImagesCount] = useState<number>(0);
   const [wizardScannedUrl, setWizardScannedUrl] = useState<string>("");
+  const [wizardImagesFound, setWizardImagesFound] = useState<number>(0);
+  const [wizardSiteFaqs, setWizardSiteFaqs] = useState<SiteFaq[]>([]);
   
   // Custom answers state
   const [wizardAnswers, setWizardAnswers] = useState({
@@ -2200,6 +2203,8 @@ export default function App() {
     setWizardImagesTopic("");
     setWizardImagesCount(0);
     setWizardScannedUrl("");
+    setWizardImagesFound(0);
+    setWizardSiteFaqs([]);
 
     try {
       const res = await apiFetch("/api/ai/explore-website", {
@@ -2219,6 +2224,8 @@ export default function App() {
         setWizardImagesTopic(data.imagesTopic || "");
         setWizardImagesCount(data.imagesCount || 0);
         setWizardScannedUrl(data.url || targetUrl);
+        setWizardImagesFound(data.imagesFound || 0);
+        setWizardSiteFaqs(Array.isArray(data.siteFaqs) ? data.siteFaqs : []);
       } else {
         alert(data.error || "נכשל בסריקת הכתובת. ייתכן והאתר חוסם בוטים או דורש הזנה ידנית.");
         setExplorerAnalysis("סריקה נכשלה. אנא העתק והדבק את הטקסט ידנית בתיבת המידע.");
@@ -2364,7 +2371,8 @@ export default function App() {
       const newKidsCourses = generatedPrompts?.kidsCourses || "";
       const newConversationFlow = generatedPrompts?.conversationFlow || "";
       const newWritingStyle = generatedPrompts?.writingStyle || "";
-      const newFaqAnswers = generatedPrompts?.faqAnswers || "";
+      // Every question of the scanned site's FAQ goes into the bot's FAQ block
+      const newFaqAnswers = withSiteFaq(generatedPrompts?.faqAnswers || "", wizardSiteFaqs);
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
@@ -3597,7 +3605,7 @@ ${videos || "(לא הוגדר)"}
       if (touchedParts.length === 0) {
         setLastFixSummary(null);
         setLastFixTouchedParts([]);
-        alert(`נסרקו ${data.pageCount || 1} עמודים מהאתר — המידע והתמונות בבוט כבר תואמים לאתר, לא נדרשו שינויים.${data.imagesCount ? "" : "\n(לא נמצאו באתר תמונות שאפשר לצרף לבוט.)"}`);
+        alert(`נסרקו ${data.pageCount || 1} עמודים מהאתר — המידע בבוט כבר תואם לאתר, לא נדרשו שינויים.${data.summary ? `\n\n${data.summary}` : ""}`);
         return;
       }
 
@@ -5877,6 +5885,7 @@ ${videos || "(לא הוגדר)"}
                     setWizardImagesTopic("");
                     setWizardImagesCount(0);
                     setWizardScannedUrl("");
+                    setWizardSiteFaqs([]);
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -6165,6 +6174,7 @@ ${videos || "(לא הוגדר)"}
                     setWizardImagesTopic("");
                     setWizardImagesCount(0);
                     setWizardScannedUrl("");
+                    setWizardSiteFaqs([]);
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -7770,6 +7780,7 @@ ${videos || "(לא הוגדר)"}
                       setWizardImagesTopic("");
                       setWizardImagesCount(0);
                       setWizardScannedUrl("");
+                      setWizardSiteFaqs([]);
                       setExplorerAnalysis("");
                       setGeneratedPrompts(null);
                       setShowWizardModal(true);
@@ -7961,16 +7972,16 @@ ${videos || "(לא הוגדר)"}
 
               {/* Refresh from website — re-scan the business's site after it was updated and refresh the knowledge blocks */}
               <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-b border-slate-850 bg-[#090a10]">
-                <div className="bg-gradient-to-br from-emerald-950/20 via-teal-950/15 to-slate-950/20 border border-emerald-500/20 rounded-2xl p-4 flex flex-col gap-3" dir="rtl">
+                <div className="bg-gradient-to-br from-indigo-950/20 via-blue-950/15 to-slate-950/20 border border-blue-500/20 rounded-2xl p-4 flex flex-col gap-3" dir="rtl">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span className="text-xs font-black text-emerald-300">עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
+                      <Globe className="w-4 h-4 text-sky-400 shrink-0" />
+                      <span className="text-xs font-black text-sky-300">עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
                     </div>
                     {(() => {
                       const at = agents.find(a => a.id === activeId)?.websiteRefreshedAt;
                       return at ? (
-                        <span className="text-[9.5px] bg-emerald-900/30 text-emerald-300 border border-emerald-500/20 rounded-full font-black px-2 py-0.5">
+                        <span className="text-[9.5px] bg-[#1a2d4c] text-sky-400 border border-sky-500/20 rounded-full font-black px-2 py-0.5">
                           עודכן לאחרונה: {new Date(at).toLocaleString("he-IL")}
                         </span>
                       ) : null;
@@ -7987,7 +7998,7 @@ ${videos || "(לא הוגדר)"}
                       placeholder="https://www.your-business.co.il"
                       dir="ltr"
                       disabled={isRefreshingFromWebsite}
-                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:border-emerald-500 placeholder-slate-600 disabled:opacity-60"
+                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:outline-[#0c0e14]/50 focus:border-sky-500 placeholder-slate-600 disabled:opacity-60"
                     />
                     <button
                       type="button"
@@ -7997,7 +8008,7 @@ ${videos || "(לא הוגדר)"}
                         isRefreshingFromWebsite
                           ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
                           : websiteRefreshUrl.trim()
-                            ? "bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-200 border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer shadow"
+                            ? "bg-[#183a6f]/60 hover:bg-[#1f4a8d] text-sky-200 border-sky-505/20 hover:border-sky-500/45 cursor-pointer shadow"
                             : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
                       }`}
                     >
@@ -8689,7 +8700,10 @@ ${videos || "(לא הוגדר)"}
                             <div className={`border-t border-slate-800 pt-1.5 text-[11px] font-black ${wizardImagesCount ? "text-emerald-400" : "text-slate-500"}`}>
                               {wizardImagesCount
                                 ? `🖼️ נמצאו ${wizardImagesCount} תמונות באתר — הן ייכנסו לבוט עם תיאור לכל אחת, והוא יצרף אותן לתשובות רלוונטיות.`
-                                : "🖼️ לא נמצאו באתר תמונות שאפשר לצרף לבוט."}
+                                : wizardImagesFound
+                                  ? `🖼️ נמצאו באתר ${wizardImagesFound} קבצי תמונה, אבל אף אחד מהם לא מתאים להצגה ללקוח (לוגואים/אייקונים).`
+                                  : "🖼️ לא נמצאו באתר קבצי תמונה — ייתכן שהתמונות/הקרוסלה מצוירות בקוד ולא כקבצי תמונה."}
+                              {wizardSiteFaqs.length > 0 && <span className="block text-sky-400 mt-1">❓ נמצאו {wizardSiteFaqs.length} שאלות נפוצות באתר — כולן ייכנסו לבלוק השאלות הנפוצות של הבוט.</span>}
                             </div>
                           </div>
                         ) : (
