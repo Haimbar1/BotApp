@@ -46,8 +46,8 @@ interface WhatsAppSettingsModalProps {
   onConfigSaved?: (updatedConfig: WhatsAppConfig) => void;
 }
 
-const META_APP_ID = "1950695432176191";
-const META_CONFIG_ID = "4827048247578784";
+// The Meta app and Embedded Signup configuration come from the server (META_APP_ID / META_CONFIG_ID
+// in Vercel), so one-click signup issues tokens from the same app the webhook setup works with.
 // Default n8n webhook for incoming WhatsApp messages (editable per bot)
 const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt";
 // Must match the word the n8n webhook checks against hub.verify_token
@@ -80,7 +80,9 @@ export default function WhatsAppSettingsModal({
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [isCheckingWebhook, setIsCheckingWebhook] = useState(false);
   // Result shown right under the webhook buttons (the top feedback bar is often scrolled out of view)
-  const [webhookResult, setWebhookResult] = useState<{ type: "success" | "error"; message: string; details?: string[] } | null>(null);
+  // Each detail: a Hebrew label and an ID/URL value (shown left-to-right inside the right-to-left line)
+  const [webhookResult, setWebhookResult] = useState<{ type: "success" | "error"; message: string; details?: { label: string; name?: string; value: string; note?: string }[] } | null>(null);
+  const [metaApp, setMetaApp] = useState<{ appId: string; configId: string }>({ appId: "", configId: "" });
   // What is stored on the server, so the webhook uses saved values rather than unsaved edits
   const [savedCredentials, setSavedCredentials] = useState(false);
 
@@ -95,8 +97,19 @@ export default function WhatsAppSettingsModal({
   useEffect(() => {
     if (isOpen) {
       loadWhatsAppConfig();
+      loadMetaApp();
     }
   }, [isOpen, botId]);
+
+  const loadMetaApp = async () => {
+    try {
+      const res = await apiFetch("/api/whatsapp/meta-app", { headers: { Authorization: `Bearer ${sessionToken}` } });
+      const data = await res.json().catch(() => ({}));
+      if (data?.success) setMetaApp({ appId: data.appId || "", configId: data.configId || "" });
+    } catch (err) {
+      console.error("Failed loading the Meta app settings:", err);
+    }
+  };
 
   const loadWhatsAppConfig = async () => {
     setFeedback(null);
@@ -133,6 +146,15 @@ export default function WhatsAppSettingsModal({
   // Launch Facebook Embedded Signup
   const handleLaunchFacebookSignup = async () => {
     setFeedback(null);
+    if (!metaApp.appId || !metaApp.configId) {
+      setFeedback({
+        type: "error",
+        message: metaApp.appId
+          ? `חסר ב-Vercel המשתנה META_CONFIG_ID: מזהה ה-Configuration של Embedded Signup באפליקציה ${metaApp.appId} (developers.facebook.com ← Facebook Login for Business ← Configurations). עד אז אפשר להזין את הפרטים ידנית.`
+          : "לא נטענו פרטי אפליקציית Meta מהשרת. נסה לסגור ולפתוח את החלון, או הזן את הפרטים ידנית."
+      });
+      return;
+    }
     setIsConnecting(true);
 
     try {
@@ -142,8 +164,8 @@ export default function WhatsAppSettingsModal({
       });
 
       const result = await connectWhatsAppBusiness({
-        appId: META_APP_ID,
-        configId: META_CONFIG_ID,
+        appId: metaApp.appId,
+        configId: metaApp.configId,
         botId,
         sessionToken,
         onSessionInfo: (data) => {
@@ -166,8 +188,8 @@ export default function WhatsAppSettingsModal({
         phoneNumberId: result.phoneNumberId || phoneNumberId,
         systemUserAccessToken: result.token || systemUserAccessToken,
         wabaId: result.wabaId || wabaId,
-        appId: META_APP_ID,
-        configId: META_CONFIG_ID,
+        appId: metaApp.appId,
+        configId: metaApp.configId,
         status: "Connected",
         connectionType: "official_meta"
       };
@@ -243,8 +265,8 @@ export default function WhatsAppSettingsModal({
         phoneNumberId: phoneNumberId.trim(),
         systemUserAccessToken: systemUserAccessToken.trim(),
         wabaId: wabaId.trim(),
-        appId: META_APP_ID,
-        configId: META_CONFIG_ID,
+        appId: metaApp.appId,
+        configId: metaApp.configId,
         connectionType: "official_meta",
         status: calculatedStatus,
         ...(verifiedInfo?.displayPhoneNumber ? { phoneNumber: verifiedInfo.displayPhoneNumber.replace(/\D/g, "") } : {})
@@ -298,12 +320,19 @@ export default function WhatsAppSettingsModal({
       } else if (!data.subscribed) {
         setWebhookResult({ type: "error", message: "ה-WABA לא מחובר לאף אפליקציה ב-Meta — הודעות לא יגיעו. לחץ \"חבר Webhook\"." });
       } else {
-        const details = data.apps.map((a: any) =>
-          `${a.name || a.appId || "אפליקציה"}: ${a.callbackUrl ? a.callbackUrl : "כתובת ברירת המחדל של האפליקציה"}`
-        );
+        const details: { label: string; name?: string; value: string; note?: string }[] = data.apps.map((a: any) => ({
+          label: "כתובת ה-Webhook באפליקציה",
+          name: a.name || a.appId || "",
+          value: a.callbackUrl || "",
+          note: a.callbackUrl ? undefined : "כתובת ברירת המחדל של האפליקציה"
+        }));
         if (data.tokenApp) {
-          details.push(`הטוקן שייך לאפליקציה: ${data.tokenApp.name} (${data.tokenApp.id})` +
-            (data.configuredAppId && data.configuredAppId !== data.tokenApp.id ? ` — שונה מזו שב-Vercel (${data.configuredAppId})` : ""));
+          details.push({
+            label: "הטוקן שייך לאפליקציה",
+            name: data.tokenApp.name,
+            value: data.tokenApp.id,
+            note: data.configuredAppId && data.configuredAppId !== data.tokenApp.id ? `שונה מזו שב-Vercel (${data.configuredAppId})` : undefined
+          });
         }
         setWebhookResult({
           type: "success",
@@ -726,7 +755,13 @@ export default function WhatsAppSettingsModal({
                   <span>{webhookResult.message}</span>
                 </div>
                 {webhookResult.details?.map((d, i) => (
-                  <div key={i} className="font-mono text-[11px] break-all" dir="ltr">{d}</div>
+                  <div key={i} className="text-[11px] text-right" dir="rtl">
+                    <div>
+                      {d.label}{d.name && <> <bdi dir="ltr" className="font-bold">{d.name}</bdi></>}:
+                      {d.note && <span> {d.note}</span>}
+                    </div>
+                    {d.value && <div dir="ltr" className="font-mono break-all text-right opacity-90">{d.value}</div>}
+                  </div>
                 ))}
               </div>
             )}

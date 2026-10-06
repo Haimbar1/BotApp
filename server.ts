@@ -1433,6 +1433,17 @@ export async function createApp() {
   });
 
   // Meta Token Exchange for Embedded Signup
+  // The Meta app one-click signup (Embedded Signup) runs with: the system's app from Vercel, and its
+  // Embedded Signup configuration (META_CONFIG_ID, created under Facebook Login for Business in that
+  // app). Without META_APP_ID the old built-in pair is kept so the button works as before.
+  const LEGACY_META_APP_ID = "1950695432176191";
+  const LEGACY_META_CONFIG_ID = "4827048247578784";
+  app.get("/api/whatsapp/meta-app", requireAuth, (_req: any, res: any) => {
+    const appId = process.env.META_APP_ID || LEGACY_META_APP_ID;
+    const configId = process.env.META_CONFIG_ID || (process.env.META_APP_ID ? "" : LEGACY_META_CONFIG_ID);
+    res.json({ success: true, appId, configId });
+  });
+
   const handleMetaTokenExchange = async (req: any, res: any) => {
     try {
       const { code, appId, appSecret, botId, configId, redirectUri } = req.body;
@@ -1440,8 +1451,8 @@ export async function createApp() {
         return res.status(400).json({ success: false, error: "missing_code", message: "חסר קוד אימות (code)" });
       }
 
-      // Meta App Credentials
-      const targetAppId = appId || process.env.META_APP_ID || "1950695432176191";
+      // Meta App Credentials: the system's app (Vercel) unless the caller brings its own secret
+      const targetAppId = (appSecret ? appId : process.env.META_APP_ID || appId) || LEGACY_META_APP_ID;
       const targetAppSecret = appSecret || process.env.META_APP_SECRET || "";
 
       let accessToken = "";
