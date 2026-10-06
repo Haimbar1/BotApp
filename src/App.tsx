@@ -521,6 +521,14 @@ export default function App() {
   const [preFixSnapshot, setPreFixSnapshot] = useState<Record<string, string> | null>(null);
   const [fixClarifyingQuestion, setFixClarifyingQuestion] = useState<string | null>(null);
 
+  // "עדכן מהאתר": re-scan the business's site and refresh the knowledge blocks of the open agent
+  const [websiteRefreshUrl, setWebsiteRefreshUrl] = useState("");
+  const [isRefreshingFromWebsite, setIsRefreshingFromWebsite] = useState(false);
+  const activeAgentWebsiteUrl = agents.find(a => a.id === activeId)?.websiteUrl || "";
+  useEffect(() => {
+    setWebsiteRefreshUrl(activeAgentWebsiteUrl);
+  }, [activeId, activeAgentWebsiteUrl]);
+
   // Currently expanded block in the multi-part editor
   const [expandedSection, setExpandedSection] = useState<string>("botIdentity");
   const [editType, setEditType] = useState<"sections" | "raw">("sections");
@@ -1985,6 +1993,10 @@ export default function App() {
   const [isExploringUrl, setIsExploringUrl] = useState<boolean>(false);
   const [explorerAnalysis, setExplorerAnalysis] = useState<string>("");
   const [scrapedText, setScrapedText] = useState<string>("");
+  // The scanned site's images, as a ready topic for the new bot's media section
+  const [wizardImagesTopic, setWizardImagesTopic] = useState<string>("");
+  const [wizardImagesCount, setWizardImagesCount] = useState<number>(0);
+  const [wizardScannedUrl, setWizardScannedUrl] = useState<string>("");
   
   // Custom answers state
   const [wizardAnswers, setWizardAnswers] = useState({
@@ -2185,7 +2197,10 @@ export default function App() {
     setIsExploringUrl(true);
     setExplorerAnalysis("");
     setScrapedText("");
-    
+    setWizardImagesTopic("");
+    setWizardImagesCount(0);
+    setWizardScannedUrl("");
+
     try {
       const res = await apiFetch("/api/ai/explore-website", {
         method: "POST",
@@ -2193,7 +2208,7 @@ export default function App() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
         },
-        body: JSON.stringify({ url: wizardWebsiteUrl })
+        body: JSON.stringify({ url: wizardWebsiteUrl, businessName: wizardBusinessName })
       });
       
       // A timeout or a missing route answers with HTML, not JSON
@@ -2201,6 +2216,9 @@ export default function App() {
       if (res.ok && data.success) {
         setScrapedText(data.scrapedText);
         setExplorerAnalysis(data.analysis);
+        setWizardImagesTopic(data.imagesTopic || "");
+        setWizardImagesCount(data.imagesCount || 0);
+        setWizardScannedUrl(data.url || targetUrl);
       } else {
         alert(data.error || "נכשל בסריקת הכתובת. ייתכן והאתר חוסם בוטים או דורש הזנה ידנית.");
         setExplorerAnalysis("סריקה נכשלה. אנא העתק והדבק את הטקסט ידנית בתיבת המידע.");
@@ -2350,7 +2368,8 @@ export default function App() {
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
-      const newImagesInfo = generatedPrompts?.imagesInfo || "";
+      // The scanned site's images go into the media section as their own topic
+      const newImagesInfo = [generatedPrompts?.imagesInfo || "", wizardImagesTopic].filter(t => t.trim()).join("\n\n");
       const newVideosInfo = generatedPrompts?.videosInfo || "";
 
       // Compile dynamic unified businessPrompt based on the generated parts!
@@ -2396,6 +2415,7 @@ export default function App() {
         humanEscalation: newHumanEscalation,
         imagesInfo: newImagesInfo,
         videosInfo: newVideosInfo,
+        ...(wizardScannedUrl ? { websiteUrl: wizardScannedUrl, websiteRefreshedAt: new Date().toISOString() } : {}),
       };
 
       const updated = [...agents, newAgent];
@@ -3534,6 +3554,66 @@ ${videos || "(לא הוגדר)"}
       alert(`נכשלנו באבחון ותיקון הבוט: ${err?.message || err}`);
     } finally {
       setIsDiagnosingIssue(false);
+    }
+  };
+
+  // Re-scan the business's website and update only the knowledge blocks (services, audience, FAQ,
+  // links). The changes land in the editor like an AI fix (summary + undo); the user saves them.
+  const refreshAgentFromWebsite = async () => {
+    const url = websiteRefreshUrl.trim();
+    if (!url) {
+      alert("אנא הזינו את כתובת האתר של העסק");
+      return;
+    }
+    const targetId = activeId;
+    try {
+      setIsRefreshingFromWebsite(true);
+      setFixClarifyingQuestion(null);
+      const currentParts = getCurrentPromptParts();
+
+      const response = await apiFetch("/api/ai/refresh-from-website", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
+        },
+        body: JSON.stringify({ url, businessName, parts: currentParts })
+      });
+      let data: any = null;
+      if ((response.headers.get("content-type") || "").includes("application/json")) {
+        data = await response.json();
+      }
+      if (!data?.success) {
+        throw new Error(data?.error || `שגיאת שרת (${response.status})`);
+      }
+
+      // Remember the site on the agent, so next time it's one click
+      const refreshedAt = new Date().toISOString();
+      setAgents(prev => prev.map(a => a.id === targetId ? { ...a, websiteUrl: data.url || url, websiteRefreshedAt: refreshedAt } : a));
+      setWebsiteRefreshUrl(data.url || url);
+      setDirtyAgents(prev => ({ ...prev, [targetId]: true }));
+
+      const touchedParts: string[] = data.touchedParts || Object.keys(data.changes || {});
+      if (touchedParts.length === 0) {
+        setLastFixSummary(null);
+        setLastFixTouchedParts([]);
+        alert(`נסרקו ${data.pageCount || 1} עמודים מהאתר — המידע והתמונות בבוט כבר תואמים לאתר, לא נדרשו שינויים.${data.imagesCount ? "" : "\n(לא נמצאו באתר תמונות שאפשר לצרף לבוט.)"}`);
+        return;
+      }
+
+      const snapshot: Record<string, string> = {};
+      touchedParts.forEach(key => {
+        snapshot[key] = (currentParts as any)[key] || "";
+      });
+      setPreFixSnapshot(snapshot);
+      applyPromptPartChanges(data.changes);
+      setLastFixSummary(data.summary || "");
+      setLastFixTouchedParts(touchedParts);
+    } catch (err: any) {
+      console.error(err);
+      alert(`לא הצלחנו לעדכן את הבוט מהאתר: ${err?.message || err}`);
+    } finally {
+      setIsRefreshingFromWebsite(false);
     }
   };
 
@@ -5794,6 +5874,9 @@ ${videos || "(לא הוגדר)"}
                     setWizardWebsiteUrl("");
                     setWizardPastedText("");
                     setScrapedText("");
+                    setWizardImagesTopic("");
+                    setWizardImagesCount(0);
+                    setWizardScannedUrl("");
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -6079,6 +6162,9 @@ ${videos || "(לא הוגדר)"}
                     setWizardWebsiteUrl("");
                     setWizardPastedText("");
                     setScrapedText("");
+                    setWizardImagesTopic("");
+                    setWizardImagesCount(0);
+                    setWizardScannedUrl("");
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -7681,6 +7767,9 @@ ${videos || "(לא הוגדר)"}
                       setWizardWebsiteUrl("");
                       setWizardPastedText("");
                       setScrapedText("");
+                      setWizardImagesTopic("");
+                      setWizardImagesCount(0);
+                      setWizardScannedUrl("");
                       setExplorerAnalysis("");
                       setGeneratedPrompts(null);
                       setShowWizardModal(true);
@@ -7867,6 +7956,64 @@ ${videos || "(לא הוגדר)"}
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* Refresh from website — re-scan the business's site after it was updated and refresh the knowledge blocks */}
+              <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-b border-slate-850 bg-[#090a10]">
+                <div className="bg-gradient-to-br from-emerald-950/20 via-teal-950/15 to-slate-950/20 border border-emerald-500/20 rounded-2xl p-4 flex flex-col gap-3" dir="rtl">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-xs font-black text-emerald-300">עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
+                    </div>
+                    {(() => {
+                      const at = agents.find(a => a.id === activeId)?.websiteRefreshedAt;
+                      return at ? (
+                        <span className="text-[9.5px] bg-emerald-900/30 text-emerald-300 border border-emerald-500/20 rounded-full font-black px-2 py-0.5">
+                          עודכן לאחרונה: {new Date(at).toLocaleString("he-IL")}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
+                    המערכת תסרוק מחדש את האתר ותעדכן רק את בלוקי הידע (שירותים ומחירים, קהל יעד, שאלות נפוצות וקישורים) ואת התמונות מהאתר בגלריית המדיה — עם תיאור לכל תמונה, כדי שהבוט יצרף אותן לתשובות רלוונטיות. זהות הבוט, הודעת הפתיחה, זרימת השיחה וחוקי הברזל לא ישתנו. אחרי העדכון תוכלו לבדוק, לבטל או ללחוץ "שמור 💾".
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+                    <input
+                      type="text"
+                      value={websiteRefreshUrl}
+                      onChange={(e) => setWebsiteRefreshUrl(e.target.value)}
+                      placeholder="https://www.your-business.co.il"
+                      dir="ltr"
+                      disabled={isRefreshingFromWebsite}
+                      className="flex-1 px-3 py-2 bg-[#050608] border border-slate-800 rounded-xl text-xs sm:text-sm font-semibold text-slate-100 focus:border-emerald-500 placeholder-slate-600 disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      disabled={isRefreshingFromWebsite || !websiteRefreshUrl.trim()}
+                      onClick={refreshAgentFromWebsite}
+                      className={`px-4 py-2 rounded-xl text-xs font-black font-sans shrink-0 transition duration-150 flex items-center justify-center gap-1.5 border min-w-[130px] ${
+                        isRefreshingFromWebsite
+                          ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
+                          : websiteRefreshUrl.trim()
+                            ? "bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-200 border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer shadow"
+                            : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
+                      }`}
+                    >
+                      {isRefreshingFromWebsite ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>סורק את האתר...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>עדכן מהאתר</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -8539,6 +8686,11 @@ ${videos || "(לא הוגדר)"}
                           <div className="space-y-2 whitespace-pre-wrap leading-relaxed text-slate-300 font-semibold font-sans text-right" dir="rtl">
                             <div className="border-b border-slate-800 pb-1 font-black text-sky-455 text-xs">סיכום ממצאי ה-AI:</div>
                             {explorerAnalysis}
+                            <div className={`border-t border-slate-800 pt-1.5 text-[11px] font-black ${wizardImagesCount ? "text-emerald-400" : "text-slate-500"}`}>
+                              {wizardImagesCount
+                                ? `🖼️ נמצאו ${wizardImagesCount} תמונות באתר — הן ייכנסו לבוט עם תיאור לכל אחת, והוא יצרף אותן לתשובות רלוונטיות.`
+                                : "🖼️ לא נמצאו באתר תמונות שאפשר לצרף לבוט."}
+                            </div>
                           </div>
                         ) : (
                           <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-600 font-bold p-2 text-right">

@@ -11,6 +11,9 @@ export interface AgentConfig {
   lastSyncedAt?: string;
   // Set by the server: when the portal's frames last reached the bot, or pending (never synced since)
   framesStatus?: { at?: string; count: number; inStock?: number; pending?: boolean };
+  // The business's site, used by "עדכן מהאתר" to refresh the knowledge blocks
+  websiteUrl?: string;
+  websiteRefreshedAt?: string;
   welcomeMessage?: string;
   botIdentity?: string;
   coursesInfo?: string;
