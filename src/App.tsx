@@ -7918,13 +7918,13 @@ ${videos || "(לא הוגדר)"}
                   )}
 
                   {lastFixSummary !== null && lastFixTouchedParts.length > 0 && (
-                    <div className="bg-emerald-950/25 border border-emerald-500/30 rounded-xl p-3 flex flex-col gap-2.5">
+                    <div className={`border rounded-xl p-3 flex flex-col gap-2.5 ${isLt ? "bg-emerald-50 border-emerald-200" : "bg-emerald-950/25 border-emerald-500/30"}`}>
                       <div className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span className="text-xs font-black text-emerald-300">בוצעו השינויים הבאים:</span>
+                        <CheckCircle className={`w-4 h-4 shrink-0 ${isLt ? "text-emerald-700" : "text-emerald-400"}`} />
+                        <span className={`text-xs font-black ${isLt ? "text-emerald-800" : "text-emerald-300"}`}>בוצעו השינויים הבאים:</span>
                       </div>
                       {lastFixSummary.trim() && (
-                        <div className="text-[11px] text-emerald-100/90 font-medium leading-relaxed whitespace-pre-line">
+                        <div className={`text-[11px] font-medium leading-relaxed whitespace-pre-line ${isLt ? "text-emerald-950" : "text-emerald-100/90"}`}>
                           {lastFixSummary}
                         </div>
                       )}
@@ -7937,14 +7937,14 @@ ${videos || "(לא הוגדר)"}
                               setActiveModalTab(key);
                               setMobileWorkspaceTab("editor");
                             }}
-                            className="px-2.5 py-1 bg-emerald-900/40 hover:bg-emerald-800/50 border border-emerald-500/30 text-emerald-200 rounded-full text-[10px] font-bold transition cursor-pointer"
+                            className={`px-2.5 py-1 border rounded-full text-[10px] font-bold transition cursor-pointer ${isLt ? "bg-white hover:bg-emerald-100 border-emerald-300 text-emerald-800" : "bg-emerald-900/40 hover:bg-emerald-800/50 border-emerald-500/30 text-emerald-200"}`}
                           >
                             {PROMPT_PART_TITLES[key] || key}
                           </button>
                         ))}
                       </div>
                       <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-900/40">
-                        <span className="text-[10px] text-emerald-300/70 font-medium">בדקו את השינויים בכל בלוק ולחצו "שמור 💾" כדי לשמור אותם.</span>
+                        <span className={`text-[10px] font-medium ${isLt ? "text-emerald-800" : "text-emerald-300/70"}`}>בדקו את השינויים בכל בלוק ולחצו "שמור 💾" כדי לשמור אותם.</span>
                         <button
                           type="button"
                           onClick={undoLastFix}
@@ -7961,16 +7961,16 @@ ${videos || "(לא הוגדר)"}
 
               {/* Refresh from website — re-scan the business's site after it was updated and refresh the knowledge blocks */}
               <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-b border-slate-850 bg-[#090a10]">
-                <div className="bg-gradient-to-br from-emerald-950/20 via-teal-950/15 to-slate-950/20 border border-emerald-500/20 rounded-2xl p-4 flex flex-col gap-3" dir="rtl">
+                <div className={`border rounded-2xl p-4 flex flex-col gap-3 ${isLt ? "bg-emerald-50 border-emerald-200" : "bg-gradient-to-br from-emerald-950/20 via-teal-950/15 to-slate-950/20 border-emerald-500/20"}`} dir="rtl">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span className="text-xs font-black text-emerald-300">עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
+                      <Globe className={`w-4 h-4 shrink-0 ${isLt ? "text-emerald-700" : "text-emerald-400"}`} />
+                      <span className={`text-xs font-black ${isLt ? "text-emerald-800" : "text-emerald-300"}`}>עדכנת את האתר? עדכן/י את הבוט לפי התוכן החדש</span>
                     </div>
                     {(() => {
                       const at = agents.find(a => a.id === activeId)?.websiteRefreshedAt;
                       return at ? (
-                        <span className="text-[9.5px] bg-emerald-900/30 text-emerald-300 border border-emerald-500/20 rounded-full font-black px-2 py-0.5">
+                        <span className={`text-[9.5px] border rounded-full font-black px-2 py-0.5 ${isLt ? "bg-white text-emerald-800 border-emerald-300" : "bg-emerald-900/30 text-emerald-300 border-emerald-500/20"}`}>
                           עודכן לאחרונה: {new Date(at).toLocaleString("he-IL")}
                         </span>
                       ) : null;
@@ -7997,7 +7997,9 @@ ${videos || "(לא הוגדר)"}
                         isRefreshingFromWebsite
                           ? "bg-slate-800/80 text-slate-500 border-slate-800 cursor-not-allowed"
                           : websiteRefreshUrl.trim()
-                            ? "bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-200 border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer shadow"
+                            ? isLt
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 cursor-pointer shadow"
+                              : "bg-emerald-900/50 hover:bg-emerald-800/60 text-emerald-200 border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer shadow"
                             : "bg-slate-900 text-slate-500 border-slate-850 cursor-not-allowed"
                       }`}
                     >
