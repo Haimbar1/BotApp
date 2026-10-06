@@ -23,6 +23,7 @@ import {
 } from "./storage.js";
 import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount } from "./siteFrames.js";
+import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
 // started by startServer() at the bottom; on Vercel api/index.ts wraps it as a serverless function.
@@ -3172,7 +3173,7 @@ export async function createApp() {
   // Scrapes a site: home page + up to 3 internal pages + links to documents. Shared by the wizard's
   // explorer and by "עדכן מהאתר" on an existing agent.
   const scrapeWebsite = async (rawUrl: string): Promise<
-    { ok: true; url: string; hostname: string; scrapedText: string; pageCount: number } | { ok: false; status: number; error: string }
+    { ok: true; url: string; hostname: string; scrapedText: string; pageCount: number; images: SiteImage[] } | { ok: false; status: number; error: string }
   > => {
     let url = String(rawUrl || "").trim();
     if (!url) return { ok: false, status: 400, error: "אנא הזן כתובת אתר" };
@@ -3194,11 +3195,17 @@ export async function createApp() {
 
     const parts: string[] = [extractCleanText(mainHtml)];
     const subPages = extractInternalPageLinks(mainHtml, url).slice(0, 3);
-    const subTexts = await Promise.all(subPages.map(async (p) => {
-      const html = await fetchPageHtml(p, 6000);
-      return html ? extractCleanText(html) : "";
-    }));
+    const subHtmls = await Promise.all(subPages.map((p) => fetchPageHtml(p, 6000)));
+    const subTexts = subHtmls.map((html) => (html ? extractCleanText(html) : ""));
     subTexts.forEach((t, i) => { if (t) parts.push(`--- ${subPages[i]} ---\n${t}`); });
+
+    // Images: home page first (a carousel at the top stays first), then the internal pages. A site
+    // built as a JavaScript app has (almost) none in its HTML, so its script bundle is read too.
+    let images = mergeSiteImages(
+      extractImageCandidates(mainHtml, url),
+      ...subHtmls.map((html, i) => (html ? extractImageCandidates(html, subPages[i]) : []))
+    );
+    if (images.length < 3) images = await extractImagesFromScripts(mainHtml, url, fetchPageHtml, images);
     const docLinks = extractDocumentLinks(mainHtml, url);
     if (docLinks.length) parts.push(`קישורים למסמכים/ברושורים:\n${docLinks.join("\n")}`);
     return {
@@ -3207,7 +3214,14 @@ export async function createApp() {
       hostname: parsed.hostname,
       scrapedText: parts.join("\n\n").substring(0, 20000),
       pageCount: 1 + subTexts.filter(Boolean).length,
+      images,
     };
+  };
+
+  // The site's images as the media section's website topic ("" when none is worth showing)
+  const websiteImagesTopicFor = async (aiClient: any, scraped: { url: string; scrapedText: string; images: SiteImage[] }, businessName: string) => {
+    const described = await describeSiteImages(aiClient, generateWithFallback, scraped.images, scraped.scrapedText, businessName);
+    return { topic: websiteImagesTopic(described, scraped.url, businessName), count: described.length };
   };
 
   app.post("/api/ai/explore-website", requireAuth, async (req: any, res: any) => {
@@ -3215,6 +3229,14 @@ export async function createApp() {
       const scraped = await scrapeWebsite(req.body?.url);
       if ("error" in scraped) return res.status(scraped.status).json({ success: false, error: scraped.error });
       const { scrapedText } = scraped;
+
+      // The site's images (with descriptions) for the new bot's media section, alongside the summary
+      const imagesPromise = geminiFor(req.user?.tenantId)
+        .then((client) => websiteImagesTopicFor(client, scraped, String(req.body?.businessName || "")))
+        .catch((e: any) => {
+          console.warn("[EXPLORE] Collecting the site's images failed:", e?.message || e);
+          return { topic: "", count: 0 };
+        });
 
       let analysis = `נסרקו ${scraped.pageCount} עמודים מהאתר ${scraped.hostname}. הטקסט ישמש לבניית השכל של הבוט.`;
       if (ai) {
@@ -3232,7 +3254,8 @@ export async function createApp() {
         }
       }
 
-      return res.json({ success: true, scrapedText, analysis });
+      const images = await imagesPromise;
+      return res.json({ success: true, url: scraped.url, scrapedText, analysis, imagesTopic: images.topic, imagesCount: images.count });
     } catch (err: any) {
       console.error("[EXPLORE] Error:", err);
       return res.status(500).json({ success: false, error: "שגיאה בסריקת האתר" });
@@ -3240,8 +3263,9 @@ export async function createApp() {
   });
 
   // "עדכן מהאתר" on an existing agent: re-scrapes the business's site and rewrites only the knowledge
-  // blocks (services/prices, audience, FAQ, links) so they match the site again. Identity, welcome
-  // message, flow, style, rules, escalation and media are never touched. Nothing is saved here: the
+  // blocks (services/prices, audience, FAQ, links) so they match the site again, and replaces the
+  // website topic in the media section with the site's current images. Identity, welcome message,
+  // flow, style, rules, escalation and the rest of the media are never touched. Nothing is saved here: the
   // browser applies the changes to the editor, and the user reviews and saves (with undo).
   const WEBSITE_KNOWLEDGE_PARTS: Record<string, string> = {
     coursesInfo: "מה אני מוכר — שירותים/מוצרים/קורסים",
@@ -3288,6 +3312,11 @@ export async function createApp() {
       const changesProperties: Record<string, any> = {};
       partKeys.forEach(k => { changesProperties[k] = { type: Type.STRING }; });
 
+      // The images are described in parallel with the text update (both are Gemini calls)
+      const imagesPromise = websiteImagesTopicFor(ai, scraped, String(businessName || "")).catch((e: any) => {
+        console.warn("[REFRESH-FROM-WEBSITE] Collecting the site's images failed:", e?.message || e);
+        return { topic: "", count: 0 };
+      });
       const response = await generateWithFallback(ai, {
         model: "gemini-3.5-flash",
         contents: promptToModel,
@@ -3304,6 +3333,7 @@ export async function createApp() {
         }
       });
       if (!response?.text) throw new Error("Empty response returned from Gemini.");
+      const images = await imagesPromise;
       const parsed = JSON.parse(response.text.trim());
 
       const rawChanges = parsed.changes || {};
@@ -3315,13 +3345,28 @@ export async function createApp() {
         }
       });
 
+      // The media section's website topic is replaced with the site's current images. When none were
+      // found (the site blocked them, a hiccup) the previous topic stays rather than being wiped.
+      let summary = String(parsed.summary || "").trim();
+      if (images.topic) {
+        const currentImages = String(safeParts.imagesInfo || "");
+        const nextImages = withWebsiteImagesTopic(currentImages, images.topic);
+        if (nextImages.trim() !== currentImages.trim()) {
+          changes.imagesInfo = nextImages;
+          summary += `${summary ? "\n" : ""}תמונות וגלריית מדיה: עודכנו ${images.count} תמונות מהאתר עם תיאור לכל אחת, והבוט יצרף אותן לתשובות רלוונטיות.`;
+        }
+      } else {
+        summary += `${summary ? "\n" : ""}לא נמצאו באתר תמונות שאפשר לצרף לבוט (ייתכן שהאתר חוסם הורדת תמונות); התמונות הקיימות בבוט לא שונו.`;
+      }
+
       return res.json({
         success: true,
         url: scraped.url,
         pageCount: scraped.pageCount,
+        imagesCount: images.count,
         changes,
         touchedParts: Object.keys(changes),
-        summary: parsed.summary || ""
+        summary
       });
     } catch (err: any) {
       console.error("[REFRESH-FROM-WEBSITE] Error:", err);

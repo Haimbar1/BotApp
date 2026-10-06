@@ -1993,6 +1993,10 @@ export default function App() {
   const [isExploringUrl, setIsExploringUrl] = useState<boolean>(false);
   const [explorerAnalysis, setExplorerAnalysis] = useState<string>("");
   const [scrapedText, setScrapedText] = useState<string>("");
+  // The scanned site's images, as a ready topic for the new bot's media section
+  const [wizardImagesTopic, setWizardImagesTopic] = useState<string>("");
+  const [wizardImagesCount, setWizardImagesCount] = useState<number>(0);
+  const [wizardScannedUrl, setWizardScannedUrl] = useState<string>("");
   
   // Custom answers state
   const [wizardAnswers, setWizardAnswers] = useState({
@@ -2193,7 +2197,10 @@ export default function App() {
     setIsExploringUrl(true);
     setExplorerAnalysis("");
     setScrapedText("");
-    
+    setWizardImagesTopic("");
+    setWizardImagesCount(0);
+    setWizardScannedUrl("");
+
     try {
       const res = await apiFetch("/api/ai/explore-website", {
         method: "POST",
@@ -2201,7 +2208,7 @@ export default function App() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${sessionToken || localStorage.getItem("cyber_session_token")}`
         },
-        body: JSON.stringify({ url: wizardWebsiteUrl })
+        body: JSON.stringify({ url: wizardWebsiteUrl, businessName: wizardBusinessName })
       });
       
       // A timeout or a missing route answers with HTML, not JSON
@@ -2209,6 +2216,9 @@ export default function App() {
       if (res.ok && data.success) {
         setScrapedText(data.scrapedText);
         setExplorerAnalysis(data.analysis);
+        setWizardImagesTopic(data.imagesTopic || "");
+        setWizardImagesCount(data.imagesCount || 0);
+        setWizardScannedUrl(data.url || targetUrl);
       } else {
         alert(data.error || "נכשל בסריקת הכתובת. ייתכן והאתר חוסם בוטים או דורש הזנה ידנית.");
         setExplorerAnalysis("סריקה נכשלה. אנא העתק והדבק את הטקסט ידנית בתיבת המידע.");
@@ -2358,7 +2368,8 @@ export default function App() {
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
-      const newImagesInfo = generatedPrompts?.imagesInfo || "";
+      // The scanned site's images go into the media section as their own topic
+      const newImagesInfo = [generatedPrompts?.imagesInfo || "", wizardImagesTopic].filter(t => t.trim()).join("\n\n");
       const newVideosInfo = generatedPrompts?.videosInfo || "";
 
       // Compile dynamic unified businessPrompt based on the generated parts!
@@ -2404,6 +2415,7 @@ export default function App() {
         humanEscalation: newHumanEscalation,
         imagesInfo: newImagesInfo,
         videosInfo: newVideosInfo,
+        ...(wizardScannedUrl ? { websiteUrl: wizardScannedUrl, websiteRefreshedAt: new Date().toISOString() } : {}),
       };
 
       const updated = [...agents, newAgent];
@@ -3585,7 +3597,7 @@ ${videos || "(לא הוגדר)"}
       if (touchedParts.length === 0) {
         setLastFixSummary(null);
         setLastFixTouchedParts([]);
-        alert(`נסרקו ${data.pageCount || 1} עמודים מהאתר — המידע בבוט כבר תואם לאתר, לא נדרשו שינויים.`);
+        alert(`נסרקו ${data.pageCount || 1} עמודים מהאתר — המידע והתמונות בבוט כבר תואמים לאתר, לא נדרשו שינויים.${data.imagesCount ? "" : "\n(לא נמצאו באתר תמונות שאפשר לצרף לבוט.)"}`);
         return;
       }
 
@@ -5862,6 +5874,9 @@ ${videos || "(לא הוגדר)"}
                     setWizardWebsiteUrl("");
                     setWizardPastedText("");
                     setScrapedText("");
+                    setWizardImagesTopic("");
+                    setWizardImagesCount(0);
+                    setWizardScannedUrl("");
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -6147,6 +6162,9 @@ ${videos || "(לא הוגדר)"}
                     setWizardWebsiteUrl("");
                     setWizardPastedText("");
                     setScrapedText("");
+                    setWizardImagesTopic("");
+                    setWizardImagesCount(0);
+                    setWizardScannedUrl("");
                     setExplorerAnalysis("");
                     setGeneratedPrompts(null);
                     setShowWizardModal(true);
@@ -7749,6 +7767,9 @@ ${videos || "(לא הוגדר)"}
                       setWizardWebsiteUrl("");
                       setWizardPastedText("");
                       setScrapedText("");
+                      setWizardImagesTopic("");
+                      setWizardImagesCount(0);
+                      setWizardScannedUrl("");
                       setExplorerAnalysis("");
                       setGeneratedPrompts(null);
                       setShowWizardModal(true);
@@ -7956,7 +7977,7 @@ ${videos || "(לא הוגדר)"}
                     })()}
                   </div>
                   <p className="text-[10.5px] text-slate-400 font-medium leading-relaxed">
-                    המערכת תסרוק מחדש את האתר ותעדכן רק את בלוקי הידע: שירותים ומחירים, קהל יעד, שאלות נפוצות וקישורים. זהות הבוט, הודעת הפתיחה, זרימת השיחה וחוקי הברזל לא ישתנו. אחרי העדכון תוכלו לבדוק, לבטל או ללחוץ "שמור 💾".
+                    המערכת תסרוק מחדש את האתר ותעדכן רק את בלוקי הידע (שירותים ומחירים, קהל יעד, שאלות נפוצות וקישורים) ואת התמונות מהאתר בגלריית המדיה — עם תיאור לכל תמונה, כדי שהבוט יצרף אותן לתשובות רלוונטיות. זהות הבוט, הודעת הפתיחה, זרימת השיחה וחוקי הברזל לא ישתנו. אחרי העדכון תוכלו לבדוק, לבטל או ללחוץ "שמור 💾".
                   </p>
                   <div className="flex flex-col sm:flex-row gap-2 items-stretch">
                     <input
@@ -8665,6 +8686,11 @@ ${videos || "(לא הוגדר)"}
                           <div className="space-y-2 whitespace-pre-wrap leading-relaxed text-slate-300 font-semibold font-sans text-right" dir="rtl">
                             <div className="border-b border-slate-800 pb-1 font-black text-sky-455 text-xs">סיכום ממצאי ה-AI:</div>
                             {explorerAnalysis}
+                            <div className={`border-t border-slate-800 pt-1.5 text-[11px] font-black ${wizardImagesCount ? "text-emerald-400" : "text-slate-500"}`}>
+                              {wizardImagesCount
+                                ? `🖼️ נמצאו ${wizardImagesCount} תמונות באתר — הן ייכנסו לבוט עם תיאור לכל אחת, והוא יצרף אותן לתשובות רלוונטיות.`
+                                : "🖼️ לא נמצאו באתר תמונות שאפשר לצרף לבוט."}
+                            </div>
                           </div>
                         ) : (
                           <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-600 font-bold p-2 text-right">
