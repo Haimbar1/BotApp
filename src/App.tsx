@@ -63,6 +63,7 @@ import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
 import { getMessageSourceInfo, getSessionSourceInfo, cleanSourceFromText, getWhatsAppWebUrl } from "./lib/sourceHelper";
 import { synthesizePromptFixes, sanitizeBlockContent } from "./lib/promptDiagnosis";
 import { withSiteFaq, type SiteFaq } from "./lib/siteFaq";
+import { withWebsiteImagesTopic } from "./lib/websiteImagesTopic";
 
 // Helper to determine if an agent belongs to or is accessible by a given user
 export function isAgentOwnedByUser(agent: any, userEmail: string): boolean {
@@ -2239,6 +2240,18 @@ export default function App() {
   };
 
   // Function to build standard high-quality prompts locally (fallback or no-AI path)
+  // The scanned site's content that the wizard adds itself, whatever produced the prompts: every
+  // question of the site's FAQ, and the site's images as their own topic in the media section. Done
+  // when the preview is shown, so the bot is created exactly as previewed (and edited) there.
+  const withScannedSiteContent = (prompts: any) => {
+    if (!prompts) return prompts;
+    return {
+      ...prompts,
+      faqAnswers: withSiteFaq(prompts.faqAnswers || "", wizardSiteFaqs),
+      imagesInfo: wizardImagesTopic ? withWebsiteImagesTopic(prompts.imagesInfo || "", wizardImagesTopic) : prompts.imagesInfo || "",
+    };
+  };
+
   const handleGenerateDefaultLocalPrompts = () => {
     const biz = wizardBusinessName?.trim() || "העסק שלנו";
     const own = wizardOwnerName?.trim() || "מנהל הסוכנות";
@@ -2300,7 +2313,7 @@ export default function App() {
     };
 
     const targetTemplate = defaultPromptsByTemplate[wizardTemplateId] || defaultPromptsByTemplate.sales;
-    setGeneratedPrompts(targetTemplate);
+    setGeneratedPrompts(withScannedSiteContent(targetTemplate));
     setWizardStep(3);
   };
 
@@ -2335,7 +2348,7 @@ export default function App() {
       }
 
       if (res.ok && data?.success) {
-        setGeneratedPrompts(data.prompts);
+        setGeneratedPrompts(withScannedSiteContent(data.prompts));
         setWizardStep(3); // Advance to preview
       } else {
         alert(data?.error || `נכשל ביצירת הפרומפטים (סטטוס ${res.status}). ודא כי השרת זמין ומפתח Gemini API מוגדר.`);
@@ -2371,13 +2384,11 @@ export default function App() {
       const newKidsCourses = generatedPrompts?.kidsCourses || "";
       const newConversationFlow = generatedPrompts?.conversationFlow || "";
       const newWritingStyle = generatedPrompts?.writingStyle || "";
-      // Every question of the scanned site's FAQ goes into the bot's FAQ block
-      const newFaqAnswers = withSiteFaq(generatedPrompts?.faqAnswers || "", wizardSiteFaqs);
+      const newFaqAnswers = generatedPrompts?.faqAnswers || "";
       const newWhatNotToDo = generatedPrompts?.whatNotToDo || "";
       const newSyllabusLinks = generatedPrompts?.syllabusLinks || "";
       const newHumanEscalation = generatedPrompts?.humanEscalation || "";
-      // The scanned site's images go into the media section as their own topic
-      const newImagesInfo = [generatedPrompts?.imagesInfo || "", wizardImagesTopic].filter(t => t.trim()).join("\n\n");
+      const newImagesInfo = generatedPrompts?.imagesInfo || "";
       const newVideosInfo = generatedPrompts?.videosInfo || "";
 
       // Compile dynamic unified businessPrompt based on the generated parts!
@@ -8861,6 +8872,21 @@ ${videos || "(לא הוגדר)"}
                     </button>
                   ) : wizardStep === 2 ? (
                     <div className="flex items-center gap-2 select-none">
+                      {generatedPrompts && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Back to the prompts already made (with any edits); a new scan's images/FAQ are added
+                            setGeneratedPrompts((prev: any) => withScannedSiteContent(prev));
+                            setWizardStep(3);
+                          }}
+                          disabled={isGeneratingPrompts}
+                          className="px-4 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow transition"
+                          title="חזרה לפרומפטים שכבר נוצרו (כולל העריכות שלך) בלי ליצור אותם מחדש"
+                        >
+                          המשך בלי חילול מחדש ➜
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={handleGenerateDefaultLocalPrompts}
