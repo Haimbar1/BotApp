@@ -1363,11 +1363,20 @@ export async function createApp() {
         const overrideError = await subscribe({ override_callback_uri: callbackUrl, verify_token: verifyToken });
         if (overrideError) {
           const appLabel = tokenApp ? `"${tokenApp.name}" (${tokenApp.id})` : "האפליקציה שממנה נוצר הטוקן";
+          // Meta wants the token's app to have an app-level WhatsApp webhook with the "messages" field.
+          // BotApp sets that up itself only for the app in META_APP_ID/META_APP_SECRET; otherwise say
+          // how to do it by hand, or how to get a token from that app instead.
+          const systemAppId = process.env.META_APP_ID || "";
+          const otherApp = !!(tokenApp && systemAppId && tokenApp.id !== systemAppId);
           const hint = /must be subscribed/i.test(overrideError)
-            ? ` הטוקן של הבוט שייך לאפליקציה ${appLabel}. היכנס לאפליקציה הזו ב-developers.facebook.com → WhatsApp → Configuration → Webhook, הגדר את הכתובת וה-Verify Token והירשם לשדה messages` +
-              (tokenApp && process.env.META_APP_ID && tokenApp.id !== process.env.META_APP_ID
-                ? ` (או שים ב-Vercel את META_APP_ID=${tokenApp.id} ואת הסוד של האפליקציה הזו, ו-BotApp יעשה זאת לבד).`
-                : ".")
+            ? ` הטוקן של הבוט שייך לאפליקציה ${appLabel}, ו-Meta דורשת שלאפליקציה הזו יהיה Webhook של WhatsApp עם השדה messages.` +
+              (tokenApp && tokenApp.id === systemAppId && !process.env.META_APP_SECRET
+                ? " זו האפליקציה של המערכת, אבל חסר ב-Vercel הסוד שלה (META_APP_SECRET), ולכן BotApp לא יכול להגדיר את זה לבד — הוסף אותו ונסה שוב, או:"
+                : otherApp ? " אפשר לתקן באחת משתי דרכים:" : " כדי לתקן:") +
+              ` (1) ב-developers.facebook.com פתח את האפליקציה ${appLabel} ← WhatsApp ← Configuration ← Webhook. אם כבר מוגדרת שם כתובת — אל תשנה אותה (היא משמשת מספרים אחרים), רק סמן Subscribe ליד messages; אם אין — הזן את הכתובת וה-Verify Token שהזנת כאן, שמור, וסמן Subscribe ליד messages. ואז לחץ כאן שוב על חיבור ה-Webhook.` +
+              (otherApp
+                ? ` (2) או צור ב-business.facebook.com ← משתמשי מערכת טוקן חדש מהאפליקציה של המערכת (${systemAppId}), עם גישה ל-WABA הזה וההרשאות whatsapp_business_messaging ו-whatsapp_business_management, ושמור אותו בהגדרות הוואטסאפ של הבוט — אז BotApp יגדיר את ה-Webhook לבד.`
+                : "")
             : "";
           return res.json({ success: false, error: "graph_error", message: `ה-WABA חובר לאפליקציה, אבל הגדרת כתובת ה-Webhook נכשלה: ${overrideError}.${hint}` });
         }
