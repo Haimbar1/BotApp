@@ -45,7 +45,9 @@ import {
   Loader2,
   Stethoscope,
   Undo2,
-  HelpCircle
+  HelpCircle,
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import confetti from "canvas-confetti";
@@ -543,6 +545,10 @@ export default function App() {
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [promptBuilderBackup, setPromptBuilderBackup] = useState<AgentConfig | null>(null);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"blocks" | "editor" | "preview">("blocks");
+  // Text search across the 12 prompt blocks, and "copy the whole prompt" in the prompt workspace
+  const [promptSearch, setPromptSearch] = useState("");
+  const [promptSearchPos, setPromptSearchPos] = useState(-1);
+  const [fullPromptCopied, setFullPromptCopied] = useState(false);
 
   // Persistent theme style (Default to "light" model based on user request)
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -3918,6 +3924,78 @@ ${videos || "(לא הוגדר)"}
     setAgents(updated);
     saveAgentsToServer(updated);
     setDirtyAgents(prev => ({ ...prev, [activeId]: true }));
+  };
+
+  // Every match of the search text in the prompt blocks, in block order (case-insensitive)
+  const promptBlockValues: { key: string; value: string }[] = [
+    { key: "welcomeMessage", value: welcomeMessage },
+    { key: "botIdentity", value: botIdentity },
+    { key: "coursesInfo", value: coursesInfo },
+    { key: "kidsCourses", value: kidsCourses },
+    { key: "conversationFlow", value: conversationFlow },
+    { key: "writingStyle", value: writingStyle },
+    { key: "faqAnswers", value: faqAnswers },
+    { key: "whatNotToDo", value: whatNotToDo },
+    { key: "syllabusLinks", value: syllabusLinks },
+    { key: "humanEscalation", value: humanEscalation },
+    { key: "imagesInfo", value: imagesInfo },
+    { key: "videosInfo", value: videosInfo }
+  ];
+  const promptSearchMatches: { key: string; index: number }[] = [];
+  const promptSearchQuery = promptSearch.trim().toLowerCase();
+  if (promptSearchQuery) {
+    for (const block of promptBlockValues) {
+      const text = (block.value || "").toLowerCase();
+      let i = text.indexOf(promptSearchQuery);
+      while (i !== -1) {
+        promptSearchMatches.push({ key: block.key, index: i });
+        i = text.indexOf(promptSearchQuery, i + promptSearchQuery.length);
+      }
+    }
+  }
+
+  // Jump to a match: open its block and select the found text in the editor
+  const goToPromptSearchMatch = (pos: number) => {
+    if (promptSearchMatches.length === 0) return;
+    const n = promptSearchMatches.length;
+    const wrapped = ((pos % n) + n) % n;
+    const match = promptSearchMatches[wrapped];
+    setPromptSearchPos(wrapped);
+    setActiveModalTab(match.key);
+    setMobileWorkspaceTab("editor");
+    const len = promptSearchQuery.length;
+    setTimeout(() => {
+      const el = document.getElementById(`modal-prompt-area-${match.key}`) as HTMLTextAreaElement | null;
+      if (!el) return;
+      const details = el.closest("details");
+      if (details) details.open = true;
+      el.focus();
+      el.setSelectionRange(match.index, match.index + len);
+      // Blur and refocus so the browser scrolls the selection into view
+      el.blur();
+      el.focus();
+      el.scrollIntoView({ block: "nearest" });
+    }, 60);
+  };
+
+  // Copy the full compiled prompt (all 12 blocks) to the clipboard
+  const copyFullPrompt = async () => {
+    const full = compilePromptFromParts(
+      welcomeMessage, botIdentity, coursesInfo, kidsCourses, conversationFlow, writingStyle,
+      faqAnswers, whatNotToDo, syllabusLinks, humanEscalation, imagesInfo, videosInfo
+    );
+    try {
+      await navigator.clipboard.writeText(full);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = full;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setFullPromptCopied(true);
+    setTimeout(() => setFullPromptCopied(false), 2000);
   };
 
   // Helper to insert markdown syntax at cursor position
@@ -8074,6 +8152,78 @@ ${videos || "(לא הוגדר)"}
                       <List className="w-4 h-4 text-slate-400" />
                       <span className="text-[10px] sm:text-[11px] font-black text-slate-200 tracking-wide">📦 רשימת תתי-ההנחיות (12 בלוקים)</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={copyFullPrompt}
+                      title="העתק את כל הפרומפט (כל 12 הבלוקים) ללוח"
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition cursor-pointer flex items-center gap-1 shrink-0 border ${
+                        fullPromptCopied
+                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                          : "bg-[#141822] hover:bg-[#1E2433] text-slate-200 border-slate-700"
+                      }`}
+                    >
+                      {fullPromptCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{fullPromptCopied ? "הועתק!" : "העתק הכל"}</span>
+                    </button>
+                  </div>
+
+                  {/* Text search across all blocks */}
+                  <div className="px-2.5 pt-2.5 pb-1 bg-[#0e1017] border-b border-slate-850/50">
+                    <div className="flex items-center gap-1.5 bg-[#050608] border border-slate-800 focus-within:border-sky-500 rounded-lg px-2">
+                      <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <input
+                        type="text"
+                        value={promptSearch}
+                        onChange={(e) => { setPromptSearch(e.target.value); setPromptSearchPos(-1); }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            goToPromptSearchMatch(e.shiftKey ? promptSearchPos - 1 : promptSearchPos + 1);
+                          } else if (e.key === "Escape") {
+                            setPromptSearch("");
+                            setPromptSearchPos(-1);
+                          }
+                        }}
+                        placeholder="חיפוש טקסט בפרומפט..."
+                        dir="rtl"
+                        className="flex-1 min-w-0 py-1.5 bg-transparent text-xs font-semibold text-slate-100 placeholder-slate-600 focus:outline-none"
+                      />
+                      {promptSearchQuery && (
+                        <>
+                          <span className={`text-[9.5px] font-mono font-bold shrink-0 ${promptSearchMatches.length ? "text-sky-300" : "text-rose-300"}`}>
+                            {promptSearchMatches.length
+                              ? `${promptSearchPos >= 0 ? promptSearchPos + 1 : 0}/${promptSearchMatches.length}`
+                              : "אין תוצאות"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => goToPromptSearchMatch(promptSearchPos - 1)}
+                            disabled={!promptSearchMatches.length}
+                            title="התוצאה הקודמת (Shift+Enter)"
+                            className="p-0.5 text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => goToPromptSearchMatch(promptSearchPos + 1)}
+                            disabled={!promptSearchMatches.length}
+                            title="התוצאה הבאה (Enter)"
+                            className="p-0.5 text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPromptSearch(""); setPromptSearchPos(-1); }}
+                            title="נקה חיפוש"
+                            className="p-0.5 text-slate-400 hover:text-white cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* Scrollable tabs */}
@@ -8094,16 +8244,22 @@ ${videos || "(לא הוגדר)"}
                     ].map((sec) => {
                       const isActive = activeModalTab === sec.key;
                       const charCount = (sec.value || "").trim().length;
+                      const matchCount = promptSearchMatches.filter(m => m.key === sec.key).length;
+                      const dimmed = !!promptSearchQuery && matchCount === 0 && !isActive;
                       
                       return (
                         <button
                           key={sec.key}
                           type="button"
                           onClick={() => {
+                            if (matchCount > 0) {
+                              goToPromptSearchMatch(promptSearchMatches.findIndex(m => m.key === sec.key));
+                              return;
+                            }
                             setActiveModalTab(sec.key);
                             setMobileWorkspaceTab("editor");
                           }}
-                          className={`w-full text-right p-3 rounded-xl transition duration-150 flex items-center justify-between cursor-pointer group border ${
+                          className={`w-full text-right p-3 rounded-xl transition duration-150 flex items-center justify-between cursor-pointer group border ${dimmed ? "opacity-40 " : ""}${
                             isActive 
                               ? "bg-[#181d2d] text-sky-400 border-sky-500/30 font-bold shadow-md ring-1 ring-sky-500/10" 
                               : "bg-[#0c0d13]/70 hover:bg-[#141724]/40 hover:text-slate-200 text-slate-300 border-transparent"
@@ -8118,6 +8274,11 @@ ${videos || "(לא הוגדר)"}
                           </div>
 
                           <div className="flex items-center gap-1.5 flex-shrink-0 mr-2">
+                            {matchCount > 0 && (
+                              <span className="text-[9.5px] bg-sky-500/15 text-sky-300 border border-sky-500/40 px-2 py-0.5 rounded-lg font-mono font-bold shadow-sm" title="מספר התוצאות בבלוק">
+                                🔍 {matchCount}
+                              </span>
+                            )}
                             {charCount > 0 ? (
                               <span className="text-[9.5px] bg-[#07130e] text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-lg font-mono font-bold shadow-sm">
                                 {charCount} תווים
