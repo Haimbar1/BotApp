@@ -88,6 +88,22 @@ export async function effectiveWhatsappConfig(agent: any): Promise<any> {
   return config;
 }
 
+// The agents of the business whose portal vault holds this WhatsApp phone number id — for a number
+// entered only in the portal ("מזהים וחיבורים"), which the phone → bot map (built from the agents'
+// own settings) doesn't know. The optics' vault isn't consulted (its agents keep their own settings).
+export async function agentsForVaultPhone(allAgents: any[], phoneNumberId: string): Promise<any[]> {
+  if (!phoneNumberId) return [];
+  const tenants = Array.from(new Set(allAgents.map((a) => (a?.tenantId != null ? String(a.tenantId) : "")))).filter(
+    (t) => t && t !== ORIGINAL_TENANT
+  );
+  for (const t of tenants) {
+    if (String((await vaultSecrets(t)).META_PHONE_NUMBER_ID || "").trim() === phoneNumberId) {
+      return allAgents.filter((a) => String(a?.tenantId ?? "") === t);
+    }
+  }
+  return [];
+}
+
 // The vault fields of an agent's WhatsApp connection.
 export const whatsappVaultValues = (config: any) => ({
   META_PHONE_NUMBER_ID: config?.phoneNumberId,

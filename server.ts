@@ -22,7 +22,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, ORIGINAL_TENANT } from "./secrets.js";
+import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -1605,6 +1605,22 @@ export async function createApp() {
       if (!agent && displayPhone) {
         agent = allAgents.find((a: any) => toIntlDigits(a.whatsappConfig?.phoneNumber) === displayPhone)
           || allAgents.find((a: any) => a.whatsappConfig?.phoneNumberId && toIntlDigits(a.ownerPhone) === displayPhone);
+      }
+      // Last: a number entered only in the portal vault — that business's agent. If the business has
+      // several agents, the one with a WhatsApp connection of its own; otherwise it's ambiguous.
+      if (!agent && phoneNumberId) {
+        const candidates = await agentsForVaultPhone(allAgents, phoneNumberId);
+        const connected = candidates.filter((a: any) => a.whatsappConfig);
+        if (candidates.length === 1) agent = candidates[0];
+        else if (connected.length === 1) agent = connected[0];
+        else if (candidates.length > 1) {
+          return res.status(409).json({
+            success: false,
+            error: "ambiguous",
+            message: `המספר שייך לעסק עם כמה סוכנים (${candidates.map((a: any) => a.businessName || a.botId).join(", ")}). פתחו ב-BotApp את הסוכן הנכון ← "חיבור WhatsApp Business" ← "שמור הגדרות".`,
+            bots: candidates.map((a: any) => ({ botId: a.botId || a.id, businessName: a.businessName || "" })),
+          });
+        }
       }
     } else if (session) {
       agent = allAgents.find((a: any) => (a.agentEmail || "").toLowerCase().trim() === String(session.email || "").toLowerCase().trim());
