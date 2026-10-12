@@ -1119,7 +1119,10 @@ export async function createApp() {
         // a business belongs to that business.
         next = agents.map((a: any) => {
           const kept = keepStoredWhatsappConfig(a);
-          return !storedById.has(a?.id) && kept.tenantId == null && sessionTenant ? { ...kept, tenantId: sessionTenant } : kept;
+          const stored = storedById.get(a?.id);
+          // An existing agent's business is set in the portal ("בוטים"), never by the browser's copy
+          if (stored) return { ...kept, tenantId: stored.tenantId };
+          return kept.tenantId == null && sessionTenant ? { ...kept, tenantId: sessionTenant } : kept;
         });
       }
       const saved = saveAgents(next);
@@ -2931,6 +2934,55 @@ export async function createApp() {
         details: err?.message || String(err),
       });
     }
+  });
+
+  // The portal's "בוטים" screen (super admin): which business each agent belongs to, and moving an
+  // agent to another business (or none). Server-to-server: a short-lived JWT signed with
+  // SSO_SHARED_SECRET — { typ: 'botapp-agents' } to list, { typ: 'botapp-agent-tenant', agentId,
+  // tenantId (null = none) } to change. The agent's WhatsApp connection is untouched, so nothing is
+  // written to any business's vault by a move.
+  const portalClaims = (req: any, res: any, typ: string) => {
+    const secret = process.env.SSO_SHARED_SECRET;
+    if (!secret) {
+      res.status(500).json({ error: "sso-not-configured" });
+      return null;
+    }
+    try {
+      const claims: any = jwt.verify(String(req.body?.token || ""), secret);
+      if (claims?.typ !== typ) throw new Error("typ");
+      return claims;
+    } catch {
+      res.status(401).json({ error: "invalid-token" });
+      return null;
+    }
+  };
+
+  app.post("/api/portal/agents", (req: any, res: any) => {
+    if (!portalClaims(req, res, "botapp-agents")) return;
+    res.json({
+      agents: readAgents().map((a: any) => ({
+        id: String(a.id || ""),
+        botId: String(a.botId || ""),
+        businessName: String(a.businessName || ""),
+        status: String(a.status || ""),
+        agentEmail: String(a.agentEmail || ""),
+        tenantId: a.tenantId != null ? String(a.tenantId) : null,
+        phoneNumberId: String(a.whatsappConfig?.phoneNumberId || ""),
+      })),
+    });
+  });
+
+  app.post("/api/portal/agents/tenant", (req: any, res: any) => {
+    const claims = portalClaims(req, res, "botapp-agent-tenant");
+    if (!claims) return;
+    const agentId = String(claims.agentId || "");
+    const tenantId = claims.tenantId != null && String(claims.tenantId) !== "" ? String(claims.tenantId) : undefined;
+    const allAgents = readAgents();
+    const idx = allAgents.findIndex((a: any) => a.id === agentId);
+    if (idx === -1) return res.status(404).json({ error: "agent-not-found" });
+    allAgents[idx] = { ...allAgents[idx], tenantId };
+    if (!saveAgents(allAgents)) return res.status(500).json({ error: "write-failed" });
+    res.json({ ok: true, agentId, tenantId: tenantId ?? null });
   });
 
   // The portal calls this after a business's website frames changed (added / hidden / deleted):

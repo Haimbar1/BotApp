@@ -6045,7 +6045,7 @@ ${videos || "(לא הוגדר)"}
             {/* Admin inside a business: its agents only, or every business's */}
             {listBusiness && (() => {
               const activeAgent = agents.find(a => a.id === activeId);
-              const canAssign = showAllBusinesses && activeAgent && String(activeAgent.tenantId ?? "") !== listBusiness.id;
+              const otherBusiness = showAllBusinesses && activeAgent && String(activeAgent.tenantId ?? "") !== listBusiness.id;
               return (
                 <div className="flex flex-col gap-1.5 bg-[#12141C] p-2 rounded-lg border border-slate-850 text-[11px]">
                   <div className="flex items-center justify-between gap-2">
@@ -6066,19 +6066,10 @@ ${videos || "(לא הוגדר)"}
                       הצג את כל העסקים
                     </label>
                   </div>
-                  {canAssign && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (activeAgent.tenantId && !confirm(`הסוכן "${activeAgent.businessName}" שייך לעסק אחר. להעביר אותו לעסק "${listBusiness.name || listBusiness.id}"?`)) return;
-                        const updated = agents.map(a => (a.id === activeAgent.id ? { ...a, tenantId: listBusiness.id } : a));
-                        setAgents(updated);
-                        saveAgentsToServer(updated);
-                      }}
-                      className="py-1 rounded-md bg-sky-600/20 text-sky-300 border border-sky-700/40 hover:bg-sky-600/30 font-bold cursor-pointer"
-                    >
-                      שייך את "{activeAgent.businessName}" לעסק הזה
-                    </button>
+                  {otherBusiness && (
+                    <span className="text-slate-500">
+                      "{activeAgent.businessName}" {activeAgent.tenantId ? "שייך לעסק אחר" : "לא משויך לעסק"} — שיוך בוטים לעסקים: בפורטל ← ניהול מערכת ← בוטים
+                    </span>
                   )}
                 </div>
               );
