@@ -22,7 +22,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, ORIGINAL_TENANT } from "./secrets.js";
+import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -627,11 +627,17 @@ export async function createApp() {
         return res.status(400).json({ success: false, error: "missing_email", message: "לא התקבל אימייל מחשבון הגוגל" });
       }
 
+      // A person who belongs to a business in the portal gets that business, as when coming in
+      // through the portal (the platform admin sees every business either way). They are not a
+      // new trial user: no auto-registration and no "בוט גנרי".
+      const portalBusinesses = isSuper({ email }) ? null : await portalBusinessesFor(email);
+      const portalBusiness = portalBusinesses?.[0] || null;
+
       // Check against current allowed emails (case-insensitive)
       const currentSettings = readSettings();
       const allowedCollection = (currentSettings.allowedEmails || []).map((e: string) => e.toLowerCase().trim());
 
-      let isAllowed = allowedCollection.includes(email);
+      let isAllowed = allowedCollection.includes(email) || !!portalBusiness;
 
       let isNewUser = false;
       if (!isAllowed) {
@@ -748,7 +754,12 @@ export async function createApp() {
 
       // Sign-in authorized: Create server-side session token
       const sessionToken = "session_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
-      activeSessions.set(sessionToken, { email, name, picture });
+      activeSessions.set(sessionToken, {
+        email,
+        name,
+        picture,
+        ...(portalBusiness ? { tenantId: portalBusiness.id, tenantName: portalBusiness.name } : {}),
+      });
       saveSessions(activeSessions);
 
       console.log(`[SERVER] Successful login: ${name} (${email})`);
@@ -819,7 +830,7 @@ export async function createApp() {
   });
 
   // Verify active session
-  app.get("/api/auth/session", (req, res) => {
+  app.get("/api/auth/session", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.json({ success: false });
@@ -828,6 +839,16 @@ export async function createApp() {
     const session = getSession(token);
     if (!session) {
       return res.json({ success: false });
+    }
+    // A connection opened before sign-ins knew the business (direct Google sign-in): fill in the
+    // person's portal business now, so they don't have to sign out and in again.
+    if (!session.tenantId && !isSuper(session)) {
+      const business = (await portalBusinessesFor(String(session.email || "").toLowerCase().trim()))?.[0];
+      if (business) {
+        Object.assign(session, { tenantId: business.id, tenantName: business.name });
+        activeSessions.set(token, session);
+        saveSessions(activeSessions);
+      }
     }
     return res.json({ success: true, user: session });
   });

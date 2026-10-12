@@ -40,6 +40,31 @@ export async function vaultSecrets(tenant: string | number | undefined | null): 
   }
 }
 
+// The portal businesses this e-mail can open BotApp in (portal's /api/sso/tenants, signed with
+// SSO_SHARED_SECRET), lowest id first. Lets a direct Google sign-in land in the person's business
+// like a sign-in through the portal does. null = the portal couldn't be asked; [] = not a portal user.
+export async function portalBusinessesFor(email: string): Promise<{ id: string; name: string }[] | null> {
+  const sharedSecret = process.env.SSO_SHARED_SECRET;
+  if (!sharedSecret || !email) return null;
+  try {
+    const token = jwt.sign({ email }, sharedSecret, { expiresIn: "30s" });
+    const res = await fetch(`${PORTAL_URL}/api/sso/tenants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, moduleKey: "BOTApp" }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`portal ${res.status}`);
+    const data: any = await res.json();
+    return (Array.isArray(data?.tenants) ? data.tenants : [])
+      .map((t: any) => ({ id: String(t.id), name: String(t.name || "") }))
+      .sort((a: any, b: any) => Number(a.id) - Number(b.id));
+  } catch (err: any) {
+    console.warn("[portal] reading the user's businesses failed:", err?.message);
+    return null;
+  }
+}
+
 // The original business (portal tenant 1, the optics) keeps running on Vercel first.
 export const ORIGINAL_TENANT = "1";
 
