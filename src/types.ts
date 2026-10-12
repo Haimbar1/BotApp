@@ -9,6 +9,8 @@ export interface AgentConfig {
   key: string;
   leadFollowUpDays?: string;
   lastSyncedAt?: string;
+  // The portal business the agent belongs to (set by the server; none = an older, unassigned agent)
+  tenantId?: string;
   // Set by the server: when the portal's frames last reached the bot, or pending (never synced since)
   framesStatus?: { at?: string; count: number; inStock?: number; pending?: boolean };
   // The business's site, used by "עדכן מהאתר" to refresh the knowledge blocks

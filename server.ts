@@ -385,6 +385,7 @@ export async function createApp() {
     picture: string;
     // Set when the person came in through the portal: their business there and role in it.
     tenantId?: string;
+    tenantName?: string;
     role?: string;
     isSuperAdmin?: boolean;
   }
@@ -558,7 +559,9 @@ export async function createApp() {
         email,
         name,
         picture: "",
-        ...(portalTenant ? { tenantId: portalTenant, role: payload.role, isSuperAdmin: payload.isSuperAdmin === true } : {}),
+        ...(portalTenant
+          ? { tenantId: portalTenant, tenantName: String(payload.tenant?.name || ""), role: payload.role, isSuperAdmin: payload.isSuperAdmin === true }
+          : {}),
       });
       saveSessions(activeSessions);
 
@@ -1012,7 +1015,18 @@ export async function createApp() {
       return out;
     };
     if (isSuper(req.user)) {
-      return res.json({ success: true, data: await forBrowser(list) });
+      // Inside a business (came in from the portal for it): that business's agents, unless ?all=1.
+      // `scope` goes back with every save, so a business-only list never touches other agents.
+      const tenant = req.user?.tenantId ? String(req.user.tenantId) : "";
+      const all = !tenant || req.query?.all === "1";
+      const shown = all ? list : list.filter((a: any) => String(a.tenantId ?? "") === tenant);
+      return res.json({
+        success: true,
+        data: await forBrowser(shown),
+        scope: all ? "all" : tenant,
+        tenantId: tenant || null,
+        tenantName: req.user?.tenantName || "",
+      });
     } else {
       let filtered = list.filter((agent: any) => isAgentOwnedByUser(agent, userEmail, req.user?.tenantId));
       if (filtered.length === 0 && (userEmail.includes("hatova") || userEmail.includes("252") || userEmail === "haoptika")) {
@@ -1052,8 +1066,42 @@ export async function createApp() {
     };
 
     if (isSuper(req.user)) {
-      // Admin has full access to overwrite the file
-      const saved = saveAgents(agents.map(keepStoredWhatsappConfig));
+      const sessionTenant = req.user?.tenantId ? String(req.user.tenantId) : "";
+      const scope = typeof req.body?.scope === "string" ? req.body.scope : "";
+      const storedById = new Map(storedAgents.map((a: any) => [a.id, a]));
+      let next: any[];
+      if (scope && scope !== "all") {
+        // The list of one business (see GET): replace that business's agents, keep everyone else's.
+        if (scope !== sessionTenant) {
+          return res.status(409).json({ success: false, error: "scope_mismatch", message: "הרשימה שייכת לעסק אחר — רעננו את הדף" });
+        }
+        const others = storedAgents.filter((a: any) => String(a.tenantId ?? "") !== scope);
+        const mine = agents
+          .filter((a: any) => {
+            const stored = storedById.get(a?.id);
+            return !stored || String(stored.tenantId ?? "") === scope;
+          })
+          .map((a: any) => ({ ...keepStoredWhatsappConfig(a), tenantId: scope }));
+        next = [...others, ...mine];
+      } else {
+        // Safety net: a "full" list holding only the current business's agents, while other
+        // businesses have agents, is a business-only list sent with the wrong scope — saving it as
+        // the full list would delete everyone else's agents.
+        if (sessionTenant) {
+          const othersStored = storedAgents.some((a: any) => String(a.tenantId ?? "") !== sessionTenant);
+          const othersSent = agents.some((a: any) => String(storedById.get(a?.id)?.tenantId ?? a?.tenantId ?? "") !== sessionTenant);
+          if (othersStored && !othersSent) {
+            return res.status(409).json({ success: false, error: "scope_mismatch", message: "הרשימה לא נשמרה (נראית כרשימה של עסק אחד) — רעננו את הדף" });
+          }
+        }
+        // The full list: admin has full access to overwrite it. A new agent created while inside
+        // a business belongs to that business.
+        next = agents.map((a: any) => {
+          const kept = keepStoredWhatsappConfig(a);
+          return !storedById.has(a?.id) && kept.tenantId == null && sessionTenant ? { ...kept, tenantId: sessionTenant } : kept;
+        });
+      }
+      const saved = saveAgents(next);
       if (saved) {
         return res.json({ success: true });
       } else {

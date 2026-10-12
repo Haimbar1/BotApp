@@ -223,6 +223,9 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
 };
 
 let globalSaveTimeoutId: any = null;
+// Which agents the loaded list holds ("all", or one business's portal id — see GET /api/agents);
+// sent back with every save so a business-only list never overwrites other businesses' agents.
+let agentListScope = "";
 
 // The eyeglass frames from the portal (אתר ← מסגרות) are added to the bot automatically on every sync
 // and whenever they change in the portal — this line shows when they last reached the bot.
@@ -468,6 +471,15 @@ export default function App() {
   const [activeId, setActiveId] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
+  // Admin inside a business: only that business's agents unless "show all businesses" is on.
+  const [listBusiness, setListBusiness] = useState<{ id: string; name: string } | null>(null);
+  const [showAllBusinesses, setShowAllBusinesses] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("botapp_show_all_businesses") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [showKey, setShowKey] = useState<boolean>(false);
   const [webhookUrl, setWebhookUrl] = useState<string>(DEFAULT_WEBHOOK_URL);
   const [isUrlLocked, setIsUrlLocked] = useState<boolean>(true);
@@ -2816,16 +2828,17 @@ export default function App() {
   };
 
   // Fetch agents array saved on the server
-  const fetchAgentsFromServer = async (token: string, emailUserOverride?: string) => {
+  const fetchAgentsFromServer = async (token: string, emailUserOverride?: string, showAll = showAllBusinesses) => {
     try {
       const activeEmail = (emailUserOverride || sessionUser?.email || "").toLowerCase().trim();
 
       let fetchedList: any[] = [];
       let fetchSuccess = false;
       let serverReached = false;
+      let businessScoped = false;
 
       try {
-        const res = await apiFetch("/api/agents", {
+        const res = await apiFetch(`/api/agents${showAll ? "?all=1" : ""}`, {
           headers: {
             "Authorization": `Bearer ${token}`
           }
@@ -2833,6 +2846,9 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           serverReached = !!data.success;
+          agentListScope = typeof data.scope === "string" ? data.scope : "";
+          businessScoped = !!agentListScope && agentListScope !== "all";
+          setListBusiness(data.tenantId ? { id: String(data.tenantId), name: data.tenantName || "" } : null);
           if (data.success && Array.isArray(data.data) && data.data.length > 0) {
             fetchedList = data.data;
             fetchSuccess = true;
@@ -2840,6 +2856,14 @@ export default function App() {
         }
       } catch (fetchErr) {
         console.warn("[CLIENT] Server /api/agents unreachable or returned 404, using client fallback:", fetchErr);
+      }
+
+      // An admin inside a business that has no agents yet: an empty list is the real answer
+      // (no presets from this browser — they belong to other businesses).
+      if (serverReached && businessScoped && fetchedList.length === 0) {
+        setAgents([]);
+        setActiveId("");
+        return;
       }
 
       if (fetchSuccess && fetchedList.length > 0) {
@@ -2997,6 +3021,8 @@ export default function App() {
       if (globalSaveTimeoutId) {
         clearTimeout(globalSaveTimeoutId);
       }
+      // The scope of the list being saved now (not when a delayed save fires)
+      const scope = agentListScope || undefined;
 
       if (isDebounced) {
         globalSaveTimeoutId = setTimeout(async () => {
@@ -3007,7 +3033,7 @@ export default function App() {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${token}`
               },
-              body: JSON.stringify({ agents: updatedAgents })
+              body: JSON.stringify({ agents: updatedAgents, scope })
             });
           } catch (e) {
             console.error("Failed persisting agents to server database in debounced call:", e);
@@ -3020,7 +3046,7 @@ export default function App() {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${token}`
           },
-          body: JSON.stringify({ agents: updatedAgents })
+          body: JSON.stringify({ agents: updatedAgents, scope })
         });
       }
     } catch (e) {
@@ -6012,6 +6038,48 @@ ${videos || "(לא הוגדר)"}
                 </button>
               </div>
             </div>
+
+            {/* Admin inside a business: its agents only, or every business's */}
+            {listBusiness && (() => {
+              const activeAgent = agents.find(a => a.id === activeId);
+              const canAssign = showAllBusinesses && activeAgent && String(activeAgent.tenantId ?? "") !== listBusiness.id;
+              return (
+                <div className="flex flex-col gap-1.5 bg-[#12141C] p-2 rounded-lg border border-slate-850 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400 truncate">
+                      עסק: <span className="text-slate-200 font-bold">{listBusiness.name || listBusiness.id}</span>
+                    </span>
+                    <label className="flex items-center gap-1 text-slate-300 cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={showAllBusinesses}
+                        onChange={(e) => {
+                          const v = e.target.checked;
+                          setShowAllBusinesses(v);
+                          try { localStorage.setItem("botapp_show_all_businesses", v ? "1" : "0"); } catch {}
+                          if (sessionToken) fetchAgentsFromServer(sessionToken, undefined, v);
+                        }}
+                      />
+                      הצג את כל העסקים
+                    </label>
+                  </div>
+                  {canAssign && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeAgent.tenantId && !confirm(`הסוכן "${activeAgent.businessName}" שייך לעסק אחר. להעביר אותו לעסק "${listBusiness.name || listBusiness.id}"?`)) return;
+                        const updated = agents.map(a => (a.id === activeAgent.id ? { ...a, tenantId: listBusiness.id } : a));
+                        setAgents(updated);
+                        saveAgentsToServer(updated);
+                      }}
+                      className="py-1 rounded-md bg-sky-600/20 text-sky-300 border border-sky-700/40 hover:bg-sky-600/30 font-bold cursor-pointer"
+                    >
+                      שייך את "{activeAgent.businessName}" לעסק הזה
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Live Search & Filters */}
             <div className="flex flex-col gap-2">
