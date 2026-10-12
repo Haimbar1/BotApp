@@ -2858,9 +2858,12 @@ export default function App() {
         console.warn("[CLIENT] Server /api/agents unreachable or returned 404, using client fallback:", fetchErr);
       }
 
-      // An admin inside a business that has no agents yet: an empty list is the real answer
-      // (no presets from this browser — they belong to other businesses).
-      if (serverReached && businessScoped && fetchedList.length === 0) {
+      // The server answered with no agents: that is the real answer — for an admin inside a business,
+      // and for a regular user (their business has none yet; "סוכן חדש" creates the first). Bots
+      // from this browser's old copy or the built-in presets would bring back deleted bots (and save
+      // them again), or show another business's.
+      const isPlatformAdmin = activeEmail === "haim.bar@gmail.com";
+      if (serverReached && (businessScoped || !isPlatformAdmin) && fetchedList.length === 0) {
         setAgents([]);
         setActiveId("");
         return;
