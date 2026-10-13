@@ -15,6 +15,9 @@
   var welcomeMessage = userConfig.welcomeMessage || userConfig.FirstMessage || userConfig.firstMessage || (currentScript ? currentScript.getAttribute('data-welcome-message') : null) || '';
   var conversationFlow = userConfig.conversationFlow || (currentScript ? currentScript.getAttribute('data-conversation-flow') : null) || '';
   var customOptions = userConfig.options || (currentScript ? currentScript.getAttribute('data-options') : null) || '';
+  // data-returning-greeting="false" shows the welcome message exactly as written (no "אני רואה שחזרת אלינו" / saved-name greeting)
+  var returningGreetingAttr = userConfig.returningGreeting !== undefined ? String(userConfig.returningGreeting) : (currentScript ? currentScript.getAttribute('data-returning-greeting') : null);
+  var personalGreetingEnabled = returningGreetingAttr !== 'false';
 
   var cleanStringAttr = function(val) {
     if (!val || typeof val !== 'string') return val || '';
@@ -294,6 +297,7 @@
 
   var formatPersonalGreeting = function(baseText) {
     if (!baseText) return '';
+    if (!personalGreetingEnabled) return baseText;
     var savedName = getUserName();
     var cleanBase = baseText.replace(/^[ \t]*שלום!\s*👋\s*/i, '').replace(/^[ \t]*שלום[ \t]*[:\-\|]?[ \t]*/i, '');
 
