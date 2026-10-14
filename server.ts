@@ -22,7 +22,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, ORIGINAL_TENANT } from "./secrets.js";
+import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -632,6 +632,14 @@ export async function createApp() {
       // new trial user: no auto-registration and no "בוט גנרי".
       const portalBusinesses = isSuper({ email }) ? null : await portalBusinessesFor(email);
       const portalBusiness = portalBusinesses?.[0] || null;
+      if (portalBusinesses && !portalBusiness && (await portalDeniesBotApp(email))) {
+        return res.status(403).json({
+          success: false,
+          error: "not_authorized",
+          email,
+          message: `לחשבון ${email} אין גישה למערכת הבוטים באף עסק בפורטל. מנהל העסק יכול לתת גישה ב-portal.smartesek.com.`,
+        });
+      }
 
       // Check against current allowed emails (case-insensitive)
       const currentSettings = readSettings();
@@ -987,7 +995,9 @@ export async function createApp() {
     if (!userEmail) return false;
     const u = userEmail.toLowerCase().trim();
     if (u === "haim.bar@gmail.com") return true;
-    if (tenantId && agent.tenantId != null && String(agent.tenantId) === String(tenantId)) return true;
+    // In a business session, an agent of another business is never theirs (not even listed under
+    // their e-mail, or by the old optics alias below).
+    if (tenantId && agent.tenantId != null) return String(agent.tenantId) === String(tenantId);
     const aEmail = (agent.agentEmail || "").toLowerCase().trim();
     if (aEmail === u) return true;
     // Hatova Optometry / Bot 252 special alias mapping

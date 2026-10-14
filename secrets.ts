@@ -65,6 +65,27 @@ export async function portalBusinessesFor(email: string): Promise<{ id: string; 
   }
 }
 
+// A portal user who has no access to BotApp in any business (the portal answers "no-access",
+// not "unknown-user"): the portal's "no" stands — no trial registration, no fallback list.
+export async function portalDeniesBotApp(email: string): Promise<boolean> {
+  const sharedSecret = process.env.SSO_SHARED_SECRET;
+  if (!sharedSecret || !email) return false;
+  try {
+    const token = jwt.sign({ email }, sharedSecret, { expiresIn: "30s" });
+    const res = await fetch(`${PORTAL_URL}/api/sso/token-for`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, moduleKey: "BOTApp" }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) return false;
+    const data: any = await res.json().catch(() => ({}));
+    return res.status === 403 && data?.error === "no-access";
+  } catch {
+    return false;
+  }
+}
+
 // The original business (portal tenant 1, the optics) keeps running on Vercel first.
 export const ORIGINAL_TENANT = "1";
 
