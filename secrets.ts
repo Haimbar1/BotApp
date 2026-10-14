@@ -150,6 +150,28 @@ export async function agentsForVaultPhone(allAgents: any[], phoneNumberId: strin
   return [];
 }
 
+// BotApp's shared demo number (050-672-5398, the "test the bot I created" number) is no business's
+// own: a bot connected with it must not copy it into its business's vault — אופטיקה רז then showed
+// "WhatsApp: OK" with it in the CRM (Haim, 2026-10-14). Same list in WhastAppSystem.
+const SHARED_DEMO_PHONES = ["506725398"];
+export async function isSharedDemoNumber(config: any): Promise<boolean> {
+  const isDemo = (v: unknown) => SHARED_DEMO_PHONES.includes(String(v || "").replace(/\D/g, "").slice(-9));
+  if (isDemo(config?.phoneNumber)) return true;
+  const id = String(config?.phoneNumberId || "").trim();
+  const token = String(config?.systemUserAccessToken || "").trim();
+  if (!id || !token) return false;
+  try {
+    const r = await fetch(`https://graph.facebook.com/v20.0/${id}?fields=display_phone_number`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    const d: any = await r.json();
+    return isDemo(d?.display_phone_number);
+  } catch {
+    return false;
+  }
+}
+
 // The vault fields of an agent's WhatsApp connection.
 export const whatsappVaultValues = (config: any) => ({
   META_PHONE_NUMBER_ID: config?.phoneNumberId,

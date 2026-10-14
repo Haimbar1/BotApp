@@ -22,7 +22,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
+import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -337,7 +337,10 @@ export async function createApp() {
       if (agent?.tenantId == null || !agent.whatsappConfig) continue;
       const prev = before.find((a: any) => (a.botId && a.botId === agent.botId) || (a.id && a.id === agent.id));
       if (prev && sig(prev.whatsappConfig) === sig(agent.whatsappConfig)) continue;
-      const p: Promise<void> = saveToVault(agent.tenantId, whatsappVaultValues(agent.whatsappConfig), agent.agentEmail).finally(() => pendingVaultWrites.delete(p));
+      const p: Promise<void> = (async () => {
+        if (await isSharedDemoNumber(agent.whatsappConfig)) return; // the demo number stays out of the vault
+        await saveToVault(agent.tenantId, whatsappVaultValues(agent.whatsappConfig), agent.agentEmail);
+      })().finally(() => pendingVaultWrites.delete(p));
       pendingVaultWrites.add(p);
     }
   }
