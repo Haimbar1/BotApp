@@ -510,6 +510,68 @@ export async function createApp() {
     }
   });
 
+  // The help assistant ("העוזר", src/components/HelpWidget.tsx — the same component in every
+  // SmartEsek system): it explains how to use the systems. The brain is the CRM's /api/help
+  // (crm/server/helpBot.ts), told the question comes from BotApp so "show me" points at this
+  // system's own buttons. The CRM gets a short-lived token naming the business (signed with
+  // SSO_SHARED_SECRET); the answer streams through as is.
+  const CRM_URL = (process.env.CRM_URL || "https://crm.smartesek.com").replace(/\/$/, "");
+  const callHelp = async (req: any, res: any, path: string, init: RequestInit = {}) => {
+    try {
+      if (!process.env.SSO_SHARED_SECRET) return res.status(500).json({ error: "sso-not-configured" });
+      const user = req.user as SessionInfo;
+      const token = jwt.sign(
+        {
+          typ: "insights",
+          portalTenantId: Number(user?.tenantId) || 0,
+          businessName: user?.tenantName || undefined,
+          role: isSuper(user) || user?.role === "owner" || user?.role === "admin" ? "admin" : "member",
+          email: user?.email,
+          name: user?.name,
+        },
+        process.env.SSO_SHARED_SECRET,
+        { expiresIn: "2m" }
+      );
+      const r = await fetch(`${CRM_URL}${path}`, {
+        ...init,
+        headers: { "Content-Type": "application/json", "x-insights-token": token },
+        signal: AbortSignal.timeout(280000), // the CRM may try several AI models in a row
+      });
+      res.status(r.status);
+      const type = r.headers.get("content-type");
+      if (type) res.setHeader("Content-Type", type);
+      if (r.headers.get("cache-control")) res.setHeader("Cache-Control", r.headers.get("cache-control") as string);
+      if (!r.body) return res.end();
+      // pass the answer on piece by piece as the CRM writes it
+      const reader = r.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
+    } catch (err: any) {
+      console.error("help proxy failed", err);
+      if (!res.headersSent) res.status(502).json({ error: "לא הצלחתי להגיע לעוזר כרגע — נסו שוב בעוד רגע" });
+      else res.end();
+    }
+  };
+  app.get("/api/help/suggestions", requireAuth, (req, res) => callHelp(req, res, "/api/help/suggestions?module=botapp"));
+  app.post("/api/help/ask", requireAuth, (req, res) =>
+    callHelp(req, res, "/api/help/ask", {
+      method: "POST",
+      body: JSON.stringify({
+        question: req.body?.question,
+        history: req.body?.history,
+        image: req.body?.image,
+        device: req.body?.device,
+        stream: !!req.body?.stream,
+        module: "botapp",
+      }),
+    })
+  );
+  app.get("/api/help/images/:id", requireAuth, (req, res) => callHelp(req, res, `/api/help/images/${encodeURIComponent(req.params.id)}`));
+
   // Single Sign-On from the unified Portal (portal.smartesek.com): the portal already
   // verified this user's Google identity and their access to this module, and hands off
   // a short-lived signed token instead of making them log in again here. Checks the same

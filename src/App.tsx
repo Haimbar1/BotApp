@@ -55,6 +55,7 @@ import ReactMarkdown from "react-markdown";
 import { promptTemplates, PromptTemplate } from "./templates";
 import SmartBusinessLogo from "./components/SmartBusinessLogo";
 import { AppSwitcher } from "./components/AppSwitcher";
+import { HelpWidget } from "./components/HelpWidget";
 import { AppSettingsMenu } from "./components/AppSettingsMenu";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
@@ -5857,7 +5858,12 @@ ${videos || "(לא הוגדר)"}
   // MAIN SYSTEM PANEL (Rendered when authenticated)
   return (
     <div dir={dir} className="min-h-screen bg-[#07070A] font-sans text-slate-300 flex flex-col">
-      
+      {/* The help assistant (asks the CRM's help service through /api/help in server.ts) */}
+      <HelpWidget
+        apiBase="/api/help"
+        fetcher={(url, init = {}) => fetch(url, { ...init, headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${sessionToken}` } })}
+      />
+
       {/* Top Banner / Header */}
       <header className="bg-[#0D0E13] text-white shadow-xl border-b border-[#141C2C] shrink-0 select-none">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
