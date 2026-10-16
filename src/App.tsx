@@ -5861,6 +5861,9 @@ ${videos || "(לא הוגדר)"}
       {/* The help assistant (asks the CRM's help service through /api/help in server.ts) */}
       <HelpWidget
         apiBase="/api/help"
+        // Above the web bot's chat bubble (bot-widget.js sits at bottom-right), so the two don't overlap
+        buttonClassName="fixed bottom-24 right-4"
+        panelBottomClassName="bottom-40"
         fetcher={(url, init = {}) => fetch(url, { ...init, headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${sessionToken}` } })}
       />
 
