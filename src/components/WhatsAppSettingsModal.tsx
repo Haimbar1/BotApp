@@ -48,8 +48,11 @@ interface WhatsAppSettingsModalProps {
 
 // The Meta app and Embedded Signup configuration come from the server (META_APP_ID / META_CONFIG_ID
 // in Vercel), so one-click signup issues tokens from the same app the webhook setup works with.
-// Default n8n webhook for incoming WhatsApp messages (editable per bot)
-const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt";
+// Default n8n webhook for incoming WhatsApp messages (editable per bot) — the one the optics' bot
+// receives on; every business's number goes there too (Haim, 2026-10-16). A bot saved with the old
+// default shows the new one, so pressing "חבר Webhook" again moves it.
+const DEFAULT_WEBHOOK_URL = "https://n8n.srv1239769.hstgr.cloud/webhook/c89a7e0e-10af-4d85-89fd-8652b2d1b1ab";
+const OLD_DEFAULT_WEBHOOK_URLS = ["https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt"];
 // Must match the word the n8n webhook checks against hub.verify_token
 const DEFAULT_VERIFY_TOKEN = "smartesek_wa_verify";
 
@@ -125,7 +128,8 @@ export default function WhatsAppSettingsModal({
         setPhoneNumberId(data.config.phoneNumberId || "");
         setSystemUserAccessToken(data.config.systemUserAccessToken || "");
         setWabaId(data.config.wabaId || "");
-        setWebhookUrl(data.config.webhookCallbackUrl || DEFAULT_WEBHOOK_URL);
+        const savedUrl = data.config.webhookCallbackUrl || "";
+        setWebhookUrl(savedUrl && !OLD_DEFAULT_WEBHOOK_URLS.includes(savedUrl) ? savedUrl : DEFAULT_WEBHOOK_URL);
         setWebhookVerifyToken(data.config.webhookVerifyToken || DEFAULT_VERIFY_TOKEN);
         setWebhookSubscribedAt(data.config.webhookSubscribedAt || "");
         setSavedCredentials(!!(data.config.wabaId && data.config.systemUserAccessToken));
