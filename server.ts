@@ -1309,11 +1309,16 @@ export async function createApp() {
     }
 
     // Another business's agent shows the portal vault's connection (see effectiveWhatsappConfig).
-    const config = targetAgent?.whatsappConfig ? await effectiveWhatsappConfig(targetAgent) : {
+    // An agent with no WhatsApp settings of its own still shows what its business entered in the portal.
+    const config = targetAgent ? {
+      phoneNumber: targetAgent.ownerPhone || "",
+      status: "Not Connected",
+      ...(await effectiveWhatsappConfig(targetAgent))
+    } : {
       phoneNumberId: "",
       systemUserAccessToken: "",
       wabaId: "",
-      phoneNumber: targetAgent?.ownerPhone || "",
+      phoneNumber: "",
       code: "",
       appId: "",
       status: "Not Connected"
@@ -1490,9 +1495,11 @@ export async function createApp() {
     if (!canAccessAgent(req.user, allAgents[idx])) {
       return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
+    // The business's portal values count too (a connection entered only in "מזהים וחיבורים").
     const config = allAgents[idx].whatsappConfig || {};
-    const wabaId = String(config.wabaId || "").trim();
-    const token = String(config.systemUserAccessToken || "").trim();
+    const effective = await effectiveWhatsappConfig(allAgents[idx]);
+    const wabaId = String(effective.wabaId || "").trim();
+    const token = String(effective.systemUserAccessToken || "").trim();
     if (!wabaId || !token) {
       return res.status(400).json({ success: false, error: "not_configured", message: "יש לשמור קודם WABA ID ו-Access Token" });
     }
@@ -1571,8 +1578,9 @@ export async function createApp() {
     if (!canAccessAgent(req.user, agent)) {
       return res.status(403).json({ success: false, error: "forbidden", message: "אין הרשאה לסוכן הזה" });
     }
-    const wabaId = String(agent.whatsappConfig?.wabaId || "").trim();
-    const token = String(agent.whatsappConfig?.systemUserAccessToken || "").trim();
+    const effective = await effectiveWhatsappConfig(agent);
+    const wabaId = String(effective.wabaId || "").trim();
+    const token = String(effective.systemUserAccessToken || "").trim();
     if (!wabaId || !token) {
       return res.json({ success: false, error: "not_configured", message: "לא שמורים WABA ID ו-Access Token" });
     }
