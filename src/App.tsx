@@ -8639,6 +8639,22 @@ ${videos || "(לא הוגדר)"}
                           </div>
                         )}
 
+                        {/* WhatsApp list menus cut each option title at 24 characters */}
+                        {sec.key === "welcomeMessage" && (() => {
+                          const tooLong = Array.from(activeVal.matchAll(/\[\s*(?:\d+\s*[.)-]\s*)?([^\]\n]+)\]/g))
+                            .map(m => m[1].trim())
+                            .filter(label => Array.from(label).length > 24);
+                          if (tooLong.length === 0) return null;
+                          return (
+                            <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-200 leading-relaxed" dir="rtl">
+                              <div className="font-black mb-1">⚠️ בוואטסאפ כל כפתור בתפריט נחתך אחרי 24 תווים. כדאי לקצר:</div>
+                              {tooLong.map((label, i) => (
+                                <div key={i}>• {label} <span className="text-amber-400/80">({Array.from(label).length} תווים, יוצג: "{Array.from(label).slice(0, 24).join("")}")</span></div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+
                         {/* File Upload Area specifically for Brochures and Information */}
                         {sec.key === "syllabusLinks" && (
                           <div className="border border-dashed border-sky-500/35 rounded-2xl p-5 bg-sky-500/5 flex flex-col sm:flex-row items-center justify-between gap-4 mt-2 transition duration-200 hover:border-sky-500/55 select-none" dir="rtl">
