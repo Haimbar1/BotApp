@@ -299,7 +299,7 @@
     if (!baseText) return '';
     if (!personalGreetingEnabled) return baseText;
     var savedName = getUserName();
-    var cleanBase = baseText.replace(/^[ \t]*שלום!\s*👋\s*/i, '').replace(/^[ \t]*שלום[ \t]*[:\-\|]?[ \t]*/i, '');
+    var cleanBase = baseText.replace(/^[ \t]*שלום!\s*👋\s*/i, '').replace(/^[ \t]*שלום[ \t]*[:\-\|]?[ \t]*(?:ו(?=ברוכ))?/i, '');
 
     if (isReturningUser) {
       if (savedName) {
@@ -371,12 +371,38 @@
           /^(?:בחר|בחרו|להלן|אנא\s*לבחור|אפשרויות\s*לבחירה|אפשריות\s*לבחירה|ניתן\s*לבחור).*?(?:אפשרויות|אפשריות|כפתורים|באמצעות|הבאות)[ \t]*[:\-\|]?$/i.test(clean);
       });
 
-      rawLines.forEach(function(line) {
+      // Without an explicit header, a question (or a line ending with ':')
+      // followed only by short lines is the menu, e.g.
+      //   "איך אוכל לעזור לך היום?\n תיאום בדיקת ראייה\n שיחה עם עדן".
+      // Everything up to and including that line is greeting text, so
+      // keyword-matching guesses never turn greeting lines into buttons.
+      var implicitHeaderIndex = -1;
+      if (!hasExplicitHeader) {
+        var trailingOptions = 0;
+        for (var li = rawLines.length - 1; li >= 0; li--) {
+          var tl = rawLines[li].replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
+          if (!tl) continue;
+          if (/\?|:\s*$/.test(tl)) {
+            if (trailingOptions >= 2) implicitHeaderIndex = li;
+            break;
+          }
+          if (tl.length > 90) break;
+          trailingOptions++;
+        }
+      }
+
+      rawLines.forEach(function(line, lineIndex) {
         var cleanLineText = line.replace(/^["'«»“](.*)["'«»”]$/, '$1').trim();
         if (!cleanLineText) {
           if (textLines.length > 0 && textLines[textLines.length - 1] !== '') {
             textLines.push('');
           }
+          return;
+        }
+
+        if (implicitHeaderIndex !== -1 && lineIndex <= implicitHeaderIndex) {
+          textLines.push(line);
+          if (lineIndex === implicitHeaderIndex) inOptionsSection = true;
           return;
         }
 
