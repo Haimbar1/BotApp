@@ -182,7 +182,7 @@ const DEFAULT_WEBHOOK_URL = DEFAULT_POST_WEBHOOK_URL;
 const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string[] }[]> = {
   welcomeMessage: [
     { label: "👋 ברכה ופתיחה", emojis: ["👋", "✨", "🌟", "🌺", "💫", "😃", "🙋‍♂️", "🙋‍♀️", "🎉", "💐"] },
-    { label: "🔘 כפתורים ואפשרויות", emojis: ["1️⃣", "2️⃣", "3️⃣", "📝", "❓", "📞", "🔹", "✅", "💬", "🔍"] }
+    { label: "🔘 כפתורים ואפשרויות", emojis: ["1️⃣", "2️⃣", "3️⃣", "📅", "🗓️", "⏰", "📝", "❓", "📞", "🔹", "✅", "💬", "🔍"] }
   ],
   botIdentity: [
     { label: "🤖 זהות ונציגות", emojis: ["🤖", "🤵", "👩‍💼", "👤", "✨", "👑", "🛡️", "🌟", "💼", "🏢"] },
@@ -198,7 +198,7 @@ const RECOMMENDED_EMOJIS_BY_PART: Record<string, { label: string; emojis: string
   ],
   conversationFlow: [
     { label: "👋 פתיחה וברכה שכיחה (שאלת פתיחה)", emojis: ["👋", "✨", "🌟", "🆕", "🎁", "💌", "🌸", "🤍", "😇"] },
-    { label: "💬 זרימה ושלבי שיחה", emojis: ["💬", "🗺️", "🧭", "📍", "🏁", "🎯", "📥", "📤", "🚀", "📞", "🤝"] }
+    { label: "💬 זרימה ושלבי שיחה", emojis: ["💬", "📅", "🗓️", "🗺️", "🧭", "📍", "🏁", "🎯", "📥", "📤", "🚀", "📞", "🤝"] }
   ],
   writingStyle: [
     { label: "✍️ עימוד וניסוח", emojis: ["✍️", "📏", "✂️", "📌", "⚡", "🎯", "🔥", "👌", "🤩", "📢", "💬", "📱"] }
@@ -8499,7 +8499,7 @@ ${videos || "(לא הוגדר)"}
                           
                           <span className="text-[10px] text-slate-500 font-bold ml-1">הוסף אימוג'י כללי:</span>
                           <div className="flex items-center gap-1">
-                            {["🤖", "💬", "📞", "✅", "⚠️", "💡", "🚀", "🎓", "🔗"].map(emoji => (
+                            {["🤖", "💬", "📞", "📅", "✅", "⚠️", "💡", "🚀", "🎓", "🔗"].map(emoji => (
                               <button
                                 key={emoji}
                                 type="button"
