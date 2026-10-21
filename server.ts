@@ -2732,23 +2732,33 @@ export async function createApp() {
     const phones = new Set<string>(
       (Array.isArray(req.body?.phones) ? req.body.phones : []).map((p: any) => String(p).replace(/\D/g, "").slice(-9)).filter((p: string) => p.length === 9)
     );
-    if (!phones.size) return res.json({ messages: [], bots: 0 });
+    if (!phones.size) return res.json({ messages: [], bots: 0, answered: 0, records: 0, ofThesePhones: 0, withoutTime: 0 });
     // The business's bots: those on the business, or answering on its WhatsApp number (older agents
     // have no business on them — never "every agent without one", that's other businesses' too)
     const numberIds = new Set<string>((Array.isArray(req.body?.phoneNumberIds) ? req.body.phoneNumberIds : []).map((x: any) => String(x).trim()).filter(Boolean));
-    const botIds = Array.from(new Set<string>(
+    const ids = new Set<string>(
       readAgents()
         .filter((a: any) => a?.botId && (String(a.tenantId ?? "") === tenant || numberIds.has(String(a.whatsappConfig?.phoneNumberId || "").trim())))
         .map((a: any) => String(a.botId))
-    ));
+    );
+    // and the number → bot table n8n itself answers by (/api/whatsapp/n8n-credentials)
+    for (const n of numberIds) {
+      const mapped = await lookupBotIdByPhone(n).catch(() => null);
+      if (mapped) ids.add(String(mapped));
+    }
+    const botIds = Array.from(ids);
     const messages: any[] = [];
-    let answered = 0;
+    // why nothing may come back — shown in the CRM's conversation, since nobody can see this server's logs
+    const diag = { bots: botIds.length, answered: 0, records: 0, ofThesePhones: 0, withoutTime: 0 };
     for (const botId of botIds) {
       const { ok, chats } = await fetchLiveChats(botId);
-      if (ok) answered++;
+      if (ok) diag.answered++;
+      diag.records += chats.length;
       for (const c of chats) {
         const phone = String(c.phone || "").replace(/\D/g, "").slice(-9);
-        if (!phones.has(phone) || !c.timestampKnown) continue;
+        if (!phones.has(phone)) continue;
+        diag.ofThesePhones++;
+        if (!c.timestampKnown) { diag.withoutTime++; continue; }
         const at = Date.parse(c.timestamp);
         if (Number.isNaN(at)) continue;
         const type = c.message?.type === "ai" ? "ai" : "human";
@@ -2759,7 +2769,7 @@ export async function createApp() {
         messages.push({ id, phone, at: new Date(at).toISOString(), from: type === "ai" ? "bot" : "customer", text: text.slice(0, 2000) });
       }
     }
-    res.json({ messages, bots: botIds.length, answered });
+    res.json({ messages, ...diag });
   });
 
   // Fetch chats matching filter
