@@ -2464,6 +2464,304 @@ export async function createApp() {
     return { phone, botId, customerName };
   }
 
+  // Robust function to return raw stringified JSON or plain text for client parsing
+  function cleanContent(rawContent: any): string {
+    if (!rawContent) return "";
+    
+    // If it is an object or array, serialize it to JSON string for frontend client parsing
+    if (typeof rawContent === "object") {
+      try {
+        return JSON.stringify(rawContent);
+      } catch (e) {
+        return String(rawContent);
+      }
+    }
+
+    if (typeof rawContent === "string") {
+      let trimmed = rawContent.trim();
+      if (trimmed.includes("```")) {
+        const m = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        if (m) trimmed = m[1].trim();
+        else trimmed = trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+      }
+
+      const firstBrace = trimmed.indexOf("{");
+      const firstBracket = trimmed.indexOf("[");
+      let start = -1;
+      if (firstBrace !== -1 && firstBracket !== -1) start = Math.min(firstBrace, firstBracket);
+      else if (firstBrace !== -1) start = firstBrace;
+      else if (firstBracket !== -1) start = firstBracket;
+
+      if (start !== -1) {
+        const lastBrace = trimmed.lastIndexOf("}");
+        const lastBracket = trimmed.lastIndexOf("]");
+        const end = Math.max(lastBrace, lastBracket);
+        if (end > start) {
+          const extracted = trimmed.substring(start, end + 1);
+          try {
+            const parsed = JSON.parse(extracted);
+            return JSON.stringify(parsed);
+          } catch (e1) {
+            try {
+              const sanitized = extracted.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+                return match.replace(/\r\n/g, "\\n").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+              });
+              const parsed = JSON.parse(sanitized);
+              return JSON.stringify(parsed);
+            } catch (e2) {}
+          }
+        }
+      }
+      return rawContent;
+    }
+
+    return String(rawContent);
+  }
+
+  // The bot's conversations as n8n keeps them (its chat memory), normalized to the chat format
+  // (used by /api/chats and by the CRM's campaign conversations, /api/crm/bot-chats). ok = n8n answered.
+  async function fetchLiveChats(botId: string): Promise<{ ok: boolean; chats: any[] }> {
+    let liveChats: any[] = [];
+    let fetchSuccess = false;
+    const primaryWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
+    const testWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook-test/932a697d-8cc7-4141-9a00-973c72020584";
+    
+    // Prioritize GET because the n8n chats webhook is registered as a GET webhook
+    const urlsToTry = [
+      { url: primaryWebhook, method: "GET" },
+      { url: primaryWebhook, method: "POST" },
+      { url: testWebhook, method: "GET" },
+      { url: testWebhook, method: "POST" }
+    ];
+
+    let rawData: any = null;
+    let responseOk = false;
+    let finalMethod = "";
+    let finalUrl = "";
+
+    for (const item of urlsToTry) {
+      try {
+        console.log(`[SERVER] Trying to fetch chats from N8N: ${item.method} -> ${item.url} for botId: "${botId}"`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout per attempt
+
+        let fetchPromise;
+        if (item.method === "POST") {
+          console.log(`[SERVER] Sending POST to N8N: ${item.url} with body { botId: "${botId}", botID: "${botId}" }`);
+          fetchPromise = fetch(item.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ botId, botID: botId }),
+            signal: controller.signal
+          });
+        } else {
+          const getUrl = `${item.url}?botId=${encodeURIComponent(botId)}&botID=${encodeURIComponent(botId)}`;
+          console.log(`[SERVER] Sending GET to N8N: ${getUrl}`);
+          fetchPromise = fetch(getUrl, {
+            method: "GET",
+            headers: {
+              "Accept": "application/json"
+            },
+            signal: controller.signal
+          });
+        }
+
+        const response = await fetchPromise;
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          rawData = await response.json();
+          responseOk = true;
+          finalMethod = item.method;
+          finalUrl = item.url;
+          console.log(`[SERVER] Success! N8N webhook call succeeded using ${item.method} on ${item.url}`);
+          break; // exit loop on first success!
+        } else {
+          console.warn(`[SERVER] N8N returned status ${response.status} for ${item.method} on ${item.url}`);
+        }
+      } catch (err: any) {
+        console.warn(`[SERVER] Fetch failed for ${item.method} on ${item.url}:`, err?.message || err);
+      }
+    }
+
+    if (responseOk && rawData) {
+      try {
+        // Extract the list of records. N8N might return a flat array, or wrap it in { data: [...] }, etc.
+        let records = [];
+        if (Array.isArray(rawData)) {
+          records = rawData;
+        } else if (rawData && Array.isArray(rawData.data)) {
+          records = rawData.data;
+        } else if (rawData && typeof rawData === "object") {
+          // Try to find any array inside the object
+          const arrayKey = Object.keys(rawData).find(key => Array.isArray(rawData[key]));
+          if (arrayKey) {
+            records = rawData[arrayKey];
+          } else if (rawData.chats && Array.isArray(rawData.chats)) {
+            records = rawData.chats;
+          } else if (rawData.rows && Array.isArray(rawData.rows)) {
+            records = rawData.rows;
+          } else {
+            // If it's a single object, wrap in an array
+            records = [rawData];
+          }
+        }
+
+        // Map and normalize records to our standard chat message format
+        liveChats = records.map((item: any, idx: number) => {
+          if (!item) return null;
+          const sId = item.session_id || item.sessionId || item.SessionId || "";
+          
+          // Parse phone, botId and customerName from sessionId if needed
+          let itemPhone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || "";
+          let itemBotId = item.botId || item.bot_id || "";
+          let itemName = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || "";
+
+          if (sId) {
+            const allAgentsList = readAgents();
+            const sInfo = parseSessionIdInfo(sId, [String(botId || ""), ...allAgentsList.map(a => a.botId), "bot_generic_252"]);
+            if (!itemPhone && sInfo.phone) itemPhone = sInfo.phone;
+            if (!itemBotId && sInfo.botId) itemBotId = sInfo.botId;
+            if (!itemName && sInfo.customerName) itemName = sInfo.customerName;
+          }
+
+          // Parse message contents (can be JSON string or parsed object)
+          let messageContent = item.message;
+          let finalType: "human" | "ai" = "human";
+          let finalContent = "";
+
+          if (messageContent) {
+            if (typeof messageContent === "string") {
+              try {
+                const parsedMsg = JSON.parse(messageContent);
+                finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
+                const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
+                finalContent = cleanContent(innerContent);
+              } catch (e) {
+                finalContent = cleanContent(messageContent);
+              }
+            } else if (typeof messageContent === "object") {
+              finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
+              const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
+              finalContent = cleanContent(innerContent);
+            }
+          } else {
+            // Try fallback fields directly on item
+            const contentVal = item.content || item.text || item.message_text || "";
+            const typeVal = item.type || item.message_type || item.sender || "human";
+            finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
+            finalContent = cleanContent(contentVal);
+          }
+
+          return {
+            id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
+            sessionId: sId,
+            botId: itemBotId || botId,
+            phone: itemPhone,
+            name: itemName,
+            userName: itemName,
+            userPhone: itemPhone,
+            message: {
+              type: finalType,
+              content: finalContent
+            },
+            timestamp: item.created_at || item.timestamp || item.time || new Date().toISOString(),
+            // false = n8n gave no time and "now" stands in for it (the CRM skips those)
+            timestampKnown: !!(item.created_at || item.timestamp || item.time)
+          };
+        }).filter(Boolean);
+
+        fetchSuccess = true;
+        console.log(`[SERVER] Successfully parsed ${liveChats.length} live chat messages from N8N`);
+      } catch (parseErr: any) {
+        console.error("[SERVER] Error parsing N8N payload response:", parseErr);
+      }
+    } else {
+      console.warn(`[SERVER] All N8N Webhook endpoints failed or returned no data`);
+    }
+    return { ok: fetchSuccess, chats: liveChats };
+  }
+
+  // The text a person reads from a stored chat message: the bot's answer is JSON ({ reply, options,
+  // action, summary }); the customer's may be JSON or "Name: …" / "chatInput: …" lines (the same
+  // shapes parseChatMessageContent in src/App.tsx shows).
+  function readableChatText(content: string, type: "human" | "ai"): string {
+    const raw = String(content || "").trim();
+    let parsed: any = null;
+    try { parsed = JSON.parse(raw); } catch { /* plain text */ }
+    if (parsed && typeof parsed === "object" && typeof parsed.output === "string") {
+      try { parsed = { ...parsed, ...JSON.parse(cleanContent(parsed.output)) }; } catch { /* keep */ }
+    }
+    if (type === "ai") {
+      if (!parsed || typeof parsed !== "object") return raw;
+      const options = (Array.isArray(parsed.options) ? parsed.options : [])
+        .map((o: any) => (typeof o === "string" ? o : o?.title || o?.text || o?.label || ""))
+        .filter(Boolean);
+      const reply = String(parsed.reply || parsed.text || parsed.message || "").trim();
+      return [reply, options.length ? options.map((o: string) => `• ${o}`).join("\n") : ""].filter(Boolean).join("\n") || raw;
+    }
+    const text = parsed && typeof parsed === "object"
+      ? String(parsed.chatInput || parsed.chat_input || parsed.message || parsed.content || parsed.text || parsed.body || raw)
+      : raw;
+    return text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !/^(?:name|username|user_name|pushname|phone|userphone|user_phone|wa_id|from|שם|טלפון)[\s:\-=]/i.test(l))
+      .map((l) => l.replace(/^(?:chatInput|chat_input|content|message|text|body)[\s:\-=]+/i, ""))
+      .join("\n") || raw;
+  }
+
+  // POST /api/crm/bot-chats { phones: [last 9 digits], phoneNumberIds: [the business's Meta number ids] } — the bot's side of these customers'
+  // conversations, for the CRM's campaign conversations and summary (Haim, 2026-10-21: the bot's
+  // answers are here but n8n doesn't always report them to WhastAppSystem, so the CRM missed them).
+  // Server-to-server: "x-crm-token" signed with SSO_SHARED_SECRET (typ 'bot-chats', the portal
+  // business id); only that business's bots are read.
+  app.post("/api/crm/bot-chats", async (req: any, res: any) => {
+    const secret = process.env.SSO_SHARED_SECRET;
+    if (!secret) return res.status(500).json({ error: "sso-not-configured" });
+    let payload: any;
+    try {
+      payload = jwt.verify(String(req.headers["x-crm-token"] || ""), secret);
+    } catch {
+      return res.status(401).json({ error: "invalid-token" });
+    }
+    if (payload?.typ !== "bot-chats" || !payload?.portalTenantId) return res.status(401).json({ error: "invalid-token" });
+    const tenant = String(payload.portalTenantId);
+    const phones = new Set<string>(
+      (Array.isArray(req.body?.phones) ? req.body.phones : []).map((p: any) => String(p).replace(/\D/g, "").slice(-9)).filter((p: string) => p.length === 9)
+    );
+    if (!phones.size) return res.json({ messages: [], bots: 0 });
+    // The business's bots: those on the business, or answering on its WhatsApp number (older agents
+    // have no business on them — never "every agent without one", that's other businesses' too)
+    const numberIds = new Set<string>((Array.isArray(req.body?.phoneNumberIds) ? req.body.phoneNumberIds : []).map((x: any) => String(x).trim()).filter(Boolean));
+    const botIds = Array.from(new Set<string>(
+      readAgents()
+        .filter((a: any) => a?.botId && (String(a.tenantId ?? "") === tenant || numberIds.has(String(a.whatsappConfig?.phoneNumberId || "").trim())))
+        .map((a: any) => String(a.botId))
+    ));
+    const messages: any[] = [];
+    let answered = 0;
+    for (const botId of botIds) {
+      const { ok, chats } = await fetchLiveChats(botId);
+      if (ok) answered++;
+      for (const c of chats) {
+        const phone = String(c.phone || "").replace(/\D/g, "").slice(-9);
+        if (!phones.has(phone) || !c.timestampKnown) continue;
+        const at = Date.parse(c.timestamp);
+        if (Number.isNaN(at)) continue;
+        const type = c.message?.type === "ai" ? "ai" : "human";
+        const text = readableChatText(String(c.message?.content || ""), type);
+        if (!text) continue;
+        // n8n's records may have no id (one is invented per read), so the id is the message itself
+        const id = "botapp-" + crypto.createHash("sha1").update(`${botId}|${phone}|${at}|${type}|${text}`).digest("hex").slice(0, 20);
+        messages.push({ id, phone, at: new Date(at).toISOString(), from: type === "ai" ? "bot" : "customer", text: text.slice(0, 2000) });
+      }
+    }
+    res.json({ messages, bots: botIds.length, answered });
+  });
+
   // Fetch chats matching filter
   app.get("/api/chats", requireAuth, async (req: any, res: any) => {
     // Only the chats of a bot the person may access (platform admins: any).
@@ -2474,59 +2772,6 @@ export async function createApp() {
         return res.status(403).json({ success: false, message: "אין הרשאה לשיחות של בוט זה" });
       }
     }
-    // Robust function to return raw stringified JSON or plain text for client parsing
-    function cleanContent(rawContent: any): string {
-      if (!rawContent) return "";
-      
-      // If it is an object or array, serialize it to JSON string for frontend client parsing
-      if (typeof rawContent === "object") {
-        try {
-          return JSON.stringify(rawContent);
-        } catch (e) {
-          return String(rawContent);
-        }
-      }
-
-      if (typeof rawContent === "string") {
-        let trimmed = rawContent.trim();
-        if (trimmed.includes("```")) {
-          const m = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-          if (m) trimmed = m[1].trim();
-          else trimmed = trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-        }
-
-        const firstBrace = trimmed.indexOf("{");
-        const firstBracket = trimmed.indexOf("[");
-        let start = -1;
-        if (firstBrace !== -1 && firstBracket !== -1) start = Math.min(firstBrace, firstBracket);
-        else if (firstBrace !== -1) start = firstBrace;
-        else if (firstBracket !== -1) start = firstBracket;
-
-        if (start !== -1) {
-          const lastBrace = trimmed.lastIndexOf("}");
-          const lastBracket = trimmed.lastIndexOf("]");
-          const end = Math.max(lastBrace, lastBracket);
-          if (end > start) {
-            const extracted = trimmed.substring(start, end + 1);
-            try {
-              const parsed = JSON.parse(extracted);
-              return JSON.stringify(parsed);
-            } catch (e1) {
-              try {
-                const sanitized = extracted.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-                  return match.replace(/\r\n/g, "\\n").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
-                });
-                const parsed = JSON.parse(sanitized);
-                return JSON.stringify(parsed);
-              } catch (e2) {}
-            }
-          }
-        }
-        return rawContent;
-      }
-
-      return String(rawContent);
-    }
 
     try {
       const { sessionId, botId, phone } = req.query;
@@ -2535,164 +2780,9 @@ export async function createApp() {
       let liveChats: any[] = [];
       let fetchSuccess = false;
 
-      // If we have a botId and are connected to N8N, fetch the live database records via N8N Webhook!
+      // The live database records via the n8n webhook (see fetchLiveChats)
       if (botId) {
-        const primaryWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
-        const testWebhook = "https://n8n.srv1239769.hstgr.cloud/webhook-test/932a697d-8cc7-4141-9a00-973c72020584";
-        
-        // Prioritize GET because the n8n chats webhook is registered as a GET webhook
-        const urlsToTry = [
-          { url: primaryWebhook, method: "GET" },
-          { url: primaryWebhook, method: "POST" },
-          { url: testWebhook, method: "GET" },
-          { url: testWebhook, method: "POST" }
-        ];
-
-        let rawData: any = null;
-        let responseOk = false;
-        let finalMethod = "";
-        let finalUrl = "";
-
-        for (const item of urlsToTry) {
-          try {
-            console.log(`[SERVER] Trying to fetch chats from N8N: ${item.method} -> ${item.url} for botId: "${botId}"`);
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout per attempt
-
-            let fetchPromise;
-            if (item.method === "POST") {
-              console.log(`[SERVER] Sending POST to N8N: ${item.url} with body { botId: "${botId}", botID: "${botId}" }`);
-              fetchPromise = fetch(item.url, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ botId, botID: botId }),
-                signal: controller.signal
-              });
-            } else {
-              const getUrl = `${item.url}?botId=${encodeURIComponent(botId)}&botID=${encodeURIComponent(botId)}`;
-              console.log(`[SERVER] Sending GET to N8N: ${getUrl}`);
-              fetchPromise = fetch(getUrl, {
-                method: "GET",
-                headers: {
-                  "Accept": "application/json"
-                },
-                signal: controller.signal
-              });
-            }
-
-            const response = await fetchPromise;
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-              rawData = await response.json();
-              responseOk = true;
-              finalMethod = item.method;
-              finalUrl = item.url;
-              console.log(`[SERVER] Success! N8N webhook call succeeded using ${item.method} on ${item.url}`);
-              break; // exit loop on first success!
-            } else {
-              console.warn(`[SERVER] N8N returned status ${response.status} for ${item.method} on ${item.url}`);
-            }
-          } catch (err: any) {
-            console.warn(`[SERVER] Fetch failed for ${item.method} on ${item.url}:`, err?.message || err);
-          }
-        }
-
-        if (responseOk && rawData) {
-          try {
-            // Extract the list of records. N8N might return a flat array, or wrap it in { data: [...] }, etc.
-            let records = [];
-            if (Array.isArray(rawData)) {
-              records = rawData;
-            } else if (rawData && Array.isArray(rawData.data)) {
-              records = rawData.data;
-            } else if (rawData && typeof rawData === "object") {
-              // Try to find any array inside the object
-              const arrayKey = Object.keys(rawData).find(key => Array.isArray(rawData[key]));
-              if (arrayKey) {
-                records = rawData[arrayKey];
-              } else if (rawData.chats && Array.isArray(rawData.chats)) {
-                records = rawData.chats;
-              } else if (rawData.rows && Array.isArray(rawData.rows)) {
-                records = rawData.rows;
-              } else {
-                // If it's a single object, wrap in an array
-                records = [rawData];
-              }
-            }
-
-            // Map and normalize records to our standard chat message format
-            liveChats = records.map((item: any, idx: number) => {
-              if (!item) return null;
-              const sId = item.session_id || item.sessionId || item.SessionId || "";
-              
-              // Parse phone, botId and customerName from sessionId if needed
-              let itemPhone = item.phone || item.userPhone || item.user_phone || item.sender_phone || item.wa_id || item.from || "";
-              let itemBotId = item.botId || item.bot_id || "";
-              let itemName = item.userName || item.name || item.sender_name || item.pushName || item.pushname || item.profile_name || item.customer_name || "";
-
-              if (sId) {
-                const allAgentsList = readAgents();
-                const sInfo = parseSessionIdInfo(sId, [String(botId || ""), ...allAgentsList.map(a => a.botId), "bot_generic_252"]);
-                if (!itemPhone && sInfo.phone) itemPhone = sInfo.phone;
-                if (!itemBotId && sInfo.botId) itemBotId = sInfo.botId;
-                if (!itemName && sInfo.customerName) itemName = sInfo.customerName;
-              }
-
-              // Parse message contents (can be JSON string or parsed object)
-              let messageContent = item.message;
-              let finalType: "human" | "ai" = "human";
-              let finalContent = "";
-
-              if (messageContent) {
-                if (typeof messageContent === "string") {
-                  try {
-                    const parsedMsg = JSON.parse(messageContent);
-                    finalType = parsedMsg.type === "ai" || parsedMsg.role === "ai" || parsedMsg.sender === "ai" || parsedMsg.type === "AI" ? "ai" : "human";
-                    const innerContent = parsedMsg.content || parsedMsg.text || messageContent;
-                    finalContent = cleanContent(innerContent);
-                  } catch (e) {
-                    finalContent = cleanContent(messageContent);
-                  }
-                } else if (typeof messageContent === "object") {
-                  finalType = messageContent.type === "ai" || messageContent.role === "ai" || messageContent.sender === "ai" || messageContent.type === "AI" ? "ai" : "human";
-                  const innerContent = messageContent.content || messageContent.text || JSON.stringify(messageContent);
-                  finalContent = cleanContent(innerContent);
-                }
-              } else {
-                // Try fallback fields directly on item
-                const contentVal = item.content || item.text || item.message_text || "";
-                const typeVal = item.type || item.message_type || item.sender || "human";
-                finalType = String(typeVal).toLowerCase() === "ai" ? "ai" : "human";
-                finalContent = cleanContent(contentVal);
-              }
-
-              return {
-                id: item.id || `n8n_${idx}_${Date.now().toString(36)}`,
-                sessionId: sId,
-                botId: itemBotId || botId,
-                phone: itemPhone,
-                name: itemName,
-                userName: itemName,
-                userPhone: itemPhone,
-                message: {
-                  type: finalType,
-                  content: finalContent
-                },
-                timestamp: item.created_at || item.timestamp || item.time || new Date().toISOString()
-              };
-            }).filter(Boolean);
-
-            fetchSuccess = true;
-            console.log(`[SERVER] Successfully parsed ${liveChats.length} live chat messages from N8N`);
-          } catch (parseErr: any) {
-            console.error("[SERVER] Error parsing N8N payload response:", parseErr);
-          }
-        } else {
-          console.warn(`[SERVER] All N8N Webhook endpoints failed or returned no data`);
-        }
+        ({ ok: fetchSuccess, chats: liveChats } = await fetchLiveChats(String(botId)));
       }
 
       // Fallback: Read from local chats.json if N8N failed or had no messages
