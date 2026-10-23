@@ -1,4 +1,5 @@
 import type { GoogleGenAI } from "@google/genai";
+import { HDate, HebrewCalendar } from "@hebcal/core";
 import {
   addLesson,
   addNote,
@@ -94,6 +95,46 @@ const fromMinutes = (n: number) => `${String(Math.floor(n / 60)).padStart(2, "0"
 export function showSlot(start: string): string {
   const date = start.slice(0, 10);
   return `יום ${DAY_NAMES[weekdayOf(date)]} ${date.slice(8, 10)}/${date.slice(5, 7)} בשעה ${start.slice(11, 16)}`;
+}
+
+// ---------- greeting ----------
+
+const israelDateOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date(iso));
+
+// Special days the Hebrew calendar doesn't know (Knesset election day is a day off)
+const SPECIAL_DAYS: Record<string, string> = {
+  "2026-10-27": "יום הבחירות לכנסת (יום שבתון) — אפשר לאחל \"יום בוחר שמח\"",
+};
+
+// What today is, for the opening line: the time of day, and a holiday / special day if there is one
+function greetingContext(now: { date: string; time: string; weekday: number }): string {
+  const hour = Number(now.time.slice(0, 2));
+  const timeOfDay = hour >= 5 && hour < 11 ? "בוקר טוב" : hour >= 11 && hour < 16 ? "צהריים טובים" : hour >= 16 && hour < 22 ? "ערב טוב" : "לילה טוב";
+  const parts = [`ברכה לפי השעה: "${timeOfDay}"`];
+  if (now.weekday === 5 && hour >= 12) parts.push('יום שישי אחרי הצהריים — אפשר לאחל "שבת שלום"');
+  if (now.weekday === 6) parts.push('שבת — "שבת שלום" / "שבוע טוב" במוצאי שבת');
+  if (SPECIAL_DAYS[now.date]) parts.push(SPECIAL_DAYS[now.date]);
+  try {
+    const [y, m, d] = now.date.split("-").map(Number);
+    const names = (HebrewCalendar.getHolidaysOnDate(new HDate(new Date(y, m - 1, d)), true) || []).map((e: any) => e.render("he"));
+    if (names.length) parts.push(`היום בלוח העברי: ${names.join(", ")} — ברכה מתאימה (חג שמח / חג כשר ושמח / חנוכה שמח...), ובימי זיכרון או צום בלי ברכה שמחה`);
+  } catch {
+    /* no holiday info */
+  }
+  return parts.join("; ");
+}
+
+// Markdown the model sometimes writes → WhatsApp style (also what the website widget shows):
+// "* item" / "- item" lines → "• item", **bold** → *bold*, "* bold *" → "*bold*"
+export function tidyText(text: string): string {
+  return String(text || "")
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .split("\n")
+    .map((line) => line.replace(/^(\s*)[*\-]\s+(?=\S)/, "$1• "))
+    .join("\n")
+    .replace(/\*[ \t]+([^*\n]+?)[ \t]+\*/g, "*$1*")
+    .replace(/\*[ \t]+([^*\n]+?)\*/g, "*$1*")
+    .replace(/\*([^*\n]+?)[ \t]+\*/g, "*$1*");
 }
 
 // ---------- phones ----------
@@ -216,7 +257,7 @@ function customerSection(c: any, phone: string, verified: boolean): string {
   return lines.join("\n");
 }
 
-function systemPrompt(input: TurnInput, customer: any, phone: string): string {
+function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim());
   const lessons = input.lessons.filter((l) => l.active);
@@ -236,6 +277,14 @@ function systemPrompt(input: TurnInput, customer: any, phone: string): string {
       : "",
     "\n# מה ידוע על הלקוח הזה (מה-CRM)",
     customerSection(customer, phone, !web),
+    "\n# פתיחה ושם",
+    ctx.profileName ? `שם הלקוח בפרופיל ${web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
+    customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
+    "- פנה ללקוח בשמו הפרטי. יש שני מקורות (הפרופיל וה-CRM) — בחר את מה שנראה כמו שם אמיתי של אדם (לא כינוי, אימוג'י, שם עסק או מספר). אם אף אחד לא נראה כמו שם — בלי שם.",
+    ctx.firstToday
+      ? `- זו התשובה הראשונה שלך ללקוח היום: פתח בברכה חמה + שמו. ${greetingContext(israelNow())}.` +
+        (customer?.found ? " הלקוח כבר מוכר לנו — הראה שמכירים אותו (למשל \"שמחים לשמוע ממך שוב\"), ואם יש משהו פתוח שלו (הזמנה, תור) — התייחס." : "")
+      : "- כבר דיברתם היום — אל תפתח שוב בברכה, המשך את השיחה.",
     "\n# כללי עבודה",
     "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — הצע שנציג יחזור אליו.",
     "- השתמש במה שאתה יודע על הלקוח: פנה בשמו, ואם יש לו הזמנה פתוחה / תור קרוב / קמפיין שקיבל — התייחס לזה כשזה רלוונטי, גם לפני שהוא שואל.",
@@ -243,7 +292,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string): string {
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots, הצע 3–4 מועדים כאפשרויות (options), ואחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots, הצע 3–4 מועדים כאפשרויות (options) ותמיד הוסף גם את האפשרויות \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\"; בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם from_date של יום ראשון הקרוב והצע ממנו; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו. אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
@@ -251,10 +300,11 @@ function systemPrompt(input: TurnInput, customer: any, phone: string): string {
     "",
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
-    "- options: עד 6 תשובות קצרות (עד 24 תווים כל אחת) שהלקוח יכול ללחוץ — רק כשזה עוזר (בחירת מועד, תפריט, כן/לא). אחרת [].",
+    "- options: עד 6 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
     web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול של הודעה קולית ששלח.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
-    "- בלי markdown מלבד *הדגשה* בכוכבית אחת ושורות חדשות.",
+    "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
+    "- הדגשה: *כוכבית אחת צמודה למילים משני הצדדים*, למשל *800 ₪* או *בדיקת ראייה חינם* — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
   ]
     .filter((x) => x !== "")
     .join("\n");
@@ -461,6 +511,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     if (st.customer?.name && !st.name) st.name = st.customer.name;
   }
   const userText = String(input.text || "").trim();
+  const today = israelNow().date;
+  const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
 
   let answer = { reply: "", options: [] as string[], images: [] as string[] };
@@ -477,7 +529,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       const res = await generate(deps.ai, {
         contents,
         config: {
-          systemInstruction: systemPrompt(input, st.customer, st.phone),
+          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim() }),
           tools: [{ functionDeclarations: TOOLS }],
           temperature: 0.4,
         },
@@ -503,7 +555,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     answer = parseBotAnswer(finalText);
     if (!answer.reply) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
   }
-  answer.reply = answer.reply.replace(/\*\*/g, "*");
+  answer.reply = tidyText(answer.reply);
 
   await appendToConversation(
     { botId, sessionId: input.sessionId, agentId: String(input.agent.id), channel: input.channel, phone: st.phone, name: st.name, test: input.channel === "test" },
