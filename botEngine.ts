@@ -1,5 +1,5 @@
 import type { GoogleGenAI } from "@google/genai";
-import { HDate, HebrewCalendar } from "@hebcal/core";
+import { HDate, HebrewCalendar, flags } from "@hebcal/core";
 import {
   addLesson,
   addNote,
@@ -7,6 +7,7 @@ import {
   getConversation,
   type BookingHours,
   type BotBrain,
+  type BotEvent,
   type BotLesson,
   type BotNote,
   type BotNoteKind,
@@ -102,6 +103,8 @@ export function showSlot(start: string): string {
   return `יום ${DAY_NAMES[weekdayOf(date)]} ${date.slice(8, 10)}/${date.slice(5, 7)} בשעה ${start.slice(11, 16)}`;
 }
 
+export const showDay = (date: string) => `יום ${DAY_NAMES[weekdayOf(date)]} ${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
 // "2026-10-28T12:00" → "רביעי 28/10 · 12:00" (a WhatsApp list row allows 24 characters)
 export function slotButton(start: string): string {
   const date = start.slice(0, 10);
@@ -196,14 +199,52 @@ function ranges(spec: string): [number, number][] {
     .filter(([a, b]) => b > a);
 }
 
-export function freeSlots(booking: BookingHours, busy: { start: string; end: string }[], fromDate: string, days: number): string[] {
+// The official holidays a business is closed on (Haim, 2026-10-23: "only official holidays, not
+// election day"): yom tov in Israel (Rosh Hashana, Yom Kippur, Sukkot, Shmini Atzeret, Pesach I/VII,
+// Shavuot) and Independence Day. "" when the date isn't one.
+export function officialHoliday(date: string): string {
+  try {
+    const [y, m, d] = date.split("-").map(Number);
+    const ev = (HebrewCalendar.getHolidaysOnDate(new HDate(new Date(y, m - 1, d)), true) || []).find(
+      (e: any) => e.getFlags() & flags.CHAG || e.getDesc() === "Yom HaAtzma'ut"
+    );
+    return ev ? ev.render("he").replace(/[\u0591-\u05C7]/g, "") : "";
+  } catch {
+    return "";
+  }
+}
+
+const eventOn = (e: BotEvent, date: string) => e.from <= date && date <= (e.to || e.from);
+
+// A date's reception hours: an event closing it / changing its hours, an official holiday (when the
+// business closes on them), or the weekday's usual hours. why = what to tell the customer.
+export function dayHours(brain: Pick<BotBrain, "booking" | "events" | "closedOnHolidays">, date: string): { hours: string; why?: string } {
+  const events = (brain.events || []).filter((e) => e.effect !== "info" && eventOn(e, date));
+  const closed = events.find((e) => e.effect === "closed");
+  if (closed) return { hours: "", why: closed.title };
+  const changed = events.find((e) => e.effect === "hours" && ranges(e.hours || "").length);
+  if (changed) return { hours: String(changed.hours), why: changed.title };
+  if (brain.closedOnHolidays !== false) {
+    const holiday = officialHoliday(date);
+    if (holiday) return { hours: "", why: holiday };
+  }
+  return { hours: brain.booking.hours[String(weekdayOf(date))] || "" };
+}
+
+export function freeSlots(
+  booking: BookingHours,
+  busy: { start: string; end: string }[],
+  fromDate: string,
+  days: number,
+  hoursFor: (date: string) => string = (date) => booking.hours[String(weekdayOf(date))] || ""
+): string[] {
   const now = israelNow();
   const earliest = `${now.date}T${fromMinutes(Math.min(toMinutes(now.time) + 60, 24 * 60 - 1))}`; // not within the next hour
   const step = Math.max(10, Number(booking.slotMinutes) || 30);
   const out: string[] = [];
   for (let i = 0; i < days; i++) {
     const date = addDays(fromDate, i);
-    for (const [a, b] of ranges(booking.hours[String(weekdayOf(date))] || "")) {
+    for (const [a, b] of ranges(hoursFor(date))) {
       for (let t = a; t + step <= b; t += step) {
         const start = `${date}T${fromMinutes(t)}`;
         const end = `${date}T${fromMinutes(t + step)}`;
@@ -351,6 +392,34 @@ export function replyContext(input: TurnInput, customer: any, lastChatAt: string
   return lines.join("\n");
 }
 
+// What's coming up that isn't the usual week: the owner's events (aid days, closures, short hours,
+// a branch opening) and, when the business closes on them, the official holidays — so the bot can
+// answer "are you open on…?" and mention what's relevant.
+const EVENTS_AHEAD = 120;
+const HOLIDAYS_AHEAD = 60;
+function eventsSection(brain: BotBrain, today: string): string {
+  const until = addDays(today, EVENTS_AHEAD);
+  const span = (e: BotEvent) => (e.to && e.to !== e.from ? `${showDay(e.from)} עד ${showDay(e.to)}` : showDay(e.from));
+  const effect = (e: BotEvent) => (e.effect === "closed" ? " — סגור, לא קובעים תורים" : e.effect === "hours" ? ` — שעות קבלה: ${e.hours}` : "");
+  const lines = (brain.events || [])
+    .filter((e) => (e.to || e.from) >= today && e.from <= until)
+    .sort((a, b) => a.from.localeCompare(b.from))
+    .map((e) => `- ${span(e)}: ${e.title}${effect(e)}${e.details?.trim() ? `. ${e.details.trim()}` : ""}`);
+  if (brain.closedOnHolidays !== false) {
+    for (let i = 0; i < HOLIDAYS_AHEAD; i++) {
+      const d = addDays(today, i);
+      const h = officialHoliday(d);
+      if (h) lines.push(`- ${showDay(d)}: ${h} — סגור (חג)`);
+    }
+  }
+  if (!lines.length) return "";
+  return (
+    "\n# אירועים וימים מיוחדים (מהיום והלאה — מידע עדכני שגובר על השכל)\n" +
+    lines.join("\n") +
+    "\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף או אזור — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
+  );
+}
+
 function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim());
@@ -375,6 +444,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       const c = replyContext(input, customer, ctx.lastChatAt);
       return c ? "\n# על מה הלקוח עונה עכשיו\n" + c : "";
     })(),
+    eventsSection(input.brain, now.date),
     "\n# פתיחה ושם",
     ctx.profileName ? `שם הלקוח בפרופיל ${web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
@@ -391,7 +461,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות. אבל הבטח את זה רק כשיש בקשה פתוחה שאתה לא יכול לטפל בה בעצמך — לא כסיום שיחה. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
@@ -552,7 +622,15 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       const to = addDays(from, days - 1);
       const r = await deps.crm({ action: "busy", from, to });
       if (!r?.configured) return { ok: false, error: "יומן הסניף לא מחובר — השאר הערה לנציג" };
-      let slots = freeSlots(b, r.busy || [], from, days);
+      const hoursFor = (d: string) => dayHours(input.brain, d).hours;
+      let slots = freeSlots(b, r.busy || [], from, days, hoursFor);
+      // days in the range that aren't as usual, so the bot can say why ("closed — aid days")
+      const specialDays: { date: string; hours: string; why: string }[] = [];
+      for (let i = 0; i < days; i++) {
+        const d = addDays(from, i);
+        const rule = dayHours(input.brain, d);
+        if (rule.why) specialDays.push({ date: showDay(d), hours: rule.hours || "סגור", why: rule.why });
+      }
       const tod = String(args?.time_of_day || "any");
       const hour = (s: string) => Number(s.slice(11, 13));
       if (tod === "morning") slots = slots.filter((s) => hour(s) < 12);
@@ -575,6 +653,8 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       return {
         ok: true,
         receptionHours,
+        // closed / different hours in this range — say so (and why) when it matters to the customer
+        ...(specialDays.length ? { specialDays } : {}),
         suggested: suggested.slice(0, 8).map((s) => ({ start: s, button: slotButton(s) })),
         allFree: slots.slice(0, 40).map((s) => ({ start: s, show: showSlot(s) })),
         lastSuggested: suggested.slice(0, 8).slice(-1)[0] || null,
@@ -588,7 +668,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!deps.crm || !input.brain.booking.enabled) return { ok: false, error: "אין גישה ליומן" };
       // the slot must still be free right now
       const r = await deps.crm({ action: "busy", from: start.slice(0, 10), to: start.slice(0, 10) });
-      if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1).includes(start)) {
+      if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1, (d) => dayHours(input.brain, d).hours).includes(start)) {
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
       const examId = String(args?.exam_id || "");

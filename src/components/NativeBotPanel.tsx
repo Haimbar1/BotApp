@@ -20,7 +20,10 @@ interface Brain {
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
   autofilledAt?: string;
+  events?: BotEvent[];
+  closedOnHolidays?: boolean;
 }
+interface BotEvent { id: string; from: string; to?: string; title: string; details?: string; effect: "closed" | "hours" | "info"; hours?: string }
 interface ChatLine { role: "user" | "bot"; text: string; options?: string[] }
 
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -141,6 +144,10 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     setDirty(true);
   };
   const setQa = (id: string, patch: Partial<Qa>) => edit({ qa: brain.qa.map((x) => (x.id === id ? { ...x, ...patch } : x)) });
+  const events = brain.events || [];
+  const setEvent = (id: string, patch: Partial<BotEvent>) => edit({ events: events.map((x) => (x.id === id ? { ...x, ...patch } : x)) });
+  const addEvent = () =>
+    edit({ events: [...events, { id: `ev_${Math.random().toString(36).slice(2, 10)}`, from: new Date().toISOString().slice(0, 10), to: "", title: "", details: "", effect: "closed", hours: "" }] });
   const setHours = (day: number, value: string) => edit({ booking: { ...brain.booking, hours: { ...brain.booking.hours, [String(day)]: value } } });
 
   const lessonAction = async (body: any) => {
@@ -296,6 +303,49 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
             <input type="number" className={`${input} w-20`} value={brain.booking.daysAhead} onChange={(e) => edit({ booking: { ...brain.booking, daysAhead: Number(e.target.value) } })} />
           </label>
         </div>
+      </div>
+
+      {/* Events and special days */}
+      <div className={card}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-xs font-black text-white">🗓️ אירועים וימים מיוחדים ({events.length})</h4>
+          <button type="button" className={`${btn} border-sky-500/40 text-sky-200 bg-sky-500/10`} onClick={addEvent}>
+            + אירוע
+          </button>
+        </div>
+        <p className="text-[10.5px] text-slate-500">
+          ימי סיוע, סגירה, שעות מקוצרות, או משהו שהבוט פשוט צריך לדעת (למשל פתיחת סניף חדש). הבוט עונה לפי זה כששואלים אם אתם פתוחים, מזכיר את זה כשזה קשור ללקוח, ובימים סגורים לא קובע תורים.
+          אירוע שעבר נשאר כאן אבל הבוט כבר לא רואה אותו.
+        </p>
+        <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+          <input type="checkbox" checked={brain.closedOnHolidays !== false} onChange={(e) => edit({ closedOnHolidays: e.target.checked })} />
+          סגור בחגים הרשמיים — ראש השנה, יום כיפור, סוכות, שמיני עצרת, פסח (א׳ וז׳), שבועות, יום העצמאות (הבוט לא קובע בהם תורים)
+        </label>
+        {events.map((ev) => (
+          <div key={ev.id} className={`border border-slate-800 rounded-lg p-2.5 flex flex-col gap-2 ${(ev.to || ev.from) < new Date().toISOString().slice(0, 10) ? "opacity-50" : ""}`}>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+              <input className={`${input} flex-1 min-w-[160px]`} value={ev.title} placeholder="מה — למשל: ימי סיוע בצפון / פתיחת סניף בפרדס חנה" onChange={(e) => setEvent(ev.id, { title: e.target.value })} />
+              <label className="flex items-center gap-1">
+                מ-
+                <input type="date" className={`${input} w-36`} value={ev.from} onChange={(e) => setEvent(ev.id, { from: e.target.value })} />
+              </label>
+              <label className="flex items-center gap-1">
+                עד
+                <input type="date" className={`${input} w-36`} value={ev.to || ""} onChange={(e) => setEvent(ev.id, { to: e.target.value })} />
+              </label>
+              <select className={`${input} w-auto`} value={ev.effect} onChange={(e) => setEvent(ev.id, { effect: e.target.value as BotEvent["effect"] })}>
+                <option value="closed">🚫 סגור — אין תורים</option>
+                <option value="hours">🕐 שעות אחרות</option>
+                <option value="info">ℹ️ רק לידיעת הבוט</option>
+              </select>
+              {ev.effect === "hours" && <input className={`${input} w-36`} dir="ltr" value={ev.hours || ""} placeholder="10:00-13:00" onChange={(e) => setEvent(ev.id, { hours: e.target.value })} />}
+              <button type="button" className={`${btn} border-red-500/40 text-red-300`} onClick={() => edit({ events: events.filter((x) => x.id !== ev.id) })}>
+                מחק
+              </button>
+            </div>
+            <textarea className={`${input} min-h-[44px]`} rows={2} value={ev.details || ""} placeholder="פרטים לבוט (לא חובה) — למשל: הכתובת, מה מציעים, למי לפנות בינתיים" onChange={(e) => setEvent(ev.id, { details: e.target.value })} />
+          </div>
+        ))}
       </div>
 
       {/* Save */}
