@@ -57,6 +57,9 @@ export interface TurnResult {
   phone?: string; // the customer's phone, once known (the widget keeps it)
   name?: string;
   notes: BotNote[];
+  // where the time went, in ms (shown in the bot's screen): customer = the CRM read, ai = each model
+  // call, tools = each tool, total
+  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number };
 }
 
 const TZ = "Asia/Jerusalem";
@@ -506,12 +509,22 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
 
 // ---------- one turn ----------
 
+// "Thinking" off: it made the answer several times slower without better answers (the CRM's help
+// assistant measured 8s vs 4s; Haim 2026-10-23: "the answer comes slowly"). A model that refuses a
+// zero thinking budget is asked again with its default.
 async function generate(ai: GoogleGenAI, params: any): Promise<any> {
   let last: any = null;
   for (const model of MODELS) {
     try {
-      return await ai.models.generateContent({ ...params, model });
+      return await ai.models.generateContent({ ...params, model, config: { ...params.config, thinkingConfig: { thinkingBudget: 0 } } });
     } catch (e: any) {
+      if (/thinking/i.test(String(e?.message || ""))) {
+        try {
+          return await ai.models.generateContent({ ...params, model });
+        } catch (e2: any) {
+          e = e2;
+        }
+      }
       last = e;
       console.warn(`[BOT] ${model} failed:`, e?.message || e);
     }
@@ -528,8 +541,16 @@ const msg = (role: "user" | "bot", text: string, extra: Partial<ConvMessage> = {
 });
 
 export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<TurnResult> {
+  const started = Date.now();
+  const timing: TurnResult["timing"] = { customer: 0, ai: [], tools: [], total: 0 };
   const botId = String(input.agent.botId || "");
-  const conv = await getConversation(botId, input.sessionId);
+  // the conversation and the CRM card are read at the same time
+  const givenPhone = normalizeIsraeliPhone(input.phone || "");
+  const t0 = Date.now();
+  const [conv, givenCustomer] = await Promise.all([
+    getConversation(botId, input.sessionId),
+    givenPhone ? readCustomer(deps, givenPhone).finally(() => (timing.customer = Date.now() - t0)) : Promise.resolve(null),
+  ]);
   const st: TurnState = {
     phone: normalizeIsraeliPhone(input.phone || "") || conv?.phone || "",
     name: String(input.name || conv?.name || "").trim(),
@@ -538,7 +559,12 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     slotsOffered: new Set(),
   };
   if (st.phone) {
-    st.customer = await readCustomer(deps, st.phone);
+    if (st.phone === givenPhone) st.customer = givenCustomer;
+    else {
+      const t1 = Date.now();
+      st.customer = await readCustomer(deps, st.phone);
+      timing.customer = Date.now() - t1;
+    }
     if (st.customer?.name && !st.name) st.name = st.customer.name;
   }
   const userText = String(input.text || "").trim();
@@ -557,6 +583,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     const contents: any[] = [...history, { role: "user", parts: [{ text: userText || "(הלקוח לחץ על כפתור)" }] }];
     let finalText = "";
     for (let round = 0; round < 6; round++) {
+      const ta = Date.now();
       const res = await generate(deps.ai, {
         contents,
         config: {
@@ -565,22 +592,29 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
           temperature: 0.4,
         },
       });
+      timing.ai.push(Date.now() - ta);
       const calls = res.functionCalls || [];
       if (!calls.length) {
         finalText = res.text || "";
         break;
       }
       contents.push(res.candidates?.[0]?.content || { role: "model", parts: calls.map((c: any) => ({ functionCall: c })) });
-      const parts: any[] = [];
-      for (const call of calls) {
+      // several tools asked for at once run together — after linking the customer, which the others need
+      const runOne = async (call: any) => {
+        const tt = Date.now();
         let out: any;
         try {
           out = await runTool(String(call.name), call.args || {}, input, deps, st);
         } catch (e: any) {
           out = { ok: false, error: e?.message || "failed" };
         }
-        parts.push({ functionResponse: { name: call.name, response: out, ...(call.id ? { id: call.id } : {}) } });
-      }
+        timing.tools.push({ name: String(call.name), ms: Date.now() - tt });
+        return { functionResponse: { name: call.name, response: out, ...(call.id ? { id: call.id } : {}) } };
+      };
+      const linking = calls.filter((c: any) => c.name === "link_customer_phone");
+      const parts: any[] = [];
+      for (const c of linking) parts.push(await runOne(c));
+      parts.push(...(await Promise.all(calls.filter((c: any) => c.name !== "link_customer_phone").map(runOne))));
       contents.push({ role: "user", parts });
     }
     answer = parseBotAnswer(finalText);
@@ -592,7 +626,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     { botId, sessionId: input.sessionId, agentId: String(input.agent.id), channel: input.channel, phone: st.phone, name: st.name, test: input.channel === "test" },
     [userMsg, msg("bot", answer.reply, { ...(answer.options.length ? { options: answer.options } : {}), ...(answer.images.length ? { images: answer.images } : {}) })]
   );
-  return { ...answer, phone: st.phone || undefined, name: st.name || undefined, notes: st.notes };
+  timing.total = Date.now() - started;
+  return { ...answer, phone: st.phone || undefined, name: st.name || undefined, notes: st.notes, timing };
 }
 
 // ---------- the voice bot's prompt ----------

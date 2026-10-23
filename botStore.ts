@@ -31,6 +31,8 @@ export interface BotBrain {
   nativeWhatsapp?: boolean;
   // when a customer's WhatsApp message last reached /api/webhooks/whatsapp (proof the number is routed here)
   lastWaMessageAt?: string;
+  // how long the last WhatsApp answer took, and where the time went (ms; shown in the WhatsApp card)
+  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
   qa: BotQa[];
   booking: BookingHours;
   // free text the owner adds for the voice bot only
@@ -225,13 +227,12 @@ export async function switchedOnAgentIds(): Promise<string[]> {
   return rows.map((r: any) => r.agent_id);
 }
 
-// A customer's WhatsApp message reached BotApp for this agent (shown in the bot's WhatsApp card)
-export async function noteWaArrival(agentId: string): Promise<void> {
-  const at = new Date().toISOString();
+// Facts the server keeps on the brain row (merged in place, never over the owner's settings)
+export async function noteBrainFields(agentId: string, fields: Partial<BotBrain>): Promise<void> {
   const d = db();
   if (!d) {
     const s = local();
-    s.brains[agentId] = { ...withDefaults(agentId, s.brains[agentId]), lastWaMessageAt: at };
+    s.brains[agentId] = { ...withDefaults(agentId, s.brains[agentId]), ...fields };
     saveLocal();
     return;
   }
@@ -239,9 +240,12 @@ export async function noteWaArrival(agentId: string): Promise<void> {
   await d.pool.query(
     `INSERT INTO botapp_bot_brain (agent_id, data, updated_at) VALUES ($1, $2, now())
      ON CONFLICT (agent_id) DO UPDATE SET data = botapp_bot_brain.data || $3::jsonb`,
-    [agentId, JSON.stringify({ ...emptyBrain(agentId), lastWaMessageAt: at }), JSON.stringify({ lastWaMessageAt: at })]
+    [agentId, JSON.stringify({ ...emptyBrain(agentId), ...fields }), JSON.stringify(fields)]
   );
 }
+
+// A customer's WhatsApp message reached BotApp for this agent (shown in the bot's WhatsApp card)
+export const noteWaArrival = (agentId: string) => noteBrainFields(agentId, { lastWaMessageAt: new Date().toISOString() });
 
 // ---------- WhatsApp: each incoming message answered once ----------
 
