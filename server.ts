@@ -3455,6 +3455,20 @@ export async function createApp() {
         daysAhead: Math.min(Math.max(Number(b.booking?.daysAhead) || 14, 1), 60),
       },
       voiceNotes: String(b.voiceNotes || "").slice(0, 5000),
+      events: (Array.isArray(b.events) ? b.events : [])
+        .map((e: any) => ({
+          id: String(e?.id || `ev_${Math.random().toString(36).slice(2, 10)}`),
+          from: String(e?.from || "").slice(0, 10),
+          to: String(e?.to || "").slice(0, 10),
+          title: String(e?.title || "").slice(0, 200),
+          details: String(e?.details || "").slice(0, 2000),
+          effect: ["closed", "hours", "info"].includes(e?.effect) ? e.effect : "info",
+          hours: String(e?.hours || "").slice(0, 60),
+        }))
+        .filter((e: any) => /^\d{4}-\d{2}-\d{2}$/.test(e.from) && e.title.trim())
+        .map((e: any) => ({ ...e, to: /^\d{4}-\d{2}-\d{2}$/.test(e.to) && e.to > e.from ? e.to : "" }))
+        .slice(0, 200),
+      closedOnHolidays: b.closedOnHolidays !== false,
       ...(b.autofilledAt ? { autofilledAt: String(b.autofilledAt) } : {}),
     });
     res.json({ success: true, brain });

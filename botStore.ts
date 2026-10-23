@@ -23,6 +23,19 @@ export interface BookingHours {
   daysAhead: number;
 }
 
+// A day or days that aren't like the usual week (Haim, 2026-10-23): aid days out of the branch, a
+// closure, short hours, or something the bot should just know (a branch opening in Pardes Hanna).
+export interface BotEvent {
+  id: string;
+  from: string; // YYYY-MM-DD
+  to?: string; // YYYY-MM-DD, the last day (empty = one day)
+  title: string;
+  details?: string;
+  // closed = no appointments those days; hours = these hours instead of the weekday's; info = only for the bot to know
+  effect: "closed" | "hours" | "info";
+  hours?: string; // for "hours": "HH:mm-HH:mm[, …]"
+}
+
 export interface BotBrain {
   agentId: string;
   // the website widget is answered here instead of n8n
@@ -35,6 +48,9 @@ export interface BotBrain {
   lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
   qa: BotQa[];
   booking: BookingHours;
+  events?: BotEvent[];
+  // no appointments on the official holidays (yom tov, Yom Kippur, Independence Day) — on unless turned off
+  closedOnHolidays?: boolean;
   // free text the owner adds for the voice bot only
   voiceNotes?: string;
   autofilledAt?: string;
