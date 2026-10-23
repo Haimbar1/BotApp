@@ -3219,7 +3219,9 @@ export async function createApp() {
     const agent = ownAgentOr403(req, res, req.query.agentId);
     if (!agent) return;
     const [brain, lessons, notes] = await Promise.all([getBrain(agent.id), listLessons(agent.id), listNotes(String(agent.botId || ""), 200)]);
-    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent) });
+    // the same bot id on other agents (copies) — the website goes by the bot id
+    const sameBotId = readAgents().filter((a: any) => a.id !== agent.id && agent.botId && a.botId === agent.botId).map((a: any) => a.businessName || a.name || a.id);
+    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent), botId: agent.botId || "", sameBotId });
   });
 
   // PUT /api/bot-brain { agentId, brain } — engine on/off, Q&A, booking hours, voice notes

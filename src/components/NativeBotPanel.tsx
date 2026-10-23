@@ -41,6 +41,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [crmLinked, setCrmLinked] = useState(true);
+  const [botId, setBotId] = useState("");
+  const [sameBotId, setSameBotId] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -63,6 +65,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     setLessons(d.lessons || []);
     setNotes(d.notes || []);
     setCrmLinked(d.crmLinked !== false);
+    setBotId(d.botId || "");
+    setSameBotId(d.sameBotId || []);
     setDirty(false);
     return d.brain as Brain;
   };
@@ -156,6 +160,10 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
           <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
             במקום n8n: הבוט רואה את כרטיס הלקוח ב-CRM, רכישות והזמנות, תורים ביומן והקמפיינים שקיבל בוואטסאפ, קובע ומזיז תורים, משאיר הערות לנציג ולומד מתיקונים.
             {!crmLinked && <span className="text-amber-300"> (הבוט לא משויך לעסק בפורטל — אין חיבור ל-CRM וליומן)</span>}
+          </p>
+          <p className="text-[10.5px] text-slate-500 mt-1" dir="rtl">
+            מזהה הבוט באתר: <span dir="ltr" className="font-mono text-slate-300">{botId || "—"}</span> (זה ה-data-bot-id בקוד ההטמעה)
+            {sameBotId.length > 0 && <span className="text-amber-300"> · שים לב: גם {sameBotId.join(", ")} עם אותו מזהה — האתר עונה מהבוט שהמתג שלו דלוק</span>}
           </p>
         </div>
         <label className="flex items-center gap-2 shrink-0 cursor-pointer select-none">
