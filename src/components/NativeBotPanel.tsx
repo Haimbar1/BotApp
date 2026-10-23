@@ -182,6 +182,11 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
             מזהה הבוט באתר: <span dir="ltr" className="font-mono text-slate-300">{botId || "—"}</span> (זה ה-data-bot-id בקוד ההטמעה)
             {sameBotId.length > 0 && <span className="text-amber-300"> · שים לב: גם {sameBotId.join(", ")} עם אותו מזהה — האתר עונה מהבוט שהמתג שלו דלוק</span>}
           </p>
+          {!(brain.booking.enabled && Object.values(brain.booking.hours).some((h) => String(h).trim())) && (
+            <p className="text-[11px] mt-1 font-bold text-amber-300">
+              📅 הבוט עדיין לא קובע תורים בעצמו (רק שולח קישור / משאיר הערה לנציג) — כדי שיקבע: למטה ב"📅 הבוט קובע, מזיז ומבטל תורים" לסמן, למלא שעות לכל יום, ו"שמור שינויים 💾".
+            </p>
+          )}
           {siteSees && (
             <p className={`text-[11px] mt-1 font-bold ${siteSees.native ? "text-emerald-300" : "text-amber-300"}`}>
               האתר רואה כרגע: {siteSees.native ? "🟢 הבוט החדש עונה" : "⚪ n8n עונה"}

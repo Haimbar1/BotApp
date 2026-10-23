@@ -3216,7 +3216,9 @@ export async function createApp() {
             } catch (e: any) {
               nativeWeb = `error: ${e?.message || e}`;
             }
-            return { agentId: a.id, name: a.businessName || a.name || "", nativeWeb };
+            const b = await getBrain(String(a.id)).catch(() => null);
+            const booking = b ? { enabled: b.booking.enabled, days: Object.entries(b.booking.hours).filter(([, h]) => String(h).trim()).map(([d, h]) => `${d}:${h}`) } : null;
+            return { agentId: a.id, name: a.businessName || a.name || "", nativeWeb, booking };
           })
       );
       const switchedOn = await listSwitchedOnAgents().catch((e: any) => [`error: ${e?.message || e}`]);
