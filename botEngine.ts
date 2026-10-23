@@ -392,6 +392,18 @@ export function replyContext(input: TurnInput, customer: any, lastChatAt: string
   return lines.join("\n");
 }
 
+// Haim, 2026-10-23: the prompt from n8n still says the aid days are "in Harish on 13/02", and the
+// bot kept answering that over the calendar. A line that dates an aid day / a visit / a sales day is
+// taken out of the prompt and the Q&A before the bot reads them — the calendar is the only source.
+const EVENT_WORDS = /סיוע|ביקור|יום מכירות|ימי מכירות|נהיה ב|נגיע ל|מגיעים ל|יוצאים ל|נמצאים ב/;
+const DATE_WORDS = /\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b|ינואר|פברואר|מרץ|מרס|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר/;
+const EVENT_DATE_LINE = (line: string) => EVENT_WORDS.test(line) && DATE_WORDS.test(line);
+export const withoutEventDates = (text: string) =>
+  String(text || "")
+    .split("\n")
+    .filter((line) => !EVENT_DATE_LINE(line))
+    .join("\n");
+
 // What's coming up that isn't the usual week: the owner's events (aid days, closures, short hours,
 // a branch opening) and, when the business closes on them, the official holidays — so the bot can
 // answer "are you open on…?" and mention what's relevant.
@@ -417,14 +429,14 @@ function eventsSection(brain: BotBrain, today: string): string {
   return (
     "\n# אירועים וימים מיוחדים (מהיומן — המקור היחיד לתאריכים שלהם)\n" +
     (lines.length ? lines.join("\n") : "- כרגע אין ביומן אירועים מתוכננים (ימי סיוע, ביקורים בישובים וכו').") +
-    "\n- תאריכים של ימי סיוע, ביקורים בישובים / באזורים, ימי פתיחה ואירועים — רק מהרשימה הזו. תאריכים כאלה שכתובים בשכל או בשאלות ותשובות ישנים — לעולם אל תשתמש בהם ואל תזכיר אותם. אם הלקוח שואל על אירוע / מקום שאין ברשימה — אמור שכרגע אין מועד מתוכנן (בלי להמציא ובלי להעביר לנציג)." +
+    "\n- אם בשיחה הזו אמרת קודם תאריך של אירוע שלא מופיע ברשימה (למשל מהשכל הישן) — הוא שגוי: אל תחזור עליו, ותקן (\"סליחה, טעיתי קודם — ...\").\n- תאריכים של ימי סיוע, ביקורים בישובים / באזורים, ימי פתיחה ואירועים — רק מהרשימה הזו. תאריכים כאלה שכתובים בשכל או בשאלות ותשובות ישנים — לעולם אל תשתמש בהם ואל תזכיר אותם. אם הלקוח שואל על אירוע / מקום שאין ברשימה — אמור שכרגע אין מועד מתוכנן (בלי להמציא ובלי להעביר לנציג)." +
     "\n- כשהלקוח שואל מתי אתם במקום / באזור מסוים (למשל \"מתי אתם במשגב?\") — חפש ברשימה אירוע באותו מקום או קרוב אליו (אותו אזור, עד כחצי שעה נסיעה — למשל משגב ↔ כרמיאל, סכנין, מעלות; פרדס חנה ↔ חדרה, זכרון יעקב) לפי 📍, הכותרת והפרטים, וענה עם התאריכים והמקום המדויק (\"אנחנו לא במשגב עצמה, אבל ב-3/11 נהיה בכרמיאל — 15 דקות ממך\"). אם אין שום אירוע באזור — אמור שכרגע לא מתוכנן והצע את הסניף.\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
   );
 }
 
 function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
-  const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim());
+  const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
   const lessons = input.lessons.filter((l) => l.active);
   const booking = input.brain.booking;
   const bookingOn = booking.enabled && Object.values(booking.hours).some((h) => ranges(h).length);
@@ -435,7 +447,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     `עכשיו: יום ${DAY_NAMES[now.weekday]} ${now.date.slice(8, 10)}/${now.date.slice(5, 7)}/${now.date.slice(0, 4)}, השעה ${now.time} (שעון ישראל).`,
     "",
     "# השכל של הבוט (ההנחיות של העסק — הבסיס לכל תשובה)",
-    input.brainText.trim() || "(לא הוגדרו הנחיות)",
+    withoutEventDates(input.brainText).trim() || "(לא הוגדרו הנחיות)",
     qa.length ? "\n# שאלות ותשובות של העסק (תשובה מכאן גוברת על ניסוח אחר)\n" + qa.map((x) => `ש: ${x.q.trim()}\nת: ${x.a.trim()}`).join("\n\n") : "",
     lessons.length
       ? "\n# דברים שלמדת משיחות קודמות (תקן לפיהם; הם לא משנים מחירים, מבצעים או מדיניות שכתובים בשכל)\n" + lessons.map((l) => `- ${l.text}`).join("\n")
@@ -601,7 +613,10 @@ async function readCalendarEvents(deps: TurnDeps): Promise<BotEvent[]> {
   const today = israelNow().date;
   try {
     const r = await deps.crm({ action: "events", from: today, to: addDays(today, 120) });
-    return (r?.events || []).map((e: any): BotEvent => {
+    const now = israelNow();
+    // an event that already ended today (a morning aid day asked about in the evening) isn't coming up
+    const over = (e: any) => !e.allDay && String(e.to || e.from) === now.date && String(e.endTime || "") !== "" && String(e.endTime) <= now.time;
+    return (r?.events || []).filter((e: any) => !over(e)).map((e: any): BotEvent => {
       const hours = e.allDay ? "" : ` (${e.effect === "closed" ? "סגור " : ""}${e.startTime}–${e.endTime})`;
       return {
         id: `crm_${e.id}`,
