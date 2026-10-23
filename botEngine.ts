@@ -143,7 +143,32 @@ export function tidyText(text: string): string {
     .join("\n")
     .replace(/\*[ \t]+([^*\n]+?)[ \t]+\*/g, "*$1*")
     .replace(/\*[ \t]+([^*\n]+?)\*/g, "*$1*")
-    .replace(/\*([^*\n]+?)[ \t]+\*/g, "*$1*");
+    .replace(/\*([^*\n]+?)[ \t]+\*/g, "*$1*")
+    .split("\n")
+    .map(boldEdges)
+    .join("\n");
+}
+
+// WhatsApp bolds *x* only when the stars stand at a word's edge: "מקבל*משקפי שמש*" stays plain
+// (Haim, 2026-10-23). A Hebrew prefix written outside ("ב*יום שני*") goes inside; any other letter
+// right before / after the stars gets a space ("מ" before a number: "מ-*800 ₪*").
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+function boldEdges(line: string): string {
+  let out = "";
+  let rest = line;
+  for (let m = rest.match(/\*([^*\s][^*]*?)\*/); m && m.index !== undefined; m = rest.match(/\*([^*\s][^*]*?)\*/)) {
+    let before = out + rest.slice(0, m.index);
+    let inner = m[1];
+    const prefix = before.match(/(?:^|[\s(«"'״׳-])([בהוכלמש]{1,3})$/);
+    if (prefix && /^\d/.test(inner)) before += "-"; // "מ*800 ₪*" → "מ-*800 ₪*"
+    else if (prefix) {
+      before = before.slice(0, -prefix[1].length);
+      inner = prefix[1] + inner;
+    } else if (before && WORD_CHAR.test(before[before.length - 1])) before += " ";
+    rest = rest.slice(m.index + m[0].length);
+    out = `${before}*${inner}*${rest && WORD_CHAR.test(rest[0]) ? " " : ""}`;
+  }
+  return out + rest;
 }
 
 // ---------- phones ----------
@@ -193,6 +218,23 @@ export function freeSlots(booking: BookingHours, busy: { start: string; end: str
 
 // The model's final text → { reply, options, images }. Tolerates code fences, a JSON string inside
 // "output", n8n-style list_options (sections / options) and plain text (= the reply itself).
+// A line break typed inside a JSON string (not allowed in JSON) → \\n, so the answer still parses
+function escapeRawNewlines(t: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inStr && c === "\\") {
+      out += c + (t[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (c === '"') inStr = !inStr;
+    out += inStr && c === "\n" ? "\\n" : inStr && c === "\r" ? "" : c;
+  }
+  return out;
+}
+
 export function parseBotAnswer(raw: string): { reply: string; options: string[]; images: string[] } {
   let s = String(raw || "").replace(/[  ᠎ -​  　﻿]/g, " ").trim();
   while (/^```(?:json)?/i.test(s) || /```\s*$/.test(s)) s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -205,16 +247,27 @@ export function parseBotAnswer(raw: string): { reply: string; options: string[];
       return null;
     }
   };
-  obj = tryParse(s);
+  obj = tryParse(s) || tryParse(escapeRawNewlines(s));
   if (!obj) {
     const a = s.indexOf("{");
     const b = s.lastIndexOf("}");
-    if (a !== -1 && b > a) obj = tryParse(s.slice(a, b + 1));
+    if (a !== -1 && b > a) obj = tryParse(s.slice(a, b + 1)) || tryParse(escapeRawNewlines(s.slice(a, b + 1)));
+  }
+  // the model sometimes leaves out the opening {"reply": " and writes the text, then ","options":[…]}
+  // (Haim, 2026-10-23: the customer got the JSON's tail in the message)
+  if (!obj && /"\s*,\s*"(?:options|images)"\s*:/.test(s) && !/^\s*\{/.test(s)) {
+    obj = tryParse(escapeRawNewlines('{"reply":"' + s.replace(/^\s*"?/, "")));
   }
   for (let i = 0; obj && i < 3 && typeof obj.output === "string" && !obj.reply; i++) obj = tryParse(obj.output) || { reply: obj.output };
   if (!obj) {
-    const m = s.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-    return { reply: m ? m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"') : s, options: [], images: [] };
+    // still broken: the text up to where the JSON's other fields start, never the JSON itself
+    const cut = s.search(/"\s*,\s*"(?:options|images|buttons)"\s*:/);
+    const m = cut === -1 && s.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (m) return { reply: m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"'), options: [], images: [] };
+    const text = (cut === -1 ? s : s.slice(0, cut)).replace(/^\s*\{\s*"reply"\s*:\s*"/, "").replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+    const arr = s.match(/"options"\s*:\s*(\[[^\]]*\])/);
+    const options = ((arr && tryParse(arr[1])) || []).map((o: any) => String(o).trim()).filter(Boolean).slice(0, 10);
+    return { reply: text, options, images: [] };
   }
   const title = (o: any) => String(typeof o === "string" ? o : o?.title || o?.text || o?.label || "").trim();
   let opts: any[] = [];
@@ -302,19 +355,19 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
-    "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות.",
+    "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות. אבל הבטח את זה רק כשיש בקשה פתוחה שאתה לא יכול לטפל בה בעצמך — לא כסיום שיחה. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
     "- options: עד 10 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
-    web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול של הודעה קולית ששלח.",
+    web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול אוטומטי של הודעה קולית ששלח — והתמלול עלול לטעות. בשאלה פשוטה (מחיר, שעות) — ענה, ופתח ב\"הבנתי שאתה שואל…\" כדי שיוכל לתקן. אם ההודעה מבקשת פעולה (תור, ביטול, שיחזרו אליו), מתארת בעיה / כאב / תלונה, או נשמעת מוזרה ולא מתאימה לשיחה — אל תפעל ואל תעביר לצוות: כתוב מה הבנת ושאל אם הבנת נכון. אם כתוב [לא ברור] — בקש בנימוס לכתוב או להקליט שוב.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
-    "- הדגשה: *כוכבית אחת צמודה למילים משני הצדדים*, למשל *800 ₪* או *בדיקת ראייה חינם* — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
+    "- הדגשה: כוכבית אחת צמודה למילים המודגשות מבפנים, ורווח לפניה ואחריה מבחוץ, למשל \"אתה מקבל *משקפי שמש במתנה* החודש\" או *800 ₪* (לא \"מקבל*משקפי*\") — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
   ]
     .filter((x) => x !== "")
     .join("\n");
@@ -390,7 +443,31 @@ interface TurnState {
   customer: any;
   notes: BotNote[];
   slotsOffered: Set<string>;
+  confirmed: string; // what the bot asked to confirm in its last message (the customer answers now)
+  pending: string; // what this answer asks the customer to confirm
+  voice: boolean; // this message is a transcribed voice note
+  userText: string; // what the customer wrote this turn
 }
+
+// Haim, 2026-10-23: the bot booked a day the customer only mentioned, and acted on a voice note it
+// heard wrong ("it hurts" — never said). So booking / moving / cancelling, and acting on a voice note
+// (a note for the staff, a lesson), go in two turns: first the bot says what it's about to do / what
+// it heard and asks, and only on the customer's next message is the action allowed.
+function needsConfirmation(st: TurnState, key: string, ask: string): any | null {
+  if (st.confirmed === key) return null;
+  st.pending = key;
+  return { ok: false, needs_confirmation: true, instruction: ask };
+}
+
+// Haim, 2026-10-23: the bot passed the chat to the staff when the customer only said "thank you"
+// (the model closes with "someone will get back to you" and the prompt makes that a handoff, or it
+// finishes a handoff it was told to hold for a voice note). A thank-you / goodbye / ok is never a
+// request, and a "yes" to a voice note is the only answer that lets that note through.
+const JUST_CLOSING = /^(?:תודה(?: רבה| רבה לך| לך)?|תודה רבה רבה|תנקס|thanks?|thank you|תודה ו?להתראות|להתראות|ביי|bye|יום טוב|ערב טוב|לילה טוב|שבוע טוב|שבת שלום|אוקי(?:י)?|ok(?:ay)?|סבבה|מעולה|יופי|אחלה|מצוין|בסדר|הבנתי|קיבלתי|👍|🙏|❤️|😊|🙂)[\s!.,🙏👍❤️😊🙂🌹]*$/i;
+const SAID_YES = /^(?:✅\s*)?(?:כן|נכון|בדיוק|כן,? נכון|נכון מאוד|כן כן|אכן|yes|yep|👍)(?:[\s,!.].*)?$/i;
+
+const VOICE_ASK =
+  "זו הודעה קולית, והתמלול עלול לטעות. אל תפעל לפיה עדיין: כתוב ללקוח בקצרה מה הבנת (\"הבנתי שאמרת ש…\") ושאל אם הבנת נכון, עם options \"✅ כן, נכון\" ו-\"❌ לא, התכוונתי…\". רק אחרי שיאשר — תפעל.";
 
 async function readCustomer(deps: TurnDeps, phone: string): Promise<any> {
   if (!deps.crm || !phone) return null;
@@ -468,6 +545,13 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1).includes(start)) {
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
+      const key = name === "book_appointment" ? `book|${start}` : `move|${String(args?.exam_id || "")}|${start}`;
+      const ask = needsConfirmation(
+        st,
+        key,
+        `עוד לא נקבע כלום. שאל את הלקוח לאשר במפורש: \"${name === "book_appointment" ? "לקבוע לך " : "להעביר את התור ל"}*${showSlot(start)}*?\" עם options \"✅ כן, ${name === "book_appointment" ? "לקבוע" : "להעביר"}\" ו-\"🔄 מועד אחר\". אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
+      );
+      if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
         const res = await deps.crm({ action: "book", phone: st.phone, name: String(args?.customer_name || st.name || "לקוח"), start, minutes: input.brain.booking.slotMinutes });
@@ -480,12 +564,23 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
     case "cancel_appointment": {
       if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח" };
       if (!deps.crm) return { ok: false, error: "אין גישה ליומן" };
+      const ask = needsConfirmation(st, `cancel|${String(args?.exam_id || "")}`, 'עוד לא בוטל כלום. שאל את הלקוח לאשר במפורש שהוא רוצה לבטל את התור (כתוב את המועד), עם options "✅ כן, לבטל" ו-"↩️ לא, להשאיר". אחרי שיאשר — קרא שוב.');
+      if (ask) return ask;
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — התור לא בוטל באמת" };
       const res = await deps.crm({ action: "cancel", phone: st.phone, examId: String(args?.exam_id || "") });
       return { ok: true, cancelled: res.start ? showSlot(res.start) : undefined };
     }
     case "note_for_staff": {
+      if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
       const kind: BotNoteKind = args?.kind === "bug" ? "bug" : "handoff";
+      const said = st.userText.replace(/^🎤\s*/, "").trim();
+      if (kind === "handoff" && JUST_CLOSING.test(said)) {
+        return { ok: false, error: "הלקוח רק מודה / נפרד — אין מה להעביר לצוות. ענה בקצרה ובחום (למשל \"בשמחה! 😊 כאן בשבילך\"), בלי להבטיח שמישהו יחזור, options []." };
+      }
+      // a "yes" to the bot's question about a voice note lets it through — anything else doesn't
+      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(said)) {
+        return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תעביר לצוות. ענה למה שכתב עכשיו." };
+      }
       const text = String(args?.text || "").trim().slice(0, 1000);
       if (!text) return { ok: false };
       const note = await addNote({ agentId, botId, sessionId: input.sessionId, channel: input.channel, phone: st.phone, name: st.name, kind, text });
@@ -494,6 +589,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       return { ok: true };
     }
     case "learn_from_correction": {
+      if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
       const lesson = String(args?.lesson || "").trim().slice(0, 500);
       if (!lesson) return { ok: false };
       // the owner teaching in the test chat is trusted; a customer's correction is kept too, and the
@@ -557,6 +653,10 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     customer: null,
     notes: [],
     slotsOffered: new Set(),
+    confirmed: "",
+    pending: "",
+    voice: false,
+    userText: "",
   };
   if (st.phone) {
     if (st.phone === givenPhone) st.customer = givenCustomer;
@@ -568,6 +668,11 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     if (st.customer?.name && !st.name) st.name = st.customer.name;
   }
   const userText = String(input.text || "").trim();
+  const lastBot = [...(conv?.messages || [])].reverse().find((m) => m.role === "bot");
+  st.confirmed = lastBot?.pending || "";
+  st.userText = userText;
+  // a voice note the customer already confirmed we understood (or a "yes" to it) is acted on
+  st.voice = userText.startsWith("🎤") && st.confirmed !== "voice";
   const today = israelNow().date;
   const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
@@ -624,7 +729,14 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
 
   await appendToConversation(
     { botId, sessionId: input.sessionId, agentId: String(input.agent.id), channel: input.channel, phone: st.phone, name: st.name, test: input.channel === "test" },
-    [userMsg, msg("bot", answer.reply, { ...(answer.options.length ? { options: answer.options } : {}), ...(answer.images.length ? { images: answer.images } : {}) })]
+    [
+      userMsg,
+      msg("bot", answer.reply, {
+        ...(answer.options.length ? { options: answer.options } : {}),
+        ...(answer.images.length ? { images: answer.images } : {}),
+        ...(st.pending ? { pending: st.pending } : {}),
+      }),
+    ]
   );
   timing.total = Date.now() - started;
   return { ...answer, phone: st.phone || undefined, name: st.name || undefined, notes: st.notes, timing };
