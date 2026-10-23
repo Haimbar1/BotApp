@@ -23,7 +23,7 @@ interface Brain {
   events?: BotEvent[];
   closedOnHolidays?: boolean;
 }
-interface BotEvent { id: string; from: string; to?: string; title: string; details?: string; effect: "closed" | "hours" | "info"; hours?: string }
+interface BotEvent { id: string; from: string; to?: string; title: string; details?: string; place?: string; effect: "closed" | "hours" | "info"; hours?: string }
 interface ChatLine { role: "user" | "bot"; text: string; options?: string[] }
 
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -343,6 +343,7 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
                 מחק
               </button>
             </div>
+            <input className={input} value={ev.place || ""} placeholder="📍 איפה (לא חובה) — עיר / מקום. כשלקוח שואל מתי אתם באזור שלו, הבוט בודק אם יש אירוע קרוב" onChange={(e) => setEvent(ev.id, { place: e.target.value })} />
             <textarea className={`${input} min-h-[44px]`} rows={2} value={ev.details || ""} placeholder="פרטים לבוט (לא חובה) — למשל: הכתובת, מה מציעים, למי לפנות בינתיים" onChange={(e) => setEvent(ev.id, { details: e.target.value })} />
           </div>
         ))}

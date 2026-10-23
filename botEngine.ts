@@ -404,7 +404,7 @@ function eventsSection(brain: BotBrain, today: string): string {
   const lines = (brain.events || [])
     .filter((e) => (e.to || e.from) >= today && e.from <= until)
     .sort((a, b) => a.from.localeCompare(b.from))
-    .map((e) => `- ${span(e)}: ${e.title}${effect(e)}${e.details?.trim() ? `. ${e.details.trim()}` : ""}`);
+    .map((e) => `- ${span(e)}: ${e.title}${e.place?.trim() ? ` 📍 ${e.place.trim()}` : ""}${effect(e)}${e.details?.trim() ? `. ${e.details.trim()}` : ""}`);
   if (brain.closedOnHolidays !== false) {
     for (let i = 0; i < HOLIDAYS_AHEAD; i++) {
       const d = addDays(today, i);
@@ -416,7 +416,7 @@ function eventsSection(brain: BotBrain, today: string): string {
   return (
     "\n# אירועים וימים מיוחדים (מהיום והלאה — מידע עדכני שגובר על השכל)\n" +
     lines.join("\n") +
-    "\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף או אזור — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
+    "\n- כשהלקוח שואל מתי אתם במקום / באזור מסוים (למשל \"מתי אתם במשגב?\") — חפש ברשימה אירוע באותו מקום או קרוב אליו (אותו אזור, עד כחצי שעה נסיעה — למשל משגב ↔ כרמיאל, סכנין, מעלות; פרדס חנה ↔ חדרה, זכרון יעקב) לפי 📍, הכותרת והפרטים, וענה עם התאריכים והמקום המדויק (\"אנחנו לא במשגב עצמה, אבל ב-3/11 נהיה בכרמיאל — 15 דקות ממך\"). אם אין שום אירוע באזור — אמור שכרגע לא מתוכנן, הצע את הסניף, ואפשר להציע שנעדכן אותו כשיהיה (note_for_staff kind=handoff עם המקום).\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
   );
 }
 
@@ -601,6 +601,7 @@ async function readCalendarEvents(deps: TurnDeps): Promise<BotEvent[]> {
         to: e.to && e.to !== e.from ? String(e.to) : "",
         title: `${e.title}${hours}`,
         details: e.details || "",
+        place: e.place || "",
         effect: e.allDay && e.effect === "closed" ? "closed" : "info",
       };
     });

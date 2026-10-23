@@ -3462,6 +3462,7 @@ export async function createApp() {
           to: String(e?.to || "").slice(0, 10),
           title: String(e?.title || "").slice(0, 200),
           details: String(e?.details || "").slice(0, 2000),
+          place: String(e?.place || "").slice(0, 300),
           effect: ["closed", "hours", "info"].includes(e?.effect) ? e.effect : "info",
           hours: String(e?.hours || "").slice(0, 60),
         }))
