@@ -143,7 +143,32 @@ export function tidyText(text: string): string {
     .join("\n")
     .replace(/\*[ \t]+([^*\n]+?)[ \t]+\*/g, "*$1*")
     .replace(/\*[ \t]+([^*\n]+?)\*/g, "*$1*")
-    .replace(/\*([^*\n]+?)[ \t]+\*/g, "*$1*");
+    .replace(/\*([^*\n]+?)[ \t]+\*/g, "*$1*")
+    .split("\n")
+    .map(boldEdges)
+    .join("\n");
+}
+
+// WhatsApp bolds *x* only when the stars stand at a word's edge: "מקבל*משקפי שמש*" stays plain
+// (Haim, 2026-10-23). A Hebrew prefix written outside ("ב*יום שני*") goes inside; any other letter
+// right before / after the stars gets a space ("מ" before a number: "מ-*800 ₪*").
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+function boldEdges(line: string): string {
+  let out = "";
+  let rest = line;
+  for (let m = rest.match(/\*([^*\s][^*]*?)\*/); m && m.index !== undefined; m = rest.match(/\*([^*\s][^*]*?)\*/)) {
+    let before = out + rest.slice(0, m.index);
+    let inner = m[1];
+    const prefix = before.match(/(?:^|[\s(«"'״׳-])([בהוכלמש]{1,3})$/);
+    if (prefix && /^\d/.test(inner)) before += "-"; // "מ*800 ₪*" → "מ-*800 ₪*"
+    else if (prefix) {
+      before = before.slice(0, -prefix[1].length);
+      inner = prefix[1] + inner;
+    } else if (before && WORD_CHAR.test(before[before.length - 1])) before += " ";
+    rest = rest.slice(m.index + m[0].length);
+    out = `${before}*${inner}*${rest && WORD_CHAR.test(rest[0]) ? " " : ""}`;
+  }
+  return out + rest;
 }
 
 // ---------- phones ----------
@@ -342,7 +367,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול אוטומטי של הודעה קולית ששלח — והתמלול עלול לטעות. בשאלה פשוטה (מחיר, שעות) — ענה, ופתח ב\"הבנתי שאתה שואל…\" כדי שיוכל לתקן. אם ההודעה מבקשת פעולה (תור, ביטול, שיחזרו אליו), מתארת בעיה / כאב / תלונה, או נשמעת מוזרה ולא מתאימה לשיחה — אל תפעל ואל תעביר לצוות: כתוב מה הבנת ושאל אם הבנת נכון. אם כתוב [לא ברור] — בקש בנימוס לכתוב או להקליט שוב.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
-    "- הדגשה: *כוכבית אחת צמודה למילים משני הצדדים*, למשל *800 ₪* או *בדיקת ראייה חינם* — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
+    "- הדגשה: כוכבית אחת צמודה למילים המודגשות מבפנים, ורווח לפניה ואחריה מבחוץ, למשל \"אתה מקבל *משקפי שמש במתנה* החודש\" או *800 ₪* (לא \"מקבל*משקפי*\") — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
   ]
     .filter((x) => x !== "")
     .join("\n");
