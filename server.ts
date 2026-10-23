@@ -3568,6 +3568,23 @@ export async function createApp() {
     }
   });
 
+  // GET /api/bot-brain/calendar-events?agentId=… — the events the bot reads from the branch calendar
+  // right now (what it answers "when are the aid days?" from), so the owner can see what it sees
+  app.get("/api/bot-brain/calendar-events", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.query.agentId);
+    if (!agent) return;
+    const crm = crmFor(agent);
+    if (!crm) return res.json({ success: true, linked: false, events: [] });
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(new Date());
+    const until = new Date(Date.parse(`${today}T00:00:00Z`) + 120 * 86400000).toISOString().slice(0, 10);
+    try {
+      const r = await crm({ action: "events", from: today, to: until });
+      res.json({ success: true, linked: true, configured: r?.configured !== false, events: r?.events || [] });
+    } catch (e: any) {
+      res.json({ success: false, linked: true, message: e?.message || "קריאת היומן נכשלה", events: [] });
+    }
+  });
+
   // GET /api/bot-brain/voice-prompt?agentId=… — the same knowledge as a prompt for the voice bot
   app.get("/api/bot-brain/voice-prompt", requireAuth, async (req: any, res: any) => {
     const agent = ownAgentOr403(req, res, req.query.agentId);

@@ -305,6 +305,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
         </div>
       </div>
 
+      <CalendarSeen agentId={agentId} request={request} />
+
       {/* Events and special days */}
       <div className={card}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -560,6 +562,52 @@ function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
   return (
     <div className="text-[10.5px] text-slate-400 border-t border-slate-800 pt-2">
       ⏱️ התשובה האחרונה ({showDate(t.at)}) לקחה <b className={t.total > 15000 ? "text-amber-300" : "text-emerald-300"}>{sec(t.total)}</b>: {parts.join(" · ")}
+    </div>
+  );
+}
+
+// What the bot reads from the branch calendar right now — the only source it answers event dates from
+function CalendarSeen({ agentId, request }: { agentId: string; request: Request }) {
+  const [data, setData] = useState<any>(null);
+  const load = async () => {
+    setData(null);
+    const r = await request(`/api/bot-brain/calendar-events?agentId=${encodeURIComponent(agentId)}`);
+    setData(await r.json().catch(() => ({ success: false, message: "קריאה נכשלה" })));
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+  const showDay = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  return (
+    <div className={card}>
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-black text-white">📆 מה הבוט רואה ביומן הסניף (120 הימים הקרובים)</h4>
+        <button type="button" className={`${btn} border-slate-700 text-slate-300`} onClick={load}>רענן</button>
+      </div>
+      <p className="text-[10.5px] text-slate-500">
+        מכאן בלבד הבוט עונה על ימי סיוע, ביקורים בישובים ופתיחות. נכנס לכאן אירוע שנוסף ב-CRM ("אירוע / חסימה") או אירוע של "כל היום" ביומן גוגל — לא אירוע עם שעות שהוקלד ישירות בגוגל, ולא אירוע שכבר עבר.
+      </p>
+      {!data ? (
+        <div className="text-[11px] text-slate-400">טוען…</div>
+      ) : !data.success ? (
+        <div className="text-[11px] text-red-300">{data.message || "קריאת היומן נכשלה"}</div>
+      ) : !data.linked ? (
+        <div className="text-[11px] text-amber-300">הבוט לא משויך לעסק בפורטל — אין לו גישה ליומן.</div>
+      ) : data.configured === false ? (
+        <div className="text-[11px] text-amber-300">יומן הסניף לא מחובר ב-CRM.</div>
+      ) : !data.events.length ? (
+        <div className="text-[11px] text-amber-300">הבוט לא רואה אף אירוע — הוא יענה שכרגע אין מועד מתוכנן.</div>
+      ) : (
+        <div className="flex flex-col gap-1 text-[11px] text-slate-200">
+          {data.events.map((e: any) => (
+            <div key={e.id}>
+              • {showDay(e.from)}{e.to && e.to !== e.from ? `–${showDay(e.to)}` : ""}{e.startTime ? ` ${e.startTime}–${e.endTime}` : ""}: <b>{e.title}</b>
+              {e.place ? ` 📍 ${e.place}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
