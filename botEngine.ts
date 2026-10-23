@@ -283,7 +283,8 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "- פנה ללקוח בשמו הפרטי. יש שני מקורות (הפרופיל וה-CRM) — בחר את מה שנראה כמו שם אמיתי של אדם (לא כינוי, אימוג'י, שם עסק או מספר). אם אף אחד לא נראה כמו שם — בלי שם.",
     ctx.firstToday
       ? `- זו התשובה הראשונה שלך ללקוח היום: פתח בברכה חמה + שמו. ${greetingContext(israelNow())}.` +
-        (customer?.found ? " הלקוח כבר מוכר לנו — הראה שמכירים אותו (למשל \"שמחים לשמוע ממך שוב\"), ואם יש משהו פתוח שלו (הזמנה, תור) — התייחס." : "")
+        (customer?.found ? " הלקוח כבר מוכר לנו — הראה שמכירים אותו (למשל \"שמחים לשמוע ממך שוב\"), ואם יש משהו פתוח שלו (הזמנה, תור) — התייחס." : "") +
+        (customer?.upcomingExams?.length ? ` יש לו תור קרוב (${showSlot(customer.upcomingExams[0].start)}) — הזכר אותו, והוסף ל-options את \"🔄 לדחות / לשנות את התור\".` : "")
       : "- כבר דיברתם היום — אל תפתח שוב בברכה, המשך את השיחה.",
     "\n# כללי עבודה",
     "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — הצע שנציג יחזור אליו.",
@@ -292,7 +293,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots, הצע 3–4 מועדים כאפשרויות (options) ותמיד הוסף גם את האפשרויות \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\"; בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם from_date של יום ראשון הקרוב והצע ממנו; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו. אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots, הצע 3–4 מועדים כאפשרויות (options) ותמיד הוסף גם את האפשרויות \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\"; בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון שהצעת (מקבלים את השבוע שאחריו) והצע ממנו, שוב עם \"📅 שבוע הבא\"; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו. אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
@@ -325,6 +326,7 @@ const TOOLS = [
       type: "object",
       properties: {
         from_date: { type: "string", description: "YYYY-MM-DD, ברירת מחדל היום" },
+        week_after: { type: "string", description: "ללחיצה על \"שבוע הבא\": המועד האחרון שהצעת ללקוח (YYYY-MM-DDTHH:mm) — מחזיר את השבוע שאחריו (מיום ראשון)" },
         days: { type: "number", description: "כמה ימים לבדוק, ברירת מחדל 7" },
         time_of_day: { type: "string", enum: ["any", "morning", "afternoon", "evening"], description: "העדפת הלקוח" },
       },
@@ -409,7 +411,11 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!b.enabled) return { ok: false, error: "קביעת תורים דרך הבוט לא מופעלת — פעל לפי השכל או השאר הערה לנציג" };
       if (!deps.crm) return { ok: false, error: "אין חיבור ליומן — השאר הערה לנציג" };
       const today = israelNow().date;
-      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(args?.from_date || "")) && args.from_date > today ? args.from_date : today;
+      // "next week" = the week after the last slot already offered (Haim, 2026-10-23), from its Sunday
+      const weekAfter = /^\d{4}-\d{2}-\d{2}/.test(String(args?.week_after || "")) ? String(args.week_after).slice(0, 10) : "";
+      const nextSunday = weekAfter ? addDays(weekAfter, 7 - weekdayOf(weekAfter)) : "";
+      const asked = nextSunday || (/^\d{4}-\d{2}-\d{2}$/.test(String(args?.from_date || "")) ? String(args.from_date) : "");
+      const from = asked && asked > today ? asked : today;
       const days = Math.min(Math.max(Number(args?.days) || 7, 1), Math.max(b.daysAhead || 14, 1));
       const to = addDays(from, days - 1);
       const r = await deps.crm({ action: "busy", from, to });
