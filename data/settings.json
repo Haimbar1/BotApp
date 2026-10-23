@@ -30,5 +30,6 @@
       "email": "hatovaopt@gmail.com",
       "passcode": "hatovaopt"
     }
-  ]
+  ],
+  "strictSessionsV1": true
 }

@@ -9,6 +9,7 @@ import { synthesizePromptFixes } from "./src/lib/promptDiagnosis.js";
 import { extractJsonLdFaq, withSiteFaq, type SiteFaq } from "./src/lib/siteFaq.js";
 import {
   initStorage,
+  storageMode,
   getSettingsDoc,
   setSettingsDoc,
   getAgentsDoc,
@@ -25,7 +26,7 @@ import {
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, type Channel, type CrmCaller } from "./botEngine.js";
-import { getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3180,12 +3181,42 @@ export async function createApp() {
     return null;
   }
 
+  // Every agent whose website switch is on, with the bot id the website must use for it
+  async function listSwitchedOnAgents(): Promise<{ agentId: string; botId: string }[]> {
+    const out: { agentId: string; botId: string }[] = [];
+    for (const id of await switchedOnAgentIds()) {
+      const a = readAgents().find((x: any) => x.id === id);
+      out.push({ agentId: id, botId: a ? String(a.botId || "") : "(agent not found)" });
+    }
+    return out;
+  }
+
   // GET /api/public/bot-engine?bot_id=… — the widget asks whether this bot is answered here. Never
   // cached, so the switch in the bot's screen takes effect on the next page load.
   app.get("/api/public/bot-engine", async (req: any, res: any) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cache-Control", "no-store");
-    const agent = await nativeAgentFor(String(req.query.bot_id || req.query.botId || "").trim());
+    const botId = String(req.query.bot_id || req.query.botId || "").trim();
+    const agent = await nativeAgentFor(botId);
+    // ?debug=1: why — which agents carry this bot id and whether each one's switch is on, and where
+    // the switch is stored (only ids, names and on/off — nothing private)
+    if (req.query.debug) {
+      const matches = await Promise.all(
+        readAgents()
+          .filter((a: any) => a.botId === botId || a.id === botId)
+          .map(async (a: any) => {
+            let nativeWeb: boolean | string = false;
+            try {
+              nativeWeb = (await getBrain(String(a.id))).nativeWeb;
+            } catch (e: any) {
+              nativeWeb = `error: ${e?.message || e}`;
+            }
+            return { agentId: a.id, name: a.businessName || a.name || "", nativeWeb };
+          })
+      );
+      const switchedOn = await listSwitchedOnAgents().catch((e: any) => [`error: ${e?.message || e}`]);
+      return res.json({ native: !!agent, botId, storage: storageMode(), matches, switchedOn });
+    }
     res.json({ native: !!agent, ...(agent ? { agentId: agent.id } : {}) });
   });
 
