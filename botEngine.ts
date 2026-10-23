@@ -585,6 +585,31 @@ const SAID_YES = /^(?:✅\s*)?(?:כן|נכון|בדיוק|כן,? נכון|נכו
 const VOICE_ASK =
   "זו הודעה קולית, והתמלול עלול לטעות. אל תפעל לפיה עדיין: כתוב ללקוח בקצרה מה הבנת (\"הבנתי שאמרת ש…\") ושאל אם הבנת נכון. הכפתורים נקבעים אוטומטית. רק אחרי שיאשר — תפעל.";
 
+// The events added to the branch calendar in the CRM ("אירוע / חסימה" — aid days, a closure, a
+// branch opening), as the bot's own events. A whole closed day closes the day; closed hours are
+// already busy on the calendar (so no slots then) and are only told; info is told.
+async function readCalendarEvents(deps: TurnDeps): Promise<BotEvent[]> {
+  if (!deps.crm) return [];
+  const today = israelNow().date;
+  try {
+    const r = await deps.crm({ action: "events", from: today, to: addDays(today, 120) });
+    return (r?.events || []).map((e: any): BotEvent => {
+      const hours = e.allDay ? "" : ` (${e.effect === "closed" ? "סגור " : ""}${e.startTime}–${e.endTime})`;
+      return {
+        id: `crm_${e.id}`,
+        from: String(e.from),
+        to: e.to && e.to !== e.from ? String(e.to) : "",
+        title: `${e.title}${hours}`,
+        details: e.details || "",
+        effect: e.allDay && e.effect === "closed" ? "closed" : "info",
+      };
+    });
+  } catch (e: any) {
+    console.warn("[BOT] CRM events read failed:", e?.message);
+    return [];
+  }
+}
+
 async function readCustomer(deps: TurnDeps, phone: string): Promise<any> {
   if (!deps.crm || !phone) return null;
   try {
@@ -773,10 +798,13 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   // the conversation and the CRM card are read at the same time
   const givenPhone = normalizeIsraeliPhone(input.phone || "");
   const t0 = Date.now();
-  const [conv, givenCustomer] = await Promise.all([
+  const [conv, givenCustomer, calendarEvents] = await Promise.all([
     getConversation(botId, input.sessionId),
     givenPhone ? readCustomer(deps, givenPhone).finally(() => (timing.customer = Date.now() - t0)) : Promise.resolve(null),
+    readCalendarEvents(deps),
   ]);
+  // the events on the branch calendar count like the ones on the bot's own screen
+  if (calendarEvents.length) input = { ...input, brain: { ...input.brain, events: [...(input.brain.events || []), ...calendarEvents] } };
   const st: TurnState = {
     phone: normalizeIsraeliPhone(input.phone || "") || conv?.phone || "",
     name: String(input.name || conv?.name || "").trim(),
