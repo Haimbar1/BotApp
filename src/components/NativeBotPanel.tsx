@@ -189,17 +189,19 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
             </p>
           )}
         </div>
-        <label className="flex items-center gap-2 shrink-0 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={brain.nativeWeb}
-            onChange={(e) => save({ ...brain, nativeWeb: e.target.checked })}
-            className="w-4 h-4 accent-emerald-500"
-          />
+        <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
           <span className={`text-xs font-black ${brain.nativeWeb ? "text-emerald-300" : "text-slate-300"}`}>
-            {brain.nativeWeb ? "הבוט באתר עונה מכאן 🟢" : "הבוט באתר עדיין ב-n8n"}
+            מי עונה ללקוחות באתר עכשיו: {brain.nativeWeb ? "🟢 הבוט החדש" : "⚪ הבוט הישן (n8n)"}
           </span>
-        </label>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => save({ ...brain, nativeWeb: !brain.nativeWeb })}
+            className={`${btn} px-4 py-2 text-xs ${brain.nativeWeb ? "border-slate-600 text-slate-200 bg-slate-800/60" : "border-emerald-500 text-white bg-emerald-600 hover:bg-emerald-500"}`}
+          >
+            {saving ? "שומר…" : brain.nativeWeb ? "↩ החזר את האתר לבוט הישן (n8n)" : "🚀 העבר את הבוט באתר לבוט החדש"}
+          </button>
+        </div>
       </div>
 
       {message && <div className="text-[11px] text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{message}</div>}
