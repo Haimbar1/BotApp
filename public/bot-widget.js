@@ -2188,7 +2188,9 @@
     // actually related to the current reply. Original order is used as the
     // final tie-breaker so the agent's preferred ordering is preserved.
     var selectRelevantButtons = function(reply, candidateButtons) {
-      if (!Array.isArray(candidateButtons) || candidateButtons.length <= 6) {
+      // SmartEsek's own bot offers appointment times as buttons (2 a day + "next week") — up to 10
+      var MAX_BUTTONS = nativeChatUrl ? 10 : 6;
+      if (!Array.isArray(candidateButtons) || candidateButtons.length <= MAX_BUTTONS) {
         return candidateButtons || [];
       }
 
@@ -2314,15 +2316,15 @@
         return item.button && item.button.url;
       });
 
-      var selected = regularOptions.slice(0, 6);
+      var selected = regularOptions.slice(0, MAX_BUTTONS);
 
       // Only use a URL button to fill a missing slot if fewer than 6 normal
       // options were actually supplied by the agent.
-      if (selected.length < 6) {
-        selected = selected.concat(linkOptions.slice(0, 6 - selected.length));
+      if (selected.length < MAX_BUTTONS) {
+        selected = selected.concat(linkOptions.slice(0, MAX_BUTTONS - selected.length));
       }
 
-      return selected.slice(0, 6).map(function(item) {
+      return selected.slice(0, MAX_BUTTONS).map(function(item) {
         return item.button;
       });
     };
@@ -2331,7 +2333,7 @@
       replyText = 'אנא בחר מתוך האפשרויות הבאות:';
     }
 
-    // Never show more than 6 options in the widget.
+    // Never show more than 6 options in the widget (10 for SmartEsek's own bot).
     buttons = selectRelevantButtons(replyText, buttons);
 
     return {

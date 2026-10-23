@@ -97,6 +97,12 @@ export function showSlot(start: string): string {
   return `יום ${DAY_NAMES[weekdayOf(date)]} ${date.slice(8, 10)}/${date.slice(5, 7)} בשעה ${start.slice(11, 16)}`;
 }
 
+// "2026-10-28T12:00" → "רביעי 28/10 · 12:00" (a WhatsApp list row allows 24 characters)
+export function slotButton(start: string): string {
+  const date = start.slice(0, 10);
+  return `${DAY_NAMES[weekdayOf(date)]} ${date.slice(8, 10)}/${date.slice(5, 7)} · ${start.slice(11, 16)}`;
+}
+
 // ---------- greeting ----------
 
 const israelDateOf = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date(iso));
@@ -293,7 +299,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots, הצע 3–4 מועדים כאפשרויות (options) ותמיד הוסף גם את האפשרויות \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\"; בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון שהצעת (מקבלים את השבוע שאחריו) והצע ממנו, שוב עם \"📅 שבוע הבא\"; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו. אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
@@ -301,7 +307,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "",
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
-    "- options: עד 6 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
+    "- options: עד 10 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
     web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול של הודעה קולית ששלח.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
@@ -427,7 +433,26 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       else if (tod === "afternoon") slots = slots.filter((s) => hour(s) >= 12 && hour(s) < 16);
       else if (tod === "evening") slots = slots.filter((s) => hour(s) >= 16);
       slots.forEach((s) => st.slotsOffered.add(s));
-      return { ok: true, slots: slots.slice(0, 24).map((s) => ({ start: s, show: showSlot(s) })), more: slots.length > 24 };
+      // Haim, 2026-10-23: first the week's reception days and hours in general, then 2 times from
+      // each day (Friday too) as the buttons — the earliest and one later in the day
+      const byDay = new Map<string, string[]>();
+      for (const x of slots) byDay.set(x.slice(0, 10), [...(byDay.get(x.slice(0, 10)) || []), x]);
+      const suggested: string[] = [];
+      for (const list of byDay.values()) {
+        suggested.push(list[0]);
+        if (list.length > 1) suggested.push(list[Math.max(1, Math.floor(list.length * 0.6))]);
+      }
+      const receptionHours = [0, 1, 2, 3, 4, 5, 6]
+        .filter((d) => ranges(b.hours[String(d)] || "").length)
+        .map((d) => `${DAY_NAMES[d]} ${String(b.hours[String(d)]).replace(/\s+/g, " ").trim()}`)
+        .join(", ");
+      return {
+        ok: true,
+        receptionHours,
+        suggested: suggested.slice(0, 8).map((s) => ({ start: s, button: slotButton(s) })),
+        allFree: slots.slice(0, 40).map((s) => ({ start: s, show: showSlot(s) })),
+        lastSuggested: suggested.slice(0, 8).slice(-1)[0] || null,
+      };
     }
     case "book_appointment":
     case "reschedule_appointment": {
