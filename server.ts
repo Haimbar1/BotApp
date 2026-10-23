@@ -27,7 +27,7 @@ import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig,
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, normalizeIsraeliPhone, type Channel, type CrmCaller } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, markRead, type IncomingWa } from "./whatsapp.js";
-import { switchedOnAgentIds, claimWaMessage, noteWaArrival, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3290,9 +3290,11 @@ export async function createApp() {
   const postJson = (url: string, body: any, headers: Record<string, string> = {}, ms = 10000) =>
     fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
 
-  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string) {
+  // One customer message → the bot's answer on WhatsApp. `copied` = the payload's copy to
+  // WhastAppSystem: the replies are reported only after it (its handoff check looks for the
+  // customer's message). Where the time went is kept for the bot's screen.
+  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number) {
     const phone = normalizeIsraeliPhone(msg.from) || msg.from;
-    await markRead(msg.phoneNumberId, token, msg.id);
     const out = await turnFor(agent, "whatsapp", {
       sessionId: `wa_${phone}`,
       message: msg.text,
@@ -3301,20 +3303,29 @@ export async function createApp() {
       userName: msg.name,
     });
     const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
+    const ts = Date.now();
+    const sent: { text: string; messageId?: string }[] = [];
     for (const { payload, text } of answerToWhatsApp(msg.from, out)) {
-      let messageId: string | undefined;
       try {
-        messageId = await sendWhatsApp(msg.phoneNumberId, token, payload);
+        sent.push({ text, messageId: await sendWhatsApp(msg.phoneNumberId, token, payload) });
       } catch (e: any) {
         console.error("[WA] sending the bot's answer failed:", e?.message);
-        continue;
       }
-      // in WhastAppSystem's inbox, like n8n's bot_reply (the handoff alert only when the bot handed over)
-      await postJson(`${WA_SYSTEM_URL}/api/webhook`, {
-        type: "bot_reply", phone: msg.from, name: msg.name || msg.from, text, phoneNumberId: msg.phoneNumberId,
-        ...(messageId ? { messageId } : {}), decided: true, ...(handoffNote ? { handoff: true, handoffNote } : {}),
-      }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message));
     }
+    const sendMs = Date.now() - ts;
+    await copied;
+    // in WhastAppSystem's inbox, like n8n's bot_reply (the handoff alert only when the bot handed over)
+    await Promise.all([
+      ...sent.map(({ text, messageId }) =>
+        postJson(`${WA_SYSTEM_URL}/api/webhook`, {
+          type: "bot_reply", phone: msg.from, name: msg.name || msg.from, text, phoneNumberId: msg.phoneNumberId,
+          ...(messageId ? { messageId } : {}), decided: true, ...(handoffNote ? { handoff: true, handoffNote } : {}),
+        }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message))
+      ),
+      noteBrainFields(String(agent.id), {
+        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs },
+      }).catch(() => {}),
+    ]);
   }
 
   app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
@@ -3323,59 +3334,79 @@ export async function createApp() {
     const { phoneNumberId, displayPhone } = payloadNumber(payload);
     const agent = phoneNumberId ? (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone)).catch(() => ({ agent: null }))).agent : null;
     const brain = agent ? await getBrain(String(agent.id)).catch(() => null) : null;
+    const messages = incomingMessages(payload);
 
-    // proof for the bot's screen that this number's messages arrive here
-    if (agent && incomingMessages(payload).length) await noteWaArrival(String(agent.id)).catch(() => {});
+    // proof for the bot's screen that this number's messages arrive here (not waited for)
+    const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
 
     // Not switched (or not ours): on to n8n, untouched
     if (!agent || !brain?.nativeWhatsapp) {
       try {
         const r = await postJson(N8N_WHATSAPP_URL, raw, {}, 25000);
+        await arrival;
         return res.status(200).send(await r.text().catch(() => "ok"));
       } catch (e: any) {
         console.error("[WA] forwarding to n8n failed:", e?.message);
+        await arrival;
         return res.status(200).send("ok"); // Meta would retry and n8n may still be down — not a reason to re-deliver
       }
     }
 
+    // Everything that can run side by side does (Haim, 2026-10-23: "the answer comes slowly"); the
+    // response waits for all of it — on Vercel nothing runs after it.
+    const background: Promise<unknown>[] = [arrival];
     try {
-      const config = await effectiveWhatsappConfig(agent);
+      const [config, ai] = await Promise.all([effectiveWhatsappConfig(agent), geminiFor(agentTenant(agent) || undefined)]);
       const token = String(config.systemUserAccessToken || "").trim();
-      const messages = incomingMessages(payload);
-      const ai = await geminiFor(agentTenant(agent) || undefined);
 
-      // voice notes → text, written into the payload itself so every screen shows the words
-      for (const m of messages) {
-        if (!m.mediaId || !(m.type === "audio" || m.type === "voice")) continue;
-        let transcript = "";
-        try {
-          if (ai && token) transcript = await transcribeVoice(ai, m.mediaId, token);
-        } catch (e: any) {
-          console.warn("[WA] voice transcription failed:", e?.message);
+      // which messages to answer (Meta re-delivers), and "typing…" for them right away
+      const toAnswer: IncomingWa[] = [];
+      if (token) {
+        for (const m of messages) {
+          if (needsNoAnswer(m) || !(m.text || m.mediaId)) continue;
+          if (await claimWaMessage(m.id)) toAnswer.push(m);
         }
-        m.text = transcript ? `🎤 ${transcript}` : "🎤 [הודעה קולית — לא הצלחתי לתמלל]";
-        m.raw.text = { body: m.text };
+        for (const m of toAnswer) background.push(markRead(m.phoneNumberId, token, m.id));
+      } else {
+        console.error(`[WA] no WhatsApp token for agent ${agent.id} — can't answer`);
       }
 
-      // the copy WhastAppSystem used to get from n8n (it routes by the number, skips repeats itself)
-      await postJson(`${WA_SYSTEM_URL}/api/webhook`, payload).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
+      // voice notes → text, written into the payload itself so every screen shows the words
+      const transcribeMs = new Map<string, number>();
+      await Promise.all(
+        messages
+          .filter((m) => m.mediaId && (m.type === "audio" || m.type === "voice"))
+          .map(async (m) => {
+            const t = Date.now();
+            let transcript = "";
+            try {
+              if (ai && token) transcript = await transcribeVoice(ai, m.mediaId!, token);
+            } catch (e: any) {
+              console.warn("[WA] voice transcription failed:", e?.message);
+            }
+            m.text = transcript ? `🎤 ${transcript}` : "🎤 [הודעה קולית — לא הצלחתי לתמלל]";
+            m.raw.text = { body: m.text };
+            transcribeMs.set(m.id, Date.now() - t);
+          })
+      );
 
-      if (!token) {
-        console.error(`[WA] no WhatsApp token for agent ${agent.id} — can't answer`);
-      } else {
-        for (const m of messages) {
-          if (needsNoAnswer(m) || !m.text) continue;
-          if (!(await claimWaMessage(m.id))) continue; // Meta delivered it again
-          try {
-            await answerOnWhatsApp(agent, m, token);
-          } catch (e: any) {
-            console.error("[WA] answering failed:", e?.message || e);
-          }
+      // the copy WhastAppSystem used to get from n8n (it routes by the number, skips repeats itself),
+      // side by side with the bot's answer
+      const copied = postJson(`${WA_SYSTEM_URL}/api/webhook`, payload).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
+      background.push(copied);
+
+      for (const m of toAnswer) {
+        if (!m.text) continue;
+        try {
+          await answerOnWhatsApp(agent, m, token, copied, transcribeMs.get(m.id));
+        } catch (e: any) {
+          console.error("[WA] answering failed:", e?.message || e);
         }
       }
     } catch (e: any) {
       console.error("[WA] webhook failed:", e?.message || e);
     }
+    await Promise.all(background);
     res.status(200).send("ok");
   });
 
