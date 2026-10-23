@@ -196,12 +196,20 @@ export async function sendWhatsApp(phoneNumberId: string, token: string, payload
   return data?.messages?.[0]?.id;
 }
 
-// The blue ticks: the customer sees their message was read
+// The blue ticks + "typing…" while the bot works on the answer (Meta shows it up to 25s or until
+// the answer is sent). Without typing-indicator support, just the blue ticks.
 export async function markRead(phoneNumberId: string, token: string, messageId: string): Promise<void> {
-  await fetch(`${GRAPH}/${encodeURIComponent(phoneNumberId)}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId }),
-    signal: AbortSignal.timeout(8000),
-  }).catch(() => {});
+  const send = (typing: boolean) =>
+    fetch(`${GRAPH}/${encodeURIComponent(phoneNumberId)}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: messageId, ...(typing ? { typing_indicator: { type: "text" } } : {}) }),
+      signal: AbortSignal.timeout(8000),
+    });
+  try {
+    const r = await send(true);
+    if (!r.ok) await send(false);
+  } catch {
+    /* only cosmetic */
+  }
 }

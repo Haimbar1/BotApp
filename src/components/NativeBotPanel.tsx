@@ -15,6 +15,7 @@ interface Brain {
   nativeWeb: boolean;
   nativeWhatsapp?: boolean;
   lastWaMessageAt?: string;
+  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
   qa: Qa[];
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
@@ -524,8 +525,36 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
           {brain.nativeWhatsapp ? "↩ החזר את הוואטסאפ ל-n8n" : "🚀 העבר את הוואטסאפ לבוט החדש"}
         </button>
       </div>
+      {brain.lastWaTiming && <WaTiming t={brain.lastWaTiming} />}
       {!connected && webhook !== null && <div className="text-[10.5px] text-amber-300">לבוט הזה לא נראה חיבור וואטסאפ (לשונית "וואטסאפ הגדרות").</div>}
       {note && <div className="text-[11px] text-sky-200">{note}</div>}
+    </div>
+  );
+}
+
+const TOOL_NAMES: Record<string, string> = {
+  link_customer_phone: "זיהוי הלקוח",
+  get_available_slots: "בדיקת יומן",
+  book_appointment: "קביעת תור",
+  reschedule_appointment: "הזזת תור",
+  cancel_appointment: "ביטול תור",
+  note_for_staff: "הערה לצוות",
+  learn_from_correction: "לימוד",
+};
+const sec = (ms: number) => `${(ms / 1000).toFixed(1)} שנ׳`;
+
+// How long the last WhatsApp answer took, and where the time went
+function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
+  const parts = [
+    t.transcribe ? `תמלול ${sec(t.transcribe)}` : "",
+    t.customer ? `CRM ${sec(t.customer)}` : "",
+    t.ai.length ? `בינה מלאכותית ${t.ai.map(sec).join(" + ")}` : "",
+    ...t.tools.map((x) => `${TOOL_NAMES[x.name] || x.name} ${sec(x.ms)}`),
+    `שליחה ${sec(t.send)}`,
+  ].filter(Boolean);
+  return (
+    <div className="text-[10.5px] text-slate-400 border-t border-slate-800 pt-2">
+      ⏱️ התשובה האחרונה ({showDate(t.at)}) לקחה <b className={t.total > 15000 ? "text-amber-300" : "text-emerald-300"}>{sec(t.total)}</b>: {parts.join(" · ")}
     </div>
   );
 }
