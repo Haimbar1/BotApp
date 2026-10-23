@@ -412,11 +412,13 @@ function eventsSection(brain: BotBrain, today: string): string {
       if (h) lines.push(`- ${showDay(d)}: ${h} — סגור (חג)`);
     }
   }
-  if (!lines.length) return "";
+  // Haim, 2026-10-23: asked "when are the aid days?" the bot answered with Harish in February —
+  // an old date in the prompt — while the calendar had October. The calendar is the only source.
   return (
-    "\n# אירועים וימים מיוחדים (מהיום והלאה — מידע עדכני שגובר על השכל)\n" +
-    lines.join("\n") +
-    "\n- כשהלקוח שואל מתי אתם במקום / באזור מסוים (למשל \"מתי אתם במשגב?\") — חפש ברשימה אירוע באותו מקום או קרוב אליו (אותו אזור, עד כחצי שעה נסיעה — למשל משגב ↔ כרמיאל, סכנין, מעלות; פרדס חנה ↔ חדרה, זכרון יעקב) לפי 📍, הכותרת והפרטים, וענה עם התאריכים והמקום המדויק (\"אנחנו לא במשגב עצמה, אבל ב-3/11 נהיה בכרמיאל — 15 דקות ממך\"). אם אין שום אירוע באזור — אמור שכרגע לא מתוכנן, הצע את הסניף, ואפשר להציע שנעדכן אותו כשיהיה (note_for_staff kind=handoff עם המקום).\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
+    "\n# אירועים וימים מיוחדים (מהיומן — המקור היחיד לתאריכים שלהם)\n" +
+    (lines.length ? lines.join("\n") : "- כרגע אין ביומן אירועים מתוכננים (ימי סיוע, ביקורים בישובים וכו').") +
+    "\n- תאריכים של ימי סיוע, ביקורים בישובים / באזורים, ימי פתיחה ואירועים — רק מהרשימה הזו. תאריכים כאלה שכתובים בשכל או בשאלות ותשובות ישנים — לעולם אל תשתמש בהם ואל תזכיר אותם. אם הלקוח שואל על אירוע / מקום שאין ברשימה — אמור שכרגע אין מועד מתוכנן (בלי להמציא ובלי להעביר לנציג)." +
+    "\n- כשהלקוח שואל מתי אתם במקום / באזור מסוים (למשל \"מתי אתם במשגב?\") — חפש ברשימה אירוע באותו מקום או קרוב אליו (אותו אזור, עד כחצי שעה נסיעה — למשל משגב ↔ כרמיאל, סכנין, מעלות; פרדס חנה ↔ חדרה, זכרון יעקב) לפי 📍, הכותרת והפרטים, וענה עם התאריכים והמקום המדויק (\"אנחנו לא במשגב עצמה, אבל ב-3/11 נהיה בכרמיאל — 15 דקות ממך\"). אם אין שום אירוע באזור — אמור שכרגע לא מתוכנן והצע את הסניף.\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה."
   );
 }
 
@@ -455,7 +457,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
         (customer?.upcomingExams?.length ? ` יש לו תור קרוב (${showSlot(customer.upcomingExams[0].start)}) — הזכר אותו, והוסף ל-options את \"🔄 לדחות / לשנות את התור\".` : "")
       : "- כבר דיברתם היום — אל תפתח שוב בברכה, המשך את השיחה.",
     "\n# כללי עבודה",
-    "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — הצע שנציג יחזור אליו.",
+    "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — אמור בכנות שאין לך את המידע כרגע (אפשר להוסיף ל-options את \"🙋 לדבר עם נציג\").",
     "- השתמש במה שאתה יודע על הלקוח: פנה בשמו, ואם יש לו הזמנה פתוחה / תור קרוב / קמפיין שקיבל — התייחס לזה כשזה רלוונטי, גם לפני שהוא שואל.",
     web && !phone
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
@@ -463,7 +465,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     bookingOn
       ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
-    "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות. אבל הבטח את זה רק כשיש בקשה פתוחה שאתה לא יכול לטפל בה בעצמך — לא כסיום שיחה. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
+    "- העברה לנציג (Haim: רק כשהלקוח מבקש במפורש): note_for_staff עם kind=handoff — ורק אז אמור שמישהו יחזור אליו — רק כשהלקוח ביקש במפורש לדבר עם נציג / שיחזרו אליו / שיתקשרו (או לחץ \"🙋 לדבר עם נציג\"). שאלה שאין לך תשובה עליה (למשל \"מתי אתם ב-X?\") היא לא בקשה לנציג — ענה מה שידוע, ואל תבטיח שמישהו יחזור. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
@@ -553,7 +555,10 @@ interface TurnState {
   pending: string; // what this answer asks the customer to confirm
   voice: boolean; // this message is a transcribed voice note
   userText: string; // what the customer wrote this turn
+  earlierUserText: string; // the customer's two messages before it (a request for a person may come first)
 }
+
+const recentUserText = (st: TurnState) => `${st.earlierUserText}\n${st.userText}`;
 
 // Haim, 2026-10-23: the bot booked a day the customer only mentioned, and acted on a voice note it
 // heard wrong ("it hurts" — never said). So booking / moving / cancelling, and acting on a voice note
@@ -580,6 +585,9 @@ const CONFIRM_OPTIONS: Record<string, string[]> = {
 // finishes a handoff it was told to hold for a voice note). A thank-you / goodbye / ok is never a
 // request, and a "yes" to a voice note is the only answer that lets that note through.
 const JUST_CLOSING = /^(?:תודה(?: רבה| רבה לך| לך)?|תודה רבה רבה|תנקס|thanks?|thank you|תודה ו?להתראות|להתראות|ביי|bye|יום טוב|ערב טוב|לילה טוב|שבוע טוב|שבת שלום|אוקי(?:י)?|ok(?:ay)?|סבבה|מעולה|יופי|אחלה|מצוין|בסדר|הבנתי|קיבלתי|👍|🙏|❤️|😊|🙂)[\s!.,🙏👍❤️😊🙂🌹]*$/i;
+// The customer asking for a person: a representative, someone to call / get back, a human
+const ASKS_FOR_PERSON = /נציג|בן[\s-]?אדם|אנושי|לדבר עם (?:מישהו|מישהי|אדם|בעל|המנהל|מנהל|צוות|חיים)|שיחזרו|תחזרו|תחזור אליי|תחזרי|יחזרו אלי|תתקשרו|תתקשר|תתקשרי|שיתקשרו|להתקשר אלי|צלצלו|תצלצלו|מנהל|human|agent|representative|call me/i;
+
 const SAID_YES = /^(?:✅\s*)?(?:כן|נכון|בדיוק|כן,? נכון|נכון מאוד|כן כן|אכן|yes|yep|👍)(?:[\s,!.].*)?$/i;
 
 const VOICE_ASK =
@@ -730,6 +738,10 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
       const kind: BotNoteKind = args?.kind === "bug" ? "bug" : "handoff";
       const said = st.userText.replace(/^🎤\s*/, "").trim();
+      // Haim, 2026-10-23: a person only when the customer asks for one in so many words
+      if (kind === "handoff" && !ASKS_FOR_PERSON.test(recentUserText(st))) {
+        return { ok: false, error: "הלקוח לא ביקש לדבר עם נציג — אל תעביר לצוות ואל תבטיח שמישהו יחזור אליו. ענה מה שידוע לך; אם אין לך תשובה — אמור זאת בכנות והוסף ל-options את \"🙋 לדבר עם נציג\"." };
+      }
       if (kind === "handoff" && JUST_CLOSING.test(said)) {
         return { ok: false, error: "הלקוח רק מודה / נפרד — אין מה להעביר לצוות. ענה בקצרה ובחום (למשל \"בשמחה! 😊 כאן בשבילך\"), בלי להבטיח שמישהו יחזור, options []." };
       }
@@ -816,6 +828,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     pending: "",
     voice: false,
     userText: "",
+    earlierUserText: (conv?.messages || []).filter((m) => m.role === "user").slice(-2).map((m) => m.text).join("\n"),
   };
   if (st.phone) {
     if (st.phone === givenPhone) st.customer = givenCustomer;
