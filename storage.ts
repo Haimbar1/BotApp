@@ -41,6 +41,8 @@ let writeChain: Promise<void> = Promise.resolve();
 const key = (kind: Kind, docId: string) => `${kind}:${docId}`;
 
 export const storageMode = () => (pool ? "postgres" : "files");
+// The database connection (null = local files), for the stores that keep their own tables (botStore.ts)
+export const storagePool = () => pool;
 
 function readJsonFile<T>(file: string, fallback: T): T {
   try {

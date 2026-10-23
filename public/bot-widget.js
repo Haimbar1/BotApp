@@ -2399,7 +2399,7 @@
       payload.phone = currentUserPhone;
     }
 
-    fetch(webhookUrl, {
+    fetch(nativeChatUrl || webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2411,6 +2411,11 @@
     .then(function(data) {
       isTyping = false;
       var parsed = parseN8nResponse(data);
+      // The bot answering in SmartEsek (not n8n) tells us the phone / name once it learned them
+      if (nativeChatUrl && data) {
+        if (typeof data.phone === 'string' && data.phone) setUserPhone(data.phone);
+        if (typeof data.name === 'string' && data.name) setUserName(data.name);
+      }
 
       messages.push({
         id: 'b_' + Date.now(),
@@ -2582,6 +2587,19 @@
           .catch(function(e) {});
       });
   };
+
+  // Whether this bot is answered by SmartEsek's own bot engine instead of n8n (turned on per bot in
+  // the bot's screen, "הבוט עונה מכאן"). Until the answer arrives, and if it can't be read, n8n answers.
+  var nativeChatUrl = null;
+  (function checkNativeEngine() {
+    if (!botId || !currentScript || !currentScript.src) return;
+    var origin = '';
+    try { origin = new URL(currentScript.src).origin; } catch (e) { return; }
+    fetch(origin + '/api/public/bot-engine?bot_id=' + encodeURIComponent(botId))
+      .then(function(res) { return res.ok ? res.json() : null; })
+      .then(function(data) { if (data && data.native) nativeChatUrl = origin + '/api/public/chat'; })
+      .catch(function() {});
+  })();
 
   // Only fetch from server/n8n if no welcome message or options were provided directly in script tag / config
   if (!welcomeMessage && !customOptions && !conversationFlow) {

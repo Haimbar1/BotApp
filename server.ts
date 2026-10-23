@@ -23,7 +23,9 @@ import {
   toIntlDigits,
 } from "./storage.js";
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
-import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames } from "./siteFrames.js";
+import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
+import { runBotTurn, voicePrompt, type Channel, type CrmCaller } from "./botEngine.js";
+import { getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -2769,6 +2771,17 @@ export async function createApp() {
         messages.push({ id, phone, at: new Date(at).toISOString(), from: type === "ai" ? "bot" : "customer", text: text.slice(0, 2000) });
       }
     }
+    // and the conversations the bot had here itself (botEngine.ts)
+    for (const botId of botIds) {
+      for (const c of await listConversations(botId, { phones9: Array.from(phones) }).catch(() => [])) {
+        const phone = String(c.phone || "").replace(/\D/g, "").slice(-9);
+        for (const m of c.messages) {
+          const text = [m.text, ...(m.options || []).map((o) => `• ${o}`)].filter(Boolean).join("\n");
+          if (!text) continue;
+          messages.push({ id: `botapp-${m.id}`, phone, at: m.at, from: m.role === "bot" ? "bot" : "customer", text: text.slice(0, 2000) });
+        }
+      }
+    }
     res.json({ messages, ...diag });
   });
 
@@ -2821,6 +2834,12 @@ export async function createApp() {
         if (phone) {
           finalChats = finalChats.filter((chat: any) => chat.phone === phone);
         }
+      }
+
+      // The conversations the bot had here itself (botEngine.ts)
+      if (botId) {
+        const native = await nativeChatRecords(String(botId)).catch(() => []);
+        finalChats = finalChats.concat(native.filter((c: any) => (!sessionId || c.sessionId === sessionId) && (!phone || c.phone === phone)));
       }
 
       // Sort chronologically
@@ -3049,6 +3068,338 @@ export async function createApp() {
 
   const findAgentByBotId = (botId: string) =>
     botId ? readAgents().find((a: any) => a.botId === botId || a.id === botId) : undefined;
+
+  // ---- The bot answering here instead of n8n (botEngine.ts) ----
+  // Started with the website widget (Haim, 2026-10-23); its data — Q&A, booking hours, lessons,
+  // notes for the staff, conversations — is in its own tables (botStore.ts).
+
+  // The agent's prompt as the bot gets it: what was last sent to n8n (or the screen's prompt), with
+  // the portal's current frames
+  async function brainTextFor(agent: any): Promise<string> {
+    const p = agent?.n8nSync?.payload || {};
+    const text = String(p.Prompt || p.prompt || p.businessPrompt || agent?.businessPrompt || "");
+    const tenant = agentTenant(agent);
+    const topic = tenant ? await siteFramesTopic(tenant).catch(() => null) : null;
+    return topic === null ? text : withFramesTopic(text, topic);
+  }
+
+  // The CRM, for the business's bot (POST /api/bot/tools, x-bot-token). null = no business / no secret
+  function crmFor(agent: any): CrmCaller | null {
+    const tenant = agentTenant(agent);
+    const secret = process.env.SSO_SHARED_SECRET;
+    if (!tenant || !secret) return null;
+    return async (body) => {
+      const token = jwt.sign({ typ: "bot-tools", portalTenantId: Number(tenant) || tenant }, secret, { expiresIn: "2m" });
+      const r = await fetch(`${CRM_URL}/api/bot/tools`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bot-token": token },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20000),
+      });
+      const data: any = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || `CRM ${r.status}`);
+      return data;
+    };
+  }
+
+  // The web chat in WhastAppSystem's Messages (and its handoff / unhappy alerts), the way n8n reported
+  // it: { type: 'web_bot_message' } to its webhook. The optics (portal business 1) needs no header;
+  // another business is called with its signed session, like the CRM does.
+  const WA_SYSTEM_URL = (process.env.WHATSAPP_SYSTEM_URL || "https://whatsapp.smartesek.com").replace(/\/$/, "");
+  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string) {
+    const tenant = agentTenant(agent);
+    const secret = process.env.SSO_SHARED_SECRET;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tenant && tenant !== ORIGINAL_TENANT) {
+      if (!secret) return;
+      headers["x-wa-session"] = jwt.sign({ tenantId: String(tenant), email: "botapp@smartesek.com", role: "crm", typ: "wa_session" }, secret, { expiresIn: "2m" });
+    }
+    try {
+      await fetch(`${WA_SYSTEM_URL}/api/webhook`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ type: "web_bot_message", session_id: sessionId, direction, text, name }),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch (e: any) {
+      console.warn("[BOT] reporting the web chat to WhastAppSystem failed:", e?.message);
+    }
+  }
+
+  // A note for the staff also goes on the customer's lead in the CRM (when the phone is known)
+  const NOTE_TITLES: Record<string, string> = { handoff: "🙋 הבוט: לחזור ללקוח", bug: "🐞 תקלה בבוט — לטיפול", lesson: "🧠 הבוט למד" };
+  const noteToCrm = (agent: any) => async (note: BotNote) => {
+    const crm = crmFor(agent);
+    if (!crm || !note.phone || note.kind === "lesson") return;
+    await crm({ action: "note", phone: note.phone, title: NOTE_TITLES[note.kind], text: note.text, important: true });
+  };
+
+  const findAgentById = (agentId: string) => readAgents().find((a: any) => a.id === agentId);
+  const ownAgentOr403 = (req: any, res: any, agentId: string) => {
+    const agent = findAgentById(String(agentId || ""));
+    if (!agent || !canAccessAgent(req.user, agent)) {
+      res.status(403).json({ success: false, message: "אין הרשאה לבוט זה" });
+      return null;
+    }
+    return agent;
+  };
+
+  async function turnFor(agent: any, channel: Channel, body: any) {
+    const [brain, lessons, brainText, ai] = await Promise.all([
+      getBrain(String(agent.id)),
+      listLessons(String(agent.id)),
+      brainTextFor(agent),
+      geminiFor(agentTenant(agent) || undefined),
+    ]);
+    return runBotTurn(
+      {
+        agent,
+        brain,
+        lessons,
+        brainText,
+        channel,
+        sessionId: String(body.sessionId || "").slice(0, 200),
+        text: String(body.message || "").slice(0, 2000),
+        buttonId: body.buttonId ? String(body.buttonId).slice(0, 200) : undefined,
+        phone: body.userPhone || body.phone || undefined,
+        name: body.userName || body.name || undefined,
+      },
+      { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
+    );
+  }
+
+  // GET /api/public/bot-engine?bot_id=… — the widget asks whether this bot is answered here
+  app.get("/api/public/bot-engine", async (req: any, res: any) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "public, max-age=60");
+    const agent = findAgentByBotId(String(req.query.bot_id || req.query.botId || "").trim());
+    if (!agent) return res.json({ native: false });
+    const brain = await getBrain(String(agent.id)).catch(() => null);
+    res.json({ native: !!brain?.nativeWeb });
+  });
+
+  // POST /api/public/chat { botId, sessionId, message, buttonId?, userName?, userPhone? } — the website
+  // widget's messages, when the bot is set to answer here. → { reply, options, images, phone?, name? }
+  app.post("/api/public/chat", async (req: any, res: any) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    const body = req.body || {};
+    const agent = findAgentByBotId(String(body.botId || body.bot_id || "").trim());
+    if (!agent) return res.status(404).json({ error: "bot not found" });
+    if (!String(body.sessionId || "").trim() || !String(body.message || body.buttonId || "").trim()) {
+      return res.status(400).json({ error: "sessionId and message are required" });
+    }
+    const brain = await getBrain(String(agent.id));
+    if (!brain.nativeWeb) return res.status(409).json({ error: "this bot is answered by n8n" });
+    try {
+      const out = await turnFor(agent, "web", body);
+      const sessionId = String(body.sessionId);
+      const name = out.name || String(body.userName || "");
+      await Promise.all([
+        reportWebChat(agent, sessionId, name, "incoming", String(body.message || "")),
+        reportWebChat(agent, sessionId, name, "outgoing", [out.reply, ...out.options.map((o) => `• ${o}`)].join("\n")),
+      ]);
+      res.json({ reply: out.reply, options: out.options, images: out.images, phone: out.phone, name: out.name });
+    } catch (e: any) {
+      console.error("[BOT] web turn failed:", e);
+      res.status(500).json({ reply: "מצטערים, חלה תקלה זמנית. נסו שוב בעוד רגע 🙏", options: [] });
+    }
+  });
+
+  // GET /api/bot-brain?agentId=… → { brain, lessons, notes }
+  app.get("/api/bot-brain", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.query.agentId);
+    if (!agent) return;
+    const [brain, lessons, notes] = await Promise.all([getBrain(agent.id), listLessons(agent.id), listNotes(String(agent.botId || ""), 200)]);
+    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent) });
+  });
+
+  // PUT /api/bot-brain { agentId, brain } — engine on/off, Q&A, booking hours, voice notes
+  app.put("/api/bot-brain", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const b = req.body?.brain || {};
+    const qa = (Array.isArray(b.qa) ? b.qa : [])
+      .map((x: any) => ({ id: String(x?.id || `qa_${Math.random().toString(36).slice(2, 10)}`), q: String(x?.q || "").slice(0, 500), a: String(x?.a || "").slice(0, 3000) }))
+      .filter((x: any) => x.q.trim() || x.a.trim())
+      .slice(0, 300);
+    const hours: Record<string, string> = {};
+    for (let d = 0; d < 7; d++) hours[String(d)] = String(b.booking?.hours?.[String(d)] || "").slice(0, 60);
+    const current = await getBrain(agent.id);
+    const brain = await saveBrain({
+      ...current,
+      nativeWeb: !!b.nativeWeb,
+      qa,
+      booking: {
+        enabled: !!b.booking?.enabled,
+        hours,
+        slotMinutes: Math.min(Math.max(Number(b.booking?.slotMinutes) || 30, 10), 240),
+        daysAhead: Math.min(Math.max(Number(b.booking?.daysAhead) || 14, 1), 60),
+      },
+      voiceNotes: String(b.voiceNotes || "").slice(0, 5000),
+      ...(b.autofilledAt ? { autofilledAt: String(b.autofilledAt) } : {}),
+    });
+    res.json({ success: true, brain });
+  });
+
+  // POST /api/bot-brain/autofill { agentId } — the owner's customers are busy, so the bot writes its
+  // own starting Q&A (and exam hours, if the prompt says them) from the prompt. Suggestions only —
+  // the screen adds them and saves.
+  app.post("/api/bot-brain/autofill", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const ai = await geminiFor(agentTenant(agent) || undefined);
+    if (!ai) return res.status(503).json({ success: false, message: "AI לא מוגדר בשרת" });
+    const brainText = await brainTextFor(agent);
+    if (brainText.trim().length < 40) return res.json({ success: true, qa: [], hours: {} });
+    try {
+      const response = await generateWithFallback(ai, {
+        model: "gemini-3.5-flash",
+        contents: [
+          {
+            role: "user",
+            parts: [{
+              text:
+                "זה השכל (ההנחיות) של בוט של עסק. כתוב ממנו רשימת שאלות ותשובות שלקוחות באמת שואלים (20–40), " +
+                "רק ממה שכתוב — לא להמציא מחירים, שעות או פרטים. תשובות קצרות, בגוף ראשון רבים בשם העסק. " +
+                "בנוסף, אם כתובות שעות שבהן אפשר לקבוע תור / בדיקה (או שעות פתיחה), החזר אותן לפי יום בשבוע (0=ראשון … 6=שבת) " +
+                'בפורמט "HH:mm-HH:mm" (כמה טווחים מופרדים בפסיק); יום סגור או לא ידוע — אל תכלול.\n\n' +
+                brainText.slice(0, 60000),
+            }],
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              qa: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { q: { type: Type.STRING }, a: { type: Type.STRING } }, required: ["q", "a"] } },
+              hours: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { day: { type: Type.NUMBER }, hours: { type: Type.STRING } }, required: ["day", "hours"] } },
+            },
+            required: ["qa"],
+          },
+        },
+      });
+      const parsed = JSON.parse(response.text || "{}");
+      const hours: Record<string, string> = {};
+      for (const h of parsed.hours || []) {
+        const d = Number(h?.day);
+        if (d >= 0 && d <= 6 && /^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/.test(String(h?.hours || ""))) hours[String(d)] = String(h.hours).trim();
+      }
+      res.json({ success: true, qa: (parsed.qa || []).filter((x: any) => x?.q && x?.a).slice(0, 60), hours });
+    } catch (e: any) {
+      console.error("[BOT] autofill failed:", e);
+      res.status(500).json({ success: false, message: "יצירת השאלות והתשובות נכשלה, נסו שוב" });
+    }
+  });
+
+  // POST /api/bot-brain/lessons { agentId, id?, text?, active?, remove? } — add (no id) / edit / delete
+  app.post("/api/bot-brain/lessons", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const { id, text, active, remove } = req.body || {};
+    if (!id) {
+      if (!String(text || "").trim()) return res.status(400).json({ success: false });
+      await addLesson({ agentId: agent.id, text: String(text).trim().slice(0, 500), source: "owner", active: true });
+    } else if (remove) {
+      await updateLesson(agent.id, String(id), null);
+    } else {
+      await updateLesson(agent.id, String(id), {
+        ...(typeof active === "boolean" ? { active } : {}),
+        ...(typeof text === "string" && text.trim() ? { text: text.trim().slice(0, 500) } : {}),
+      });
+    }
+    res.json({ success: true, lessons: await listLessons(agent.id) });
+  });
+
+  // POST /api/bot-notes/done { agentId, id, done } — "טופל" on a note for the staff
+  app.post("/api/bot-notes/done", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    await markNoteDone(String(agent.botId || ""), String(req.body?.id || ""), String(req.user?.email || ""), req.body?.done !== false);
+    res.json({ success: true });
+  });
+
+  // POST /api/bot-brain/test-chat { agentId, sessionId, message, phone? } — the owner tries the bot.
+  // Reads from the CRM like a real chat, but books / cancels nothing, writes nothing to the CRM, and a
+  // correction here is the owner teaching the bot.
+  app.post("/api/bot-brain/test-chat", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    try {
+      const out = await turnFor(agent, "test", { ...req.body, sessionId: `test_${String(req.body?.sessionId || "x").slice(0, 80)}` });
+      res.json({ success: true, ...out });
+    } catch (e: any) {
+      console.error("[BOT] test turn failed:", e);
+      res.status(500).json({ success: false, message: e?.message || "הבדיקה נכשלה" });
+    }
+  });
+
+  // GET /api/bot-brain/voice-prompt?agentId=… — the same knowledge as a prompt for the voice bot
+  app.get("/api/bot-brain/voice-prompt", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.query.agentId);
+    if (!agent) return;
+    const [brain, lessons, brainText] = await Promise.all([getBrain(agent.id), listLessons(agent.id), brainTextFor(agent)]);
+    res.json({ success: true, prompt: voicePrompt(agent, brain, lessons, brainText) });
+  });
+
+  // The bot's own conversations as chat records ({ sessionId, message: { type, content } … }, the shape
+  // the chats screen reads), with the notes for the staff in them (ids "staffnote-<kind>-…").
+  async function nativeChatRecords(botId: string, opts: { phones9?: string[] } = {}): Promise<any[]> {
+    const [convs, notes] = await Promise.all([listConversations(botId, { phones9: opts.phones9 }), listNotes(botId, 500)]);
+    const out: any[] = [];
+    const sessions = new Set<string>();
+    for (const c of convs) {
+      sessions.add(c.sessionId);
+      for (const m of c.messages) {
+        out.push({
+          id: `native_${m.id}`,
+          sessionId: c.sessionId,
+          botId,
+          phone: c.phone,
+          name: c.name,
+          userName: c.name,
+          userPhone: c.phone,
+          channel: c.channel,
+          message: {
+            type: m.role === "bot" ? "ai" : "human",
+            content: m.role === "bot" ? JSON.stringify({ reply: m.text, options: m.options || [], ...(m.images?.[0] ? { image: m.images[0] } : {}) }) : m.text,
+          },
+          timestamp: m.at,
+          timestampKnown: true,
+        });
+      }
+    }
+    for (const n of notes) {
+      if (!sessions.has(n.sessionId)) continue;
+      const label = n.kind === "bug" ? "🐞 תקלה בבוט" : n.kind === "lesson" ? "🧠 הבוט למד" : "🙋 הערה לנציג";
+      out.push({
+        id: n.id,
+        sessionId: n.sessionId,
+        botId,
+        phone: n.phone || "",
+        name: n.name || "",
+        userName: n.name || "",
+        userPhone: n.phone || "",
+        message: { type: "ai", content: JSON.stringify({ reply: `${label}: ${n.text}${n.doneAt ? " (טופל)" : ""}`, staffNote: n.kind }) },
+        timestamp: n.createdAt,
+        timestampKnown: true,
+      });
+    }
+    return out;
+  }
+
+  // GET /api/bot-conversations?botId=… — merged into the chats screen next to n8n's
+  app.get("/api/bot-conversations", requireAuth, async (req: any, res: any) => {
+    const botId = String(req.query.botId || "").trim();
+    const agent = findAgentByBotId(botId);
+    if (!agent || !canAccessAgent(req.user, agent)) return res.status(403).json({ success: false });
+    try {
+      res.json({ success: true, data: await nativeChatRecords(botId) });
+    } catch (e: any) {
+      console.error("[BOT] reading conversations failed:", e);
+      res.status(500).json({ success: false, data: [] });
+    }
+  });
 
   // Proxy payload POST to n8n Webhook. The business's frames from the portal are added to the media
   // section and prompt on the way (see siteFrames.ts), and the payload is kept so it can be re-sent

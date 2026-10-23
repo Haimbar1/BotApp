@@ -60,6 +60,7 @@ import { AppSettingsMenu } from "./components/AppSettingsMenu";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
 import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
+import NativeBotPanel from "./components/NativeBotPanel";
 import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
 import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
@@ -590,7 +591,7 @@ export default function App() {
   const [chats, setChats] = useState<any[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [isChatsLoading, setIsChatsLoading] = useState<boolean>(false);
-  const [agentPanelTab, setAgentPanelTab] = useState<"general" | "whatsapp" | "prompt" | "chats">("chats");
+  const [agentPanelTab, setAgentPanelTab] = useState<"general" | "whatsapp" | "prompt" | "chats" | "smartbot">("chats");
   const [chatsSearchTerm, setChatsSearchTerm] = useState<string>("");
   const [chatSourceFilter, setChatSourceFilter] = useState<"all" | "web" | "whatsapp" | "facebook">("all");
   const [chatsRefreshTrigger, setChatsRefreshTrigger] = useState<number>(0);
@@ -1632,6 +1633,29 @@ export default function App() {
           }
         } catch (tier3Err) {
           console.warn("[CLIENT] Tier 3 direct webhook fetch failed:", tier3Err);
+        }
+      }
+
+      // The conversations the bot had in SmartEsek itself (not n8n) — always added next to n8n's
+      {
+        try {
+          const response = await apiFetch(`/api/bot-conversations?botId=${encodeURIComponent(targetBotId)}`, {
+            headers: { "Authorization": `Bearer ${sessionToken}` }
+          });
+          if (response.ok) {
+            const result = await response.json();
+            const nativeChats = Array.isArray(result?.data) ? processRecords(result.data) : [];
+            if (active && nativeChats.length > 0) {
+              setChats(prev => {
+                const kept = prev.filter((c: any) => !String(c.id).startsWith("native_") && !String(c.id).startsWith("staffnote-"));
+                const ids = new Set(kept.map((c: any) => c.id));
+                return [...kept, ...nativeChats.filter((c: any) => !ids.has(c.id))];
+              });
+              fetchedSuccessfully = true;
+            }
+          }
+        } catch (nativeErr) {
+          console.warn("[CLIENT] Native bot conversations fetch failed:", nativeErr);
         }
       }
 
@@ -6461,7 +6485,8 @@ ${videos || "(לא הוגדר)"}
                   { key: "prompt" as const, label: "🧠 השכל של הסוכן", icon: Sparkles, isHighlight: true },
                   { key: "chats" as const, label: "💬 לוג שיחות", icon: MessageSquare, isHighlight: false },
                   { key: "general" as const, label: "📄 פרטי הסוכן", icon: FileText, isHighlight: false },
-                  { key: "whatsapp" as const, label: "📱 וואטסאפ", icon: Smartphone, isHighlight: false }
+                  { key: "whatsapp" as const, label: "📱 וואטסאפ", icon: Smartphone, isHighlight: false },
+                  { key: "smartbot" as const, label: "🤖 הבוט החכם", icon: Bot, isHighlight: false }
                 ].map(tab => {
                   const TabIcon = tab.icon;
                   const isTabActive = agentPanelTab === tab.key;
@@ -6503,7 +6528,8 @@ ${videos || "(לא הוגדר)"}
                   { key: "prompt" as const, label: "השכל של הסוכן (פרומפט) 🧠", icon: Sparkles, isHighlight: true },
                   { key: "chats" as const, label: "לוג שיחות", icon: MessageSquare, isHighlight: false },
                   { key: "general" as const, label: "פרטי הסוכן", icon: FileText, isHighlight: false },
-                  { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone, isHighlight: false }
+                  { key: "whatsapp" as const, label: "וואטסאפ הגדרות", icon: Smartphone, isHighlight: false },
+                  { key: "smartbot" as const, label: "הבוט החכם 🤖", icon: Bot, isHighlight: false }
                 ].map(tab => {
                   const TabIcon = tab.icon;
                   const isTabActive = agentPanelTab === tab.key;
@@ -6914,6 +6940,15 @@ ${videos || "(לא הוגדר)"}
             </div>
 
             </>
+            )}
+
+            {agentPanelTab === "smartbot" && activeId && (
+              <NativeBotPanel
+                agentId={activeId}
+                request={(url, init) =>
+                  apiFetch(url, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}`, ...(init?.headers || {}) } })
+                }
+              />
             )}
 
             {agentPanelTab === "prompt" && (
@@ -7410,6 +7445,16 @@ ${videos || "(לא הוגדר)"}
                               const isAI = msg.message?.type === "ai";
                               const parsed = parseChatMessageContent(msg.message?.content || "", msg.message?.type);
                               const isRawOpen = showRawMessageId === msg.id;
+                              // A note the bot left for the staff (botEngine.ts): handoff = amber, a reported bot fault = red, a lesson = blue
+                              const staffNote = String(msg.id || "").match(/^staffnote-(handoff|bug|lesson)_/)?.[1];
+                              if (staffNote) {
+                                const noteCls = staffNote === "bug" ? "bg-red-500/15 border-red-500/50 text-red-100" : staffNote === "lesson" ? "bg-sky-500/10 border-sky-500/40 text-sky-100" : "bg-amber-500/15 border-amber-500/50 text-amber-100";
+                                return (
+                                  <div key={msg.id} className={`self-center w-full max-w-[90%] px-4 py-2 rounded-xl border text-xs font-bold text-right ${noteCls}`} dir="rtl">
+                                    {parsed.text}
+                                  </div>
+                                );
+                              }
 
                               return (
                                 <div
