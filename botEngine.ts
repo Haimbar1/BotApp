@@ -23,7 +23,7 @@ import {
 // (a promise that someone will get back, or a reported bot fault) and learning from a correction.
 // The answer is { reply, options, images } — the widget shows options as buttons.
 
-export type Channel = "web" | "test";
+export type Channel = "web" | "test" | "whatsapp";
 
 export interface CrmCaller {
   (body: Record<string, unknown>): Promise<any>;
@@ -225,7 +225,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string): string {
   const business = input.agent?.businessName || input.agent?.name || "העסק";
   const web = input.channel === "web" || input.channel === "test";
   return [
-    `אתה הנציג הדיגיטלי של "${business}" ומדבר עם לקוח ${web ? "בצ'אט באתר של העסק" : ""}.`,
+    `אתה הנציג הדיגיטלי של "${business}" ומדבר עם לקוח ${web ? "בצ'אט באתר של העסק" : "בוואטסאפ (מספר הטלפון שלו ידוע ומאומת — אל תבקש אותו)"}.`,
     `עכשיו: יום ${DAY_NAMES[now.weekday]} ${now.date.slice(8, 10)}/${now.date.slice(5, 7)}/${now.date.slice(0, 4)}, השעה ${now.time} (שעון ישראל).`,
     "",
     "# השכל של הבוט (ההנחיות של העסק — הבסיס לכל תשובה)",
@@ -252,6 +252,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string): string {
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
     "- options: עד 6 תשובות קצרות (עד 24 תווים כל אחת) שהלקוח יכול ללחוץ — רק כשזה עוזר (בחירת מועד, תפריט, כן/לא). אחרת [].",
+    web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול של הודעה קולית ששלח.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- בלי markdown מלבד *הדגשה* בכוכבית אחת ושורות חדשות.",
   ]

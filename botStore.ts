@@ -27,6 +27,8 @@ export interface BotBrain {
   agentId: string;
   // the website widget is answered here instead of n8n
   nativeWeb: boolean;
+  // the business's WhatsApp number is answered here instead of n8n (/api/webhooks/whatsapp)
+  nativeWhatsapp?: boolean;
   qa: BotQa[];
   booking: BookingHours;
   // free text the owner adds for the voice bot only
@@ -160,6 +162,10 @@ function db() {
           PRIMARY KEY (bot_id, session_id)
         );
         CREATE INDEX IF NOT EXISTS botapp_conversations_phone_idx ON botapp_conversations (bot_id, phone);
+        CREATE TABLE IF NOT EXISTS botapp_wa_seen (
+          message_id TEXT PRIMARY KEY,
+          seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
       `)
       .then(() => undefined)
       .catch((e) => {
@@ -215,6 +221,25 @@ export async function switchedOnAgentIds(): Promise<string[]> {
   await d.ready;
   const { rows } = await d.pool.query("SELECT agent_id FROM botapp_bot_brain WHERE (data->>'nativeWeb')::boolean");
   return rows.map((r: any) => r.agent_id);
+}
+
+// ---------- WhatsApp: each incoming message answered once ----------
+
+// Meta re-delivers a webhook it thinks failed (the bot takes a few seconds to answer) — the first
+// delivery claims the message, a repeat gets false. Claims older than 3 days are dropped.
+const memSeen = new Set<string>();
+export async function claimWaMessage(messageId: string): Promise<boolean> {
+  if (!messageId) return false;
+  const d = db();
+  if (!d) {
+    if (memSeen.has(messageId)) return false;
+    memSeen.add(messageId);
+    return true;
+  }
+  await d.ready;
+  const r = await d.pool.query("INSERT INTO botapp_wa_seen (message_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING message_id", [messageId]);
+  if (Math.random() < 0.02) d.pool.query("DELETE FROM botapp_wa_seen WHERE seen_at < now() - interval '3 days'").catch(() => {});
+  return (r.rowCount || 0) > 0;
 }
 
 // ---------- lessons ----------

@@ -25,8 +25,9 @@ import {
 } from "./storage.js";
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
-import { runBotTurn, voicePrompt, type Channel, type CrmCaller } from "./botEngine.js";
-import { switchedOnAgentIds, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { runBotTurn, voicePrompt, normalizeIsraeliPhone, type Channel, type CrmCaller } from "./botEngine.js";
+import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, markRead, type IncomingWa } from "./whatsapp.js";
+import { switchedOnAgentIds, claimWaMessage, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -1734,6 +1735,32 @@ export async function createApp() {
   // (metadata.phone_number_id) or ?displayPhoneNumber= (metadata.display_phone_number).
   // The phone number id → botId mapping is kept in Postgres (table botapp_phone_bot_map, see
   // storage.ts) and checked first; the reply always says which bot it is (botId).
+  // The agent a WhatsApp business number belongs to: the stored phone → bot mapping first, then the
+  // agents' own WhatsApp settings, last a number entered only in the portal vault (that business's
+  // agent — if it has several, the one with a WhatsApp connection of its own; else ambiguous).
+  async function agentForNumber(phoneNumberId: string, displayPhone: string): Promise<{ agent: any; ambiguous?: any[] }> {
+    const allAgents = readAgents();
+    const findByBotId = (id: string) => allAgents.find((a: any) => a.botId === id || a.id === id);
+    let agent: any = null;
+    const mappedBotId = await lookupBotIdByPhone(phoneNumberId, displayPhone);
+    if (mappedBotId) agent = findByBotId(mappedBotId);
+    if (!agent && phoneNumberId) {
+      agent = allAgents.find((a: any) => String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId);
+    }
+    if (!agent && displayPhone) {
+      agent = allAgents.find((a: any) => toIntlDigits(a.whatsappConfig?.phoneNumber) === displayPhone)
+        || allAgents.find((a: any) => a.whatsappConfig?.phoneNumberId && toIntlDigits(a.ownerPhone) === displayPhone);
+    }
+    if (!agent && phoneNumberId) {
+      const candidates = await agentsForVaultPhone(allAgents, phoneNumberId);
+      const connected = candidates.filter((a: any) => a.whatsappConfig);
+      if (candidates.length === 1) agent = candidates[0];
+      else if (connected.length === 1) agent = connected[0];
+      else if (candidates.length > 1) return { agent: null, ambiguous: candidates };
+    }
+    return { agent };
+  }
+
   app.get("/api/whatsapp/n8n-credentials", async (req: any, res: any) => {
     const botId = String(req.query?.botId || "").trim();
     const phoneNumberId = String(req.query?.phoneNumberId || "").trim();
@@ -1754,24 +1781,11 @@ export async function createApp() {
     if (botId) {
       agent = findByBotId(botId);
     } else if (phoneNumberId || displayPhone) {
-      // First the stored phone → bot mapping, then the agents' own WhatsApp settings
-      const mappedBotId = await lookupBotIdByPhone(phoneNumberId, displayPhone);
-      if (mappedBotId) agent = findByBotId(mappedBotId);
-      if (!agent && phoneNumberId) {
-        agent = allAgents.find((a: any) => String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId);
-      }
-      if (!agent && displayPhone) {
-        agent = allAgents.find((a: any) => toIntlDigits(a.whatsappConfig?.phoneNumber) === displayPhone)
-          || allAgents.find((a: any) => a.whatsappConfig?.phoneNumberId && toIntlDigits(a.ownerPhone) === displayPhone);
-      }
-      // Last: a number entered only in the portal vault — that business's agent. If the business has
-      // several agents, the one with a WhatsApp connection of its own; otherwise it's ambiguous.
-      if (!agent && phoneNumberId) {
-        const candidates = await agentsForVaultPhone(allAgents, phoneNumberId);
-        const connected = candidates.filter((a: any) => a.whatsappConfig);
-        if (candidates.length === 1) agent = candidates[0];
-        else if (connected.length === 1) agent = connected[0];
-        else if (candidates.length > 1) {
+      const found = await agentForNumber(phoneNumberId, displayPhone);
+      agent = found.agent;
+      if (!agent) {
+        const candidates = found.ambiguous || [];
+        if (candidates.length > 1) {
           return res.status(409).json({
             success: false,
             error: "ambiguous",
@@ -3255,6 +3269,113 @@ export async function createApp() {
     }
   });
 
+  // ---- WhatsApp answered here instead of n8n (Haim, 2026-10-23) ----
+  // The business's WABA is pointed here (BotApp's WhatsApp settings → Webhook = this address). Per
+  // number: a bot whose "WhatsApp" switch is on is answered here — the payload is copied to
+  // WhastAppSystem (inbox, blacklist, alerts — what n8n's "forward a copy" did) with a voice note's
+  // transcript written in as its text, the bot answers through Meta, and the answer is reported
+  // there as a bot_reply. Every other number goes on to n8n exactly as Meta sent it, so nothing
+  // changes for a bot that wasn't switched.
+  const N8N_WHATSAPP_URL = process.env.N8N_WHATSAPP_URL || "https://n8n.srv1239769.hstgr.cloud/webhook/whatsappopt";
+  const WA_VERIFY_TOKENS = () =>
+    new Set([process.env.WHATSAPP_VERIFY_TOKEN || "smartesek-botapp", ...readAgents().map((a: any) => String(a.whatsappConfig?.webhookVerifyToken || "")).filter(Boolean)]);
+
+  app.get("/api/webhooks/whatsapp", (req: any, res: any) => {
+    if (req.query["hub.mode"] === "subscribe" && WA_VERIFY_TOKENS().has(String(req.query["hub.verify_token"] || ""))) {
+      return res.status(200).send(String(req.query["hub.challenge"] || ""));
+    }
+    res.status(403).send("Forbidden");
+  });
+
+  const postJson = (url: string, body: any, headers: Record<string, string> = {}, ms = 10000) =>
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
+
+  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string) {
+    const phone = normalizeIsraeliPhone(msg.from) || msg.from;
+    await markRead(msg.phoneNumberId, token, msg.id);
+    const out = await turnFor(agent, "whatsapp", {
+      sessionId: `wa_${phone}`,
+      message: msg.text,
+      buttonId: msg.buttonId,
+      userPhone: phone,
+      userName: msg.name,
+    });
+    const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
+    for (const { payload, text } of answerToWhatsApp(msg.from, out)) {
+      let messageId: string | undefined;
+      try {
+        messageId = await sendWhatsApp(msg.phoneNumberId, token, payload);
+      } catch (e: any) {
+        console.error("[WA] sending the bot's answer failed:", e?.message);
+        continue;
+      }
+      // in WhastAppSystem's inbox, like n8n's bot_reply (the handoff alert only when the bot handed over)
+      await postJson(`${WA_SYSTEM_URL}/api/webhook`, {
+        type: "bot_reply", phone: msg.from, name: msg.name || msg.from, text, phoneNumberId: msg.phoneNumberId,
+        ...(messageId ? { messageId } : {}), decided: true, ...(handoffNote ? { handoff: true, handoffNote } : {}),
+      }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message));
+    }
+  }
+
+  app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
+    const raw = req.body || {};
+    const payload = metaPayload(raw);
+    const { phoneNumberId, displayPhone } = payloadNumber(payload);
+    const agent = phoneNumberId ? (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone)).catch(() => ({ agent: null }))).agent : null;
+    const brain = agent ? await getBrain(String(agent.id)).catch(() => null) : null;
+
+    // Not switched (or not ours): on to n8n, untouched
+    if (!agent || !brain?.nativeWhatsapp) {
+      try {
+        const r = await postJson(N8N_WHATSAPP_URL, raw, {}, 25000);
+        return res.status(200).send(await r.text().catch(() => "ok"));
+      } catch (e: any) {
+        console.error("[WA] forwarding to n8n failed:", e?.message);
+        return res.status(200).send("ok"); // Meta would retry and n8n may still be down — not a reason to re-deliver
+      }
+    }
+
+    try {
+      const config = await effectiveWhatsappConfig(agent);
+      const token = String(config.systemUserAccessToken || "").trim();
+      const messages = incomingMessages(payload);
+      const ai = await geminiFor(agentTenant(agent) || undefined);
+
+      // voice notes → text, written into the payload itself so every screen shows the words
+      for (const m of messages) {
+        if (!m.mediaId || !(m.type === "audio" || m.type === "voice")) continue;
+        let transcript = "";
+        try {
+          if (ai && token) transcript = await transcribeVoice(ai, m.mediaId, token);
+        } catch (e: any) {
+          console.warn("[WA] voice transcription failed:", e?.message);
+        }
+        m.text = transcript ? `🎤 ${transcript}` : "🎤 [הודעה קולית — לא הצלחתי לתמלל]";
+        m.raw.text = { body: m.text };
+      }
+
+      // the copy WhastAppSystem used to get from n8n (it routes by the number, skips repeats itself)
+      await postJson(`${WA_SYSTEM_URL}/api/webhook`, payload).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
+
+      if (!token) {
+        console.error(`[WA] no WhatsApp token for agent ${agent.id} — can't answer`);
+      } else {
+        for (const m of messages) {
+          if (needsNoAnswer(m) || !m.text) continue;
+          if (!(await claimWaMessage(m.id))) continue; // Meta delivered it again
+          try {
+            await answerOnWhatsApp(agent, m, token);
+          } catch (e: any) {
+            console.error("[WA] answering failed:", e?.message || e);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error("[WA] webhook failed:", e?.message || e);
+    }
+    res.status(200).send("ok");
+  });
+
   // GET /api/bot-brain?agentId=… → { brain, lessons, notes }
   app.get("/api/bot-brain", requireAuth, async (req: any, res: any) => {
     const agent = ownAgentOr403(req, res, req.query.agentId);
@@ -3280,6 +3401,7 @@ export async function createApp() {
     const brain = await saveBrain({
       ...current,
       nativeWeb: !!b.nativeWeb,
+      nativeWhatsapp: !!b.nativeWhatsapp,
       qa,
       booking: {
         enabled: !!b.booking?.enabled,
