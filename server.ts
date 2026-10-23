@@ -3107,7 +3107,9 @@ export async function createApp() {
   // it: { type: 'web_bot_message' } to its webhook. The optics (portal business 1) needs no header;
   // another business is called with its signed session, like the CRM does.
   const WA_SYSTEM_URL = (process.env.WHATSAPP_SYSTEM_URL || "https://whatsapp.smartesek.com").replace(/\/$/, "");
-  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string) {
+  // decided: this bot says itself whether a person is needed — WhastAppSystem then alerts the staff only
+  // on handoff (a note_for_staff "handoff" in this turn), never because a reply contains "נבדוק" / "נציג"
+  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string, handoffNote?: string) {
     const tenant = agentTenant(agent);
     const secret = process.env.SSO_SHARED_SECRET;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -3119,7 +3121,10 @@ export async function createApp() {
       await fetch(`${WA_SYSTEM_URL}/api/webhook`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ type: "web_bot_message", session_id: sessionId, direction, text, name }),
+        body: JSON.stringify({
+          type: "web_bot_message", session_id: sessionId, direction, text, name,
+          decided: true, ...(direction === "outgoing" && handoffNote ? { handoff: true, handoffNote } : {}),
+        }),
         signal: AbortSignal.timeout(8000),
       });
     } catch (e: any) {
@@ -3236,7 +3241,10 @@ export async function createApp() {
       const name = out.name || String(body.userName || "");
       await Promise.all([
         reportWebChat(agent, sessionId, name, "incoming", String(body.message || "")),
-        reportWebChat(agent, sessionId, name, "outgoing", [out.reply, ...out.options.map((o) => `• ${o}`)].join("\n")),
+        reportWebChat(
+          agent, sessionId, name, "outgoing", [out.reply, ...out.options.map((o) => `• ${o}`)].join("\n"),
+          out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined
+        ),
       ]);
       res.json({ reply: out.reply, options: out.options, images: out.images, phone: out.phone, name: out.name });
     } catch (e: any) {
