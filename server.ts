@@ -3183,6 +3183,7 @@ export async function createApp() {
         buttonId: body.buttonId ? String(body.buttonId).slice(0, 200) : undefined,
         phone: body.userPhone || body.phone || undefined,
         name: body.userName || body.name || undefined,
+        waContext: body.waContext,
       },
       { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
     );
@@ -3301,6 +3302,7 @@ export async function createApp() {
       buttonId: msg.buttonId,
       userPhone: phone,
       userName: msg.name,
+      waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
     });
     const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
     const ts = Date.now();

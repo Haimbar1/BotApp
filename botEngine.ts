@@ -41,6 +41,8 @@ export interface TurnInput {
   buttonId?: string;
   phone?: string;
   name?: string;
+  // WhatsApp only: what the message answers — a quoted message, a campaign's template button, an ad
+  waContext?: { replyTo?: string; templateButton?: boolean; ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string } };
 }
 
 export interface TurnDeps {
@@ -319,7 +321,37 @@ function customerSection(c: any, phone: string, verified: boolean): string {
   return lines.join("\n");
 }
 
-function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string }): string {
+// What the customer's message answers (Haim, 2026-10-23): someone who got a campaign just replies
+// "כמה זה עולה?" / "מעוניין" / presses its button, without saying what about. The campaign is the
+// context when the customer quoted it, pressed its button, or it is the last thing they got from us
+// (sent in the last 7 days and after the last message in this chat). A click-to-WhatsApp ad, too.
+const CAMPAIGN_DAYS = 7;
+export function replyContext(input: TurnInput, customer: any, lastChatAt: string): string {
+  const lines: string[] = [];
+  const ad = input.waContext?.ad;
+  if (ad && (ad.headline || ad.body)) {
+    lines.push(
+      `הלקוח הגיע עכשיו בלחיצה על מודעה${ad.sourceType ? ` (${ad.sourceType})` : ""}: ${ad.headline ? `«${ad.headline}»` : ""}${ad.body ? ` — ${ad.body}` : ""}. ענה בהקשר המודעה, בלי לשאול על מה הוא פונה.`
+    );
+  }
+  const campaigns = (customer?.campaigns || []).filter((k: any) => k?.sentAt).sort((a: any, b: any) => String(b.sentAt).localeCompare(String(a.sentAt)));
+  const replyTo = input.waContext?.replyTo;
+  const quoted = replyTo ? campaigns.find((k: any) => [k.messageId, k.wamid, k.waMessageId].some((id) => id && String(id) === replyTo)) : null;
+  const latest = campaigns[0];
+  const sentMs = latest ? new Date(latest.sentAt).getTime() : NaN;
+  const fresh = !isNaN(sentMs) && Date.now() - sentMs < CAMPAIGN_DAYS * 864e5 && (!lastChatAt || sentMs > new Date(lastChatAt).getTime());
+  const k = quoted || ((input.waContext?.templateButton || replyTo || fresh) && latest) || null;
+  if (k) {
+    const sure = quoted || input.waContext?.templateButton;
+    lines.push(
+      `ההודעה של הלקוח ${sure ? "היא תגובה" : "היא כנראה תגובה"} להודעת הקמפיין "${k.name || ""}" שנשלחה אליו ב-${String(k.sentAt).slice(0, 10)}:\n«${String(k.text || "").slice(0, 1500)}»\n` +
+        `הלקוח לא יכתוב על מה הוא עונה (למשל "כמה זה עולה?", "מעוניין", "פרטים", "עד מתי?") — ענה בהקשר ההודעה הזו ואל תשאל אותו על מה מדובר. אם ההודעה שלו ברור שלא קשורה לקמפיין — ענה כרגיל.`
+    );
+  }
+  return lines.join("\n");
+}
+
+function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim());
   const lessons = input.lessons.filter((l) => l.active);
@@ -339,6 +371,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       : "",
     "\n# מה ידוע על הלקוח הזה (מה-CRM)",
     customerSection(customer, phone, !web),
+    (() => {
+      const c = replyContext(input, customer, ctx.lastChatAt);
+      return c ? "\n# על מה הלקוח עונה עכשיו\n" + c : "";
+    })(),
     "\n# פתיחה ושם",
     ctx.profileName ? `שם הלקוח בפרופיל ${web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
@@ -706,7 +742,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       const res = await generate(deps.ai, {
         contents,
         config: {
-          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim() }),
+          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim(), lastChatAt: conv?.messages?.at(-1)?.at || "" }),
           tools: [{ functionDeclarations: TOOLS }],
           temperature: 0.4,
         },

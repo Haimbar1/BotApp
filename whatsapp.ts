@@ -19,6 +19,9 @@ export interface IncomingWa {
   buttonId?: string;
   mediaId?: string; // audio / image
   mimeType?: string;
+  replyTo?: string; // the message the customer quoted ("reply" in WhatsApp), Meta's id
+  templateButton?: boolean; // a quick-reply button of a template (a campaign) was pressed
+  ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string }; // came from a click-to-WhatsApp ad
   // the message object inside the payload, so a transcript can be written back into it
   raw: any;
 }
@@ -92,7 +95,17 @@ export function incomingMessages(payload: any): IncomingWa[] {
             text = "[שלח/ה איש קשר]";
             break;
         }
-        out.push({ ...base, text, buttonId, mediaId, mimeType });
+        const ref = m.referral;
+        out.push({
+          ...base,
+          text,
+          buttonId,
+          mediaId,
+          mimeType,
+          replyTo: m.context?.id ? String(m.context.id) : undefined,
+          templateButton: m.type === "button" || undefined,
+          ad: ref ? { headline: ref.headline, body: ref.body, sourceUrl: ref.source_url, sourceType: ref.source_type } : undefined,
+        });
       }
     }
   }
