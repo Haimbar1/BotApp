@@ -2,14 +2,14 @@ import React, { useEffect, useRef, useState } from "react";
 
 // "🤖 הבוט החכם" tab of an agent: the bot answering here instead of n8n (server: botEngine.ts,
 // botStore.ts, /api/bot-brain*). Turn it on for the website widget, its Q&A (filled automatically
-// from the prompt the first time — the owners won't do it themselves), what it learned, the notes it
-// left for the staff, exam booking hours, a test chat and the same knowledge for the voice bot.
+// from the prompt the first time — the owners won't do it themselves), what it learned, exam booking
+// hours (its notes for the staff aren't shown here — Haim, 2026-10-23; they reach the CRM's lead and
+// WhastAppSystem's alerts), a test chat and the same knowledge for the voice bot.
 
 type Request = (url: string, init?: RequestInit) => Promise<Response>;
 
 interface Qa { id: string; q: string; a: string }
 interface Lesson { id: string; text: string; source: "customer" | "owner"; quote?: string; active: boolean; createdAt: string }
-interface Note { id: string; kind: "handoff" | "bug" | "lesson"; text: string; phone?: string; name?: string; sessionId: string; channel: string; createdAt: string; doneAt?: string }
 interface Brain {
   agentId: string;
   nativeWeb: boolean;
@@ -24,11 +24,6 @@ interface Brain {
 interface ChatLine { role: "user" | "bot"; text: string; options?: string[] }
 
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
-const NOTE_STYLE: Record<Note["kind"], { label: string; cls: string }> = {
-  handoff: { label: "🙋 לחזור ללקוח", cls: "border-amber-500/40 bg-amber-500/10 text-amber-100" },
-  bug: { label: "🐞 תקלה בבוט", cls: "border-red-500/50 bg-red-500/10 text-red-100" },
-  lesson: { label: "🧠 הבוט למד", cls: "border-sky-500/40 bg-sky-500/10 text-sky-100" },
-};
 
 const card = "bg-[#0C0D12] rounded-xl border border-slate-800 p-4 flex flex-col gap-3";
 const input = "w-full bg-[#11131a] border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500";
@@ -42,7 +37,6 @@ const newQaId = () => `qa_${Math.random().toString(36).slice(2, 10)}`;
 export default function NativeBotPanel({ agentId, request }: { agentId: string; request: Request }) {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [notes, setNotes] = useState<Note[]>([]);
   const [crmLinked, setCrmLinked] = useState(true);
   const [botId, setBotId] = useState("");
   const [sameBotId, setSameBotId] = useState<string[]>([]);
@@ -52,7 +46,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [autofilling, setAutofilling] = useState(false);
-  const [showDone, setShowDone] = useState(false);
   const [newLesson, setNewLesson] = useState("");
   const [voice, setVoice] = useState("");
   const autofillTried = useRef<string>("");
@@ -68,7 +61,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     }
     setBrain(d.brain);
     setLessons(d.lessons || []);
-    setNotes(d.notes || []);
     setCrmLinked(d.crmLinked !== false);
     setBotId(d.botId || "");
     setSameBotId(d.sameBotId || []);
@@ -157,19 +149,12 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     if (d.success) setLessons(d.lessons || []);
   };
 
-  const markDone = async (n: Note, done: boolean) => {
-    await request("/api/bot-notes/done", { method: "POST", body: JSON.stringify({ agentId, id: n.id, done }) });
-    setNotes(notes.map((x) => (x.id === n.id ? { ...x, doneAt: done ? new Date().toISOString() : undefined } : x)));
-  };
-
   const loadVoice = async () => {
     const r = await request(`/api/bot-brain/voice-prompt?agentId=${encodeURIComponent(agentId)}`);
     const d: any = await json(r);
     setVoice(d.prompt || "");
   };
 
-  const shownNotes = notes.filter((n) => showDone || !n.doneAt);
-  const openCount = notes.filter((n) => !n.doneAt && n.kind !== "lesson").length;
 
   return (
     <div className="flex flex-col gap-4 pt-4" dir="rtl">
@@ -215,37 +200,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       {message && <div className="text-[11px] text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{message}</div>}
 
       {brain && botId && <WhatsAppCard botId={botId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeWhatsapp: on })} />}
-
-      {/* Notes for the staff */}
-      <div className={card}>
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-black text-white">📌 הערות לצוות {openCount > 0 && <span className="text-amber-300">({openCount} פתוחות)</span>}</h4>
-          <label className="text-[10px] text-slate-400 flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> להציג גם שטופלו
-          </label>
-        </div>
-        {shownNotes.length === 0 ? (
-          <p className="text-[11px] text-slate-500">אין הערות פתוחות. כשהבוט מבטיח ללקוח שיחזרו אליו, או כשלקוח מדווח על תקלה בבוט — זה יופיע כאן (וגם בכרטיס הלקוח ב-CRM).</p>
-        ) : (
-          <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
-            {shownNotes.map((n) => (
-              <div key={n.id} className={`border rounded-lg px-3 py-2 text-[11px] flex items-start justify-between gap-3 ${NOTE_STYLE[n.kind].cls} ${n.doneAt ? "opacity-50" : ""}`}>
-                <div>
-                  <div className="font-black">
-                    {NOTE_STYLE[n.kind].label} · {n.name || "לקוח"} {n.phone ? `· ${n.phone}` : ""} · <span className="font-normal">{showDate(n.createdAt)}</span>
-                  </div>
-                  <div className="mt-0.5 whitespace-pre-wrap">{n.text}</div>
-                </div>
-                {n.kind !== "lesson" && (
-                  <button type="button" className={`${btn} border-slate-600 text-slate-200 shrink-0`} onClick={() => markDone(n, !n.doneAt)}>
-                    {n.doneAt ? "החזר" : "טופל ✓"}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Q&A */}
       <div className={card}>

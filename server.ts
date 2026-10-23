@@ -26,7 +26,7 @@ import {
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, normalizeIsraeliPhone, type Channel, type CrmCaller } from "./botEngine.js";
-import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, markRead, type IncomingWa } from "./whatsapp.js";
+import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -3183,6 +3183,7 @@ export async function createApp() {
         buttonId: body.buttonId ? String(body.buttonId).slice(0, 200) : undefined,
         phone: body.userPhone || body.phone || undefined,
         name: body.userName || body.name || undefined,
+        waContext: body.waContext,
       },
       { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
     );
@@ -3301,6 +3302,7 @@ export async function createApp() {
       buttonId: msg.buttonId,
       userPhone: phone,
       userName: msg.name,
+      waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
     });
     const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
     const ts = Date.now();
@@ -3355,18 +3357,24 @@ export async function createApp() {
     // Everything that can run side by side does (Haim, 2026-10-23: "the answer comes slowly"); the
     // response waits for all of it — on Vercel nothing runs after it.
     const background: Promise<unknown>[] = [arrival];
+    const typing = new Map<string, () => void>();
     try {
       const [config, ai] = await Promise.all([effectiveWhatsappConfig(agent), geminiFor(agentTenant(agent) || undefined)]);
       const token = String(config.systemUserAccessToken || "").trim();
 
       // which messages to answer (Meta re-delivers), and "typing…" for them right away
       const toAnswer: IncomingWa[] = [];
+
       if (token) {
         for (const m of messages) {
           if (needsNoAnswer(m) || !(m.text || m.mediaId)) continue;
           if (await claimWaMessage(m.id)) toAnswer.push(m);
         }
-        for (const m of toAnswer) background.push(markRead(m.phoneNumberId, token, m.id));
+        for (const m of toAnswer) {
+          const t = keepTyping(m.phoneNumberId, token, m.id);
+          typing.set(m.id, t.stop);
+          background.push(t.first);
+        }
       } else {
         console.error(`[WA] no WhatsApp token for agent ${agent.id} — can't answer`);
       }
@@ -3401,11 +3409,14 @@ export async function createApp() {
           await answerOnWhatsApp(agent, m, token, copied, transcribeMs.get(m.id));
         } catch (e: any) {
           console.error("[WA] answering failed:", e?.message || e);
+        } finally {
+          typing.get(m.id)?.();
         }
       }
     } catch (e: any) {
       console.error("[WA] webhook failed:", e?.message || e);
     }
+    for (const stop of typing.values()) stop();
     await Promise.all(background);
     res.status(200).send("ok");
   });

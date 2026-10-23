@@ -41,6 +41,8 @@ export interface TurnInput {
   buttonId?: string;
   phone?: string;
   name?: string;
+  // WhatsApp only: what the message answers — a quoted message, a campaign's template button, an ad
+  waContext?: { replyTo?: string; templateButton?: boolean; ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string } };
 }
 
 export interface TurnDeps {
@@ -319,7 +321,37 @@ function customerSection(c: any, phone: string, verified: boolean): string {
   return lines.join("\n");
 }
 
-function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string }): string {
+// What the customer's message answers (Haim, 2026-10-23): someone who got a campaign just replies
+// "כמה זה עולה?" / "מעוניין" / presses its button, without saying what about. The campaign is the
+// context when the customer quoted it, pressed its button, or it is the last thing they got from us
+// (sent in the last 7 days and after the last message in this chat). A click-to-WhatsApp ad, too.
+const CAMPAIGN_DAYS = 7;
+export function replyContext(input: TurnInput, customer: any, lastChatAt: string): string {
+  const lines: string[] = [];
+  const ad = input.waContext?.ad;
+  if (ad && (ad.headline || ad.body)) {
+    lines.push(
+      `הלקוח הגיע עכשיו בלחיצה על מודעה${ad.sourceType ? ` (${ad.sourceType})` : ""}: ${ad.headline ? `«${ad.headline}»` : ""}${ad.body ? ` — ${ad.body}` : ""}. ענה בהקשר המודעה, בלי לשאול על מה הוא פונה.`
+    );
+  }
+  const campaigns = (customer?.campaigns || []).filter((k: any) => k?.sentAt).sort((a: any, b: any) => String(b.sentAt).localeCompare(String(a.sentAt)));
+  const replyTo = input.waContext?.replyTo;
+  const quoted = replyTo ? campaigns.find((k: any) => [k.messageId, k.wamid, k.waMessageId].some((id) => id && String(id) === replyTo)) : null;
+  const latest = campaigns[0];
+  const sentMs = latest ? new Date(latest.sentAt).getTime() : NaN;
+  const fresh = !isNaN(sentMs) && Date.now() - sentMs < CAMPAIGN_DAYS * 864e5 && (!lastChatAt || sentMs > new Date(lastChatAt).getTime());
+  const k = quoted || ((input.waContext?.templateButton || replyTo || fresh) && latest) || null;
+  if (k) {
+    const sure = quoted || input.waContext?.templateButton;
+    lines.push(
+      `ההודעה של הלקוח ${sure ? "היא תגובה" : "היא כנראה תגובה"} להודעת הקמפיין "${k.name || ""}" שנשלחה אליו ב-${String(k.sentAt).slice(0, 10)}:\n«${String(k.text || "").slice(0, 1500)}»\n` +
+        `הלקוח לא יכתוב על מה הוא עונה (למשל "כמה זה עולה?", "מעוניין", "פרטים", "עד מתי?") — ענה בהקשר ההודעה הזו ואל תשאל אותו על מה מדובר. אם ההודעה שלו ברור שלא קשורה לקמפיין — ענה כרגיל.`
+    );
+  }
+  return lines.join("\n");
+}
+
+function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim());
   const lessons = input.lessons.filter((l) => l.active);
@@ -339,6 +371,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       : "",
     "\n# מה ידוע על הלקוח הזה (מה-CRM)",
     customerSection(customer, phone, !web),
+    (() => {
+      const c = replyContext(input, customer, ctx.lastChatAt);
+      return c ? "\n# על מה הלקוח עונה עכשיו\n" + c : "";
+    })(),
     "\n# פתיחה ושם",
     ctx.profileName ? `שם הלקוח בפרופיל ${web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
@@ -459,6 +495,16 @@ function needsConfirmation(st: TurnState, key: string, ask: string): any | null 
   return { ok: false, needs_confirmation: true, instruction: ask };
 }
 
+// The buttons under a confirmation question, set here and not by the model (Haim, 2026-10-23: it
+// wrote "כן, תעדיף להזיז" / "לא, לבטל" — cancel the appointment, or the request to move it?).
+// Each says exactly what happens; WhatsApp cuts a button at 24 characters.
+const CONFIRM_OPTIONS: Record<string, string[]> = {
+  book: ["✅ כן, לקבוע את התור", "🔄 לבחור מועד אחר"],
+  move: ["✅ כן, להעביר את התור", "🔄 לבחור מועד אחר", "↩️ להשאיר את התור הקיים"],
+  cancel: ["🗑️ כן, לבטל את התור", "↩️ לא, להשאיר את התור"],
+  voice: ["✅ כן, הבנת נכון", "✏️ לא, אכתוב שוב"],
+};
+
 // Haim, 2026-10-23: the bot passed the chat to the staff when the customer only said "thank you"
 // (the model closes with "someone will get back to you" and the prompt makes that a handoff, or it
 // finishes a handoff it was told to hold for a voice note). A thank-you / goodbye / ok is never a
@@ -467,7 +513,7 @@ const JUST_CLOSING = /^(?:תודה(?: רבה| רבה לך| לך)?|תודה רב�
 const SAID_YES = /^(?:✅\s*)?(?:כן|נכון|בדיוק|כן,? נכון|נכון מאוד|כן כן|אכן|yes|yep|👍)(?:[\s,!.].*)?$/i;
 
 const VOICE_ASK =
-  "זו הודעה קולית, והתמלול עלול לטעות. אל תפעל לפיה עדיין: כתוב ללקוח בקצרה מה הבנת (\"הבנתי שאמרת ש…\") ושאל אם הבנת נכון, עם options \"✅ כן, נכון\" ו-\"❌ לא, התכוונתי…\". רק אחרי שיאשר — תפעל.";
+  "זו הודעה קולית, והתמלול עלול לטעות. אל תפעל לפיה עדיין: כתוב ללקוח בקצרה מה הבנת (\"הבנתי שאמרת ש…\") ושאל אם הבנת נכון. הכפתורים נקבעים אוטומטית. רק אחרי שיאשר — תפעל.";
 
 async function readCustomer(deps: TurnDeps, phone: string): Promise<any> {
   if (!deps.crm || !phone) return null;
@@ -545,11 +591,15 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1).includes(start)) {
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
-      const key = name === "book_appointment" ? `book|${start}` : `move|${String(args?.exam_id || "")}|${start}`;
+      const examId = String(args?.exam_id || "");
+      const key = name === "book_appointment" ? `book|${start}` : `move|${examId}|${start}`;
+      const was = st.customer?.upcomingExams?.find((x: any) => String(x.id) === examId)?.start;
       const ask = needsConfirmation(
         st,
         key,
-        `עוד לא נקבע כלום. שאל את הלקוח לאשר במפורש: \"${name === "book_appointment" ? "לקבוע לך " : "להעביר את התור ל"}*${showSlot(start)}*?\" עם options \"✅ כן, ${name === "book_appointment" ? "לקבוע" : "להעביר"}\" ו-\"🔄 מועד אחר\". אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
+        name === "book_appointment"
+          ? `עוד לא נקבע כלום. שאל את הלקוח: \"לקבוע לך תור ל*${showSlot(start)}*?\". הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.book.join(" / ")}). אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
+          : `עוד לא הוזז כלום. שאל את הלקוח: \"להעביר את התור שלך${was ? ` מ*${showSlot(was)}*` : ""} ל*${showSlot(start)}*?\". הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.move.join(" / ")}). אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
       );
       if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
@@ -564,7 +614,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
     case "cancel_appointment": {
       if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח" };
       if (!deps.crm) return { ok: false, error: "אין גישה ליומן" };
-      const ask = needsConfirmation(st, `cancel|${String(args?.exam_id || "")}`, 'עוד לא בוטל כלום. שאל את הלקוח לאשר במפורש שהוא רוצה לבטל את התור (כתוב את המועד), עם options "✅ כן, לבטל" ו-"↩️ לא, להשאיר". אחרי שיאשר — קרא שוב.');
+      const ask = needsConfirmation(st, `cancel|${String(args?.exam_id || "")}`, `עוד לא בוטל כלום. שאל את הלקוח: \"לבטל את התור שלך ל*…*?\" (כתוב את המועד). הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.cancel.join(" / ")}). אחרי שיאשר — קרא שוב.`);
       if (ask) return ask;
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — התור לא בוטל באמת" };
       const res = await deps.crm({ action: "cancel", phone: st.phone, examId: String(args?.exam_id || "") });
@@ -692,7 +742,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       const res = await generate(deps.ai, {
         contents,
         config: {
-          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim() }),
+          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim(), lastChatAt: conv?.messages?.at(-1)?.at || "" }),
           tools: [{ functionDeclarations: TOOLS }],
           temperature: 0.4,
         },
@@ -725,6 +775,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     answer = parseBotAnswer(finalText);
     if (!answer.reply) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
   }
+  if (st.pending) answer.options = CONFIRM_OPTIONS[st.pending.split("|")[0]] || answer.options;
   answer.reply = tidyText(answer.reply);
 
   await appendToConversation(

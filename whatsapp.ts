@@ -19,6 +19,9 @@ export interface IncomingWa {
   buttonId?: string;
   mediaId?: string; // audio / image
   mimeType?: string;
+  replyTo?: string; // the message the customer quoted ("reply" in WhatsApp), Meta's id
+  templateButton?: boolean; // a quick-reply button of a template (a campaign) was pressed
+  ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string }; // came from a click-to-WhatsApp ad
   // the message object inside the payload, so a transcript can be written back into it
   raw: any;
 }
@@ -92,7 +95,17 @@ export function incomingMessages(payload: any): IncomingWa[] {
             text = "[שלח/ה איש קשר]";
             break;
         }
-        out.push({ ...base, text, buttonId, mediaId, mimeType });
+        const ref = m.referral;
+        out.push({
+          ...base,
+          text,
+          buttonId,
+          mediaId,
+          mimeType,
+          replyTo: m.context?.id ? String(m.context.id) : undefined,
+          templateButton: m.type === "button" || undefined,
+          ad: ref ? { headline: ref.headline, body: ref.body, sourceUrl: ref.source_url, sourceType: ref.source_type } : undefined,
+        });
       }
     }
   }
@@ -212,4 +225,20 @@ export async function markRead(phoneNumberId: string, token: string, messageId: 
   } catch {
     /* only cosmetic */
   }
+}
+
+// "typing…" for as long as the bot works: Meta drops it after 25s, and a voice note (download,
+// transcription, then the answer) often takes longer (Haim, 2026-10-23). Renewed every 20s until
+// stop() — call it once the answer is sent.
+export function keepTyping(phoneNumberId: string, token: string, messageId: string): { first: Promise<void>; stop: () => void } {
+  const first = markRead(phoneNumberId, token, messageId);
+  const timer = setInterval(() => void markRead(phoneNumberId, token, messageId), 20000);
+  const stopAt = setTimeout(() => clearInterval(timer), 120000); // never longer than 2 minutes
+  return {
+    first,
+    stop: () => {
+      clearInterval(timer);
+      clearTimeout(stopAt);
+    },
+  };
 }
