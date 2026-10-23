@@ -13,6 +13,7 @@ interface Note { id: string; kind: "handoff" | "bug" | "lesson"; text: string; p
 interface Brain {
   agentId: string;
   nativeWeb: boolean;
+  nativeWhatsapp?: boolean;
   qa: Qa[];
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
@@ -210,6 +211,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       </div>
 
       {message && <div className="text-[11px] text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{message}</div>}
+
+      {brain && botId && <WhatsAppCard botId={botId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeWhatsapp: on })} />}
 
       {/* Notes for the staff */}
       <div className={card}>
@@ -441,6 +444,82 @@ function TestChat({ agentId, request, onNotes }: { agentId: string; request: Req
           שלח
         </button>
       </div>
+    </div>
+  );
+}
+
+// WhatsApp: (1) the number's messages come through BotApp — n8n still answers, nothing changes for
+// the customers; (2) the switch: the new bot answers instead of n8n (server: /api/webhooks/whatsapp).
+const BOTAPP_WEBHOOK = "https://app.smartesek.com/api/webhooks/whatsapp";
+const BOTAPP_VERIFY_TOKEN = "smartesek-botapp";
+
+function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: string; brain: Brain; saving: boolean; request: Request; onSwitch: (on: boolean) => void }) {
+  const [webhook, setWebhook] = useState<string | null>(null);
+  const [connected, setConnected] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+
+  const load = async () => {
+    const r = await request(`/api/whatsapp/config?botId=${encodeURIComponent(botId)}`);
+    const d: any = await r.json().catch(() => ({}));
+    setWebhook(String(d?.config?.webhookCallbackUrl || ""));
+    setConnected(!!(d?.config?.phoneNumberId && d?.config?.systemUserAccessToken));
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [botId]);
+
+  const throughBotApp = webhook === BOTAPP_WEBHOOK;
+
+  const route = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await request("/api/whatsapp/subscribe-webhook", { method: "POST", body: JSON.stringify({ botId, callbackUrl: BOTAPP_WEBHOOK, verifyToken: BOTAPP_VERIFY_TOKEN }) });
+      const d: any = await r.json().catch(() => ({}));
+      if (!d.success) throw new Error(d.message || "החיבור נכשל");
+      setNote("✓ ההודעות מהוואטסאפ עוברות עכשיו דרך BotApp (בינתיים n8n ממשיך לענות כרגיל)");
+      await load();
+    } catch (e: any) {
+      setNote(e?.message || "החיבור נכשל");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={card}>
+      <h4 className="text-xs font-black text-white">💬 וואטסאפ</h4>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px]">
+        <div className="text-slate-300">
+          <b>שלב 1 —</b> ההודעות מהמספר עוברות דרך BotApp:{" "}
+          {webhook === null ? "בודק…" : throughBotApp ? <span className="text-emerald-300 font-bold">כן ✓</span> : <span className="text-amber-300 font-bold">עדיין ישר ל-n8n</span>}
+          <div className="text-[10.5px] text-slate-500">לא משנה כלום ללקוחות — כל עוד שלב 2 כבוי, n8n ממשיך לענות כמו היום.</div>
+        </div>
+        {!throughBotApp && (
+          <button type="button" disabled={busy || webhook === null} className={`${btn} border-sky-500 text-white bg-sky-600 shrink-0`} onClick={route}>
+            {busy ? "מחבר…" : "חבר את הוואטסאפ דרך BotApp"}
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] border-t border-slate-800 pt-2">
+        <div className="text-slate-300">
+          <b>שלב 2 —</b> מי עונה ללקוחות בוואטסאפ: {brain.nativeWhatsapp ? <span className="text-emerald-300 font-bold">🟢 הבוט החדש</span> : <span className="font-bold">⚪ הבוט הישן (n8n)</span>}
+          <div className="text-[10.5px] text-slate-500">הבוט החדש גם מתמלל הודעות קוליות — התמלול מופיע כטקסט (🎤) בכל מקום שמציג את השיחה.</div>
+        </div>
+        <button
+          type="button"
+          disabled={saving || (!brain.nativeWhatsapp && !throughBotApp)}
+          title={!brain.nativeWhatsapp && !throughBotApp ? "קודם שלב 1" : ""}
+          onClick={() => onSwitch(!brain.nativeWhatsapp)}
+          className={`${btn} px-4 py-2 shrink-0 ${brain.nativeWhatsapp ? "border-slate-600 text-slate-200 bg-slate-800/60" : "border-emerald-500 text-white bg-emerald-600"}`}
+        >
+          {brain.nativeWhatsapp ? "↩ החזר את הוואטסאפ ל-n8n" : "🚀 העבר את הוואטסאפ לבוט החדש"}
+        </button>
+      </div>
+      {!connected && webhook !== null && <div className="text-[10.5px] text-amber-300">לבוט הזה לא נראה חיבור וואטסאפ (לשונית "וואטסאפ הגדרות").</div>}
+      {note && <div className="text-[11px] text-sky-200">{note}</div>}
     </div>
   );
 }
