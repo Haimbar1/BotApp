@@ -29,6 +29,8 @@ export interface BotBrain {
   nativeWeb: boolean;
   // the business's WhatsApp number is answered here instead of n8n (/api/webhooks/whatsapp)
   nativeWhatsapp?: boolean;
+  // when a customer's WhatsApp message last reached /api/webhooks/whatsapp (proof the number is routed here)
+  lastWaMessageAt?: string;
   qa: BotQa[];
   booking: BookingHours;
   // free text the owner adds for the voice bot only
@@ -221,6 +223,24 @@ export async function switchedOnAgentIds(): Promise<string[]> {
   await d.ready;
   const { rows } = await d.pool.query("SELECT agent_id FROM botapp_bot_brain WHERE (data->>'nativeWeb')::boolean");
   return rows.map((r: any) => r.agent_id);
+}
+
+// A customer's WhatsApp message reached BotApp for this agent (shown in the bot's WhatsApp card)
+export async function noteWaArrival(agentId: string): Promise<void> {
+  const at = new Date().toISOString();
+  const d = db();
+  if (!d) {
+    const s = local();
+    s.brains[agentId] = { ...withDefaults(agentId, s.brains[agentId]), lastWaMessageAt: at };
+    saveLocal();
+    return;
+  }
+  await d.ready;
+  await d.pool.query(
+    `INSERT INTO botapp_bot_brain (agent_id, data, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (agent_id) DO UPDATE SET data = botapp_bot_brain.data || $3::jsonb`,
+    [agentId, JSON.stringify({ ...emptyBrain(agentId), lastWaMessageAt: at }), JSON.stringify({ lastWaMessageAt: at })]
+  );
 }
 
 // ---------- WhatsApp: each incoming message answered once ----------

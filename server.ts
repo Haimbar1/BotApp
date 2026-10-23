@@ -27,7 +27,7 @@ import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig,
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, normalizeIsraeliPhone, type Channel, type CrmCaller } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, markRead, type IncomingWa } from "./whatsapp.js";
-import { switchedOnAgentIds, claimWaMessage, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, claimWaMessage, noteWaArrival, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3323,6 +3323,9 @@ export async function createApp() {
     const { phoneNumberId, displayPhone } = payloadNumber(payload);
     const agent = phoneNumberId ? (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone)).catch(() => ({ agent: null }))).agent : null;
     const brain = agent ? await getBrain(String(agent.id)).catch(() => null) : null;
+
+    // proof for the bot's screen that this number's messages arrive here
+    if (agent && incomingMessages(payload).length) await noteWaArrival(String(agent.id)).catch(() => {});
 
     // Not switched (or not ours): on to n8n, untouched
     if (!agent || !brain?.nativeWhatsapp) {

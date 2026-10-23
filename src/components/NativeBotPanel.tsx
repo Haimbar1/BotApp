@@ -14,6 +14,7 @@ interface Brain {
   agentId: string;
   nativeWeb: boolean;
   nativeWhatsapp?: boolean;
+  lastWaMessageAt?: string;
   qa: Qa[];
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
@@ -496,6 +497,11 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
           <b>שלב 1 —</b> ההודעות מהמספר עוברות דרך BotApp:{" "}
           {webhook === null ? "בודק…" : throughBotApp ? <span className="text-emerald-300 font-bold">כן ✓</span> : <span className="text-amber-300 font-bold">עדיין ישר ל-n8n</span>}
           <div className="text-[10.5px] text-slate-500">לא משנה כלום ללקוחות — כל עוד שלב 2 כבוי, n8n ממשיך לענות כמו היום.</div>
+          <div className={`text-[10.5px] font-bold ${brain.lastWaMessageAt ? "text-emerald-300" : "text-amber-300"}`}>
+            {brain.lastWaMessageAt
+              ? `הודעת וואטסאפ אחרונה שהגיעה ל-BotApp: ${showDate(brain.lastWaMessageAt)} — המסלול עובד`
+              : "עוד לא הגיעה ל-BotApp אף הודעת וואטסאפ — שלחו הודעה למספר ורעננו את הדף"}
+          </div>
         </div>
         {!throughBotApp && (
           <button type="button" disabled={busy || webhook === null} className={`${btn} border-sky-500 text-white bg-sky-600 shrink-0`} onClick={route}>
