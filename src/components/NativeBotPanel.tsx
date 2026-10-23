@@ -43,6 +43,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [crmLinked, setCrmLinked] = useState(true);
   const [botId, setBotId] = useState("");
   const [sameBotId, setSameBotId] = useState<string[]>([]);
+  // what the website itself gets from /api/public/bot-engine for this bot id right now
+  const [siteSees, setSiteSees] = useState<{ native: boolean; matches?: { agentId: string; name: string; nativeWeb: any }[] } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -68,7 +70,18 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     setBotId(d.botId || "");
     setSameBotId(d.sameBotId || []);
     setDirty(false);
+    checkSite(d.botId || "");
     return d.brain as Brain;
+  };
+
+  const checkSite = async (id: string) => {
+    if (!id) return setSiteSees(null);
+    try {
+      const r = await fetch(`/api/public/bot-engine?bot_id=${encodeURIComponent(id)}&debug=1`, { cache: "no-store" });
+      setSiteSees(await r.json());
+    } catch {
+      setSiteSees(null);
+    }
   };
 
   const save = async (next: Brain, quiet = false) => {
@@ -80,6 +93,7 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       setBrain(d.brain);
       setDirty(false);
       if (!quiet) setMessage("נשמר ✓");
+      checkSite(botId);
     } catch (e: any) {
       setMessage(e?.message || "השמירה נכשלה");
     } finally {
@@ -95,6 +109,9 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       const r = await request("/api/bot-brain/autofill", { method: "POST", body: JSON.stringify({ agentId }) });
       const d: any = await json(r);
       if (!r.ok || !d.success) throw new Error(d.message || "המילוי האוטומטי נכשל");
+      // the AI takes a while — merge into what is stored NOW (the switch may have been flipped meanwhile)
+      const fresh: any = await json(await request(`/api/bot-brain?agentId=${encodeURIComponent(agentId)}`));
+      if (fresh?.brain) current = fresh.brain;
       const known = new Set(current.qa.map((x) => x.q.trim()));
       const added = (d.qa || []).filter((x: any) => !known.has(String(x.q).trim())).map((x: any) => ({ id: newQaId(), q: x.q, a: x.a }));
       const hours = Object.keys(current.booking.hours || {}).some((k) => current.booking.hours[k]) ? current.booking.hours : { ...current.booking.hours, ...(d.hours || {}) };
@@ -165,6 +182,12 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
             מזהה הבוט באתר: <span dir="ltr" className="font-mono text-slate-300">{botId || "—"}</span> (זה ה-data-bot-id בקוד ההטמעה)
             {sameBotId.length > 0 && <span className="text-amber-300"> · שים לב: גם {sameBotId.join(", ")} עם אותו מזהה — האתר עונה מהבוט שהמתג שלו דלוק</span>}
           </p>
+          {siteSees && (
+            <p className={`text-[11px] mt-1 font-bold ${siteSees.native ? "text-emerald-300" : "text-amber-300"}`}>
+              האתר רואה כרגע: {siteSees.native ? "🟢 הבוט החדש עונה" : "⚪ n8n עונה"}
+              {!siteSees.native && brain.nativeWeb && " — למרות שהמתג דלוק. העתק את השורה הזו לקלוד: " + JSON.stringify(siteSees)}
+            </p>
+          )}
         </div>
         <label className="flex items-center gap-2 shrink-0 cursor-pointer select-none">
           <input

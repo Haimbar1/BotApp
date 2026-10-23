@@ -208,6 +208,15 @@ export async function saveBrain(brain: BotBrain): Promise<BotBrain> {
   return next;
 }
 
+// The agents whose website switch is on (for diagnosing "the site still goes to n8n")
+export async function switchedOnAgentIds(): Promise<string[]> {
+  const d = db();
+  if (!d) return Object.values(local().brains).filter((b) => b.nativeWeb).map((b) => b.agentId);
+  await d.ready;
+  const { rows } = await d.pool.query("SELECT agent_id FROM botapp_bot_brain WHERE (data->>'nativeWeb')::boolean");
+  return rows.map((r: any) => r.agent_id);
+}
+
 // ---------- lessons ----------
 
 export async function listLessons(agentId: string): Promise<BotLesson[]> {
