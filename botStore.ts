@@ -31,6 +31,7 @@ export interface BotEvent {
   to?: string; // YYYY-MM-DD, the last day (empty = one day)
   title: string;
   details?: string;
+  place?: string; // where — a customer asking "when are you near me?" is matched to it
   // closed = no appointments those days; hours = these hours instead of the weekday's; info = only for the bot to know
   effect: "closed" | "hours" | "info";
   hours?: string; // for "hours": "HH:mm-HH:mm[, …]"
