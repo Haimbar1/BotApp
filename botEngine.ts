@@ -299,7 +299,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
     bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). אחרי שהלקוח בחר ואישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- בכל פעם שאתה אומר ללקוח שמישהו יחזור אליו / יבדוק / יעדכן — חובה לקרוא ל-note_for_staff עם kind=handoff ותיאור קצר של מה צריך לעשות.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
@@ -308,7 +308,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
     "- options: עד 10 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
-    web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול של הודעה קולית ששלח.",
+    web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול אוטומטי של הודעה קולית ששלח — והתמלול עלול לטעות. בשאלה פשוטה (מחיר, שעות) — ענה, ופתח ב\"הבנתי שאתה שואל…\" כדי שיוכל לתקן. אם ההודעה מבקשת פעולה (תור, ביטול, שיחזרו אליו), מתארת בעיה / כאב / תלונה, או נשמעת מוזרה ולא מתאימה לשיחה — אל תפעל ואל תעביר לצוות: כתוב מה הבנת ושאל אם הבנת נכון. אם כתוב [לא ברור] — בקש בנימוס לכתוב או להקליט שוב.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
     "- הדגשה: *כוכבית אחת צמודה למילים משני הצדדים*, למשל *800 ₪* או *בדיקת ראייה חינם* — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
@@ -387,7 +387,23 @@ interface TurnState {
   customer: any;
   notes: BotNote[];
   slotsOffered: Set<string>;
+  confirmed: string; // what the bot asked to confirm in its last message (the customer answers now)
+  pending: string; // what this answer asks the customer to confirm
+  voice: boolean; // this message is a transcribed voice note
 }
+
+// Haim, 2026-10-23: the bot booked a day the customer only mentioned, and acted on a voice note it
+// heard wrong ("it hurts" — never said). So booking / moving / cancelling, and acting on a voice note
+// (a note for the staff, a lesson), go in two turns: first the bot says what it's about to do / what
+// it heard and asks, and only on the customer's next message is the action allowed.
+function needsConfirmation(st: TurnState, key: string, ask: string): any | null {
+  if (st.confirmed === key) return null;
+  st.pending = key;
+  return { ok: false, needs_confirmation: true, instruction: ask };
+}
+
+const VOICE_ASK =
+  "זו הודעה קולית, והתמלול עלול לטעות. אל תפעל לפיה עדיין: כתוב ללקוח בקצרה מה הבנת (\"הבנתי שאמרת ש…\") ושאל אם הבנת נכון, עם options \"✅ כן, נכון\" ו-\"❌ לא, התכוונתי…\". רק אחרי שיאשר — תפעל.";
 
 async function readCustomer(deps: TurnDeps, phone: string): Promise<any> {
   if (!deps.crm || !phone) return null;
@@ -465,6 +481,13 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1).includes(start)) {
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
+      const key = name === "book_appointment" ? `book|${start}` : `move|${String(args?.exam_id || "")}|${start}`;
+      const ask = needsConfirmation(
+        st,
+        key,
+        `עוד לא נקבע כלום. שאל את הלקוח לאשר במפורש: \"${name === "book_appointment" ? "לקבוע לך " : "להעביר את התור ל"}*${showSlot(start)}*?\" עם options \"✅ כן, ${name === "book_appointment" ? "לקבוע" : "להעביר"}\" ו-\"🔄 מועד אחר\". אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
+      );
+      if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
         const res = await deps.crm({ action: "book", phone: st.phone, name: String(args?.customer_name || st.name || "לקוח"), start, minutes: input.brain.booking.slotMinutes });
@@ -477,11 +500,14 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
     case "cancel_appointment": {
       if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח" };
       if (!deps.crm) return { ok: false, error: "אין גישה ליומן" };
+      const ask = needsConfirmation(st, `cancel|${String(args?.exam_id || "")}`, 'עוד לא בוטל כלום. שאל את הלקוח לאשר במפורש שהוא רוצה לבטל את התור (כתוב את המועד), עם options "✅ כן, לבטל" ו-"↩️ לא, להשאיר". אחרי שיאשר — קרא שוב.');
+      if (ask) return ask;
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — התור לא בוטל באמת" };
       const res = await deps.crm({ action: "cancel", phone: st.phone, examId: String(args?.exam_id || "") });
       return { ok: true, cancelled: res.start ? showSlot(res.start) : undefined };
     }
     case "note_for_staff": {
+      if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
       const kind: BotNoteKind = args?.kind === "bug" ? "bug" : "handoff";
       const text = String(args?.text || "").trim().slice(0, 1000);
       if (!text) return { ok: false };
@@ -491,6 +517,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       return { ok: true };
     }
     case "learn_from_correction": {
+      if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
       const lesson = String(args?.lesson || "").trim().slice(0, 500);
       if (!lesson) return { ok: false };
       // the owner teaching in the test chat is trusted; a customer's correction is kept too, and the
@@ -536,12 +563,19 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     customer: null,
     notes: [],
     slotsOffered: new Set(),
+    confirmed: "",
+    pending: "",
+    voice: false,
   };
   if (st.phone) {
     st.customer = await readCustomer(deps, st.phone);
     if (st.customer?.name && !st.name) st.name = st.customer.name;
   }
   const userText = String(input.text || "").trim();
+  const lastBot = [...(conv?.messages || [])].reverse().find((m) => m.role === "bot");
+  st.confirmed = lastBot?.pending || "";
+  // a voice note the customer already confirmed we understood (or a "yes" to it) is acted on
+  st.voice = userText.startsWith("🎤") && st.confirmed !== "voice";
   const today = israelNow().date;
   const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
@@ -590,7 +624,14 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
 
   await appendToConversation(
     { botId, sessionId: input.sessionId, agentId: String(input.agent.id), channel: input.channel, phone: st.phone, name: st.name, test: input.channel === "test" },
-    [userMsg, msg("bot", answer.reply, { ...(answer.options.length ? { options: answer.options } : {}), ...(answer.images.length ? { images: answer.images } : {}) })]
+    [
+      userMsg,
+      msg("bot", answer.reply, {
+        ...(answer.options.length ? { options: answer.options } : {}),
+        ...(answer.images.length ? { images: answer.images } : {}),
+        ...(st.pending ? { pending: st.pending } : {}),
+      }),
+    ]
   );
   return { ...answer, phone: st.phone || undefined, name: st.name || undefined, notes: st.notes };
 }

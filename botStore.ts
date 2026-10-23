@@ -76,6 +76,9 @@ export interface ConvMessage {
   options?: string[];
   images?: string[];
   buttonId?: string;
+  // the bot asked the customer to confirm this action (book / move / cancel / a voice note it heard);
+  // the action itself is only allowed on the next turn, see runBotTurn
+  pending?: string;
 }
 
 export interface BotConversation {
