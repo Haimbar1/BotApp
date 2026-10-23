@@ -1348,6 +1348,11 @@
         return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
       };
 
+      // Message text: escaped, with WhatsApp-style *bold* shown bold
+      var escapeText = function(str) {
+        return escapeHtml(str).replace(/\*([^*\n]{1,200}?)\*/g, '<strong>$1</strong>');
+      };
+
       var formatTextWithInlineButtons = function(str) {
         if (!str) return '';
         var lines = str.split('\n');
@@ -1379,7 +1384,7 @@
               bulletMark = '•';
             }
 
-            var formattedBulletText = escapeHtml(bulletText);
+            var formattedBulletText = escapeText(bulletText);
 
             if (/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(bulletText)) {
               formattedBulletText = formatTextWithInlineButtons(bulletText);
@@ -1394,7 +1399,7 @@
           if (emojiBulletMatch) {
             var emojiMark = emojiBulletMatch[1];
             var emojiText = emojiBulletMatch[2].trim();
-            var formattedEmojiText = escapeHtml(emojiText);
+            var formattedEmojiText = escapeText(emojiText);
 
             if (/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(emojiText)) {
               formattedEmojiText = formatTextWithInlineButtons(emojiText);
@@ -1407,7 +1412,7 @@
           }
 
           if (!/(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/i.test(line)) {
-            return escapeHtml(line);
+            return escapeText(line);
           }
 
           var urlPattern = /(?:([^\n\r:\-•*]{1,40}[:\-•*]?)?\s*)?(https?:\/\/[^\s<]+|wa\.me\/[^\s<]+)/gi;
@@ -1453,7 +1458,7 @@
 
             var buttonHtml = '<a href="' + escapeHtml(targetUrl) + '" target="_blank" rel="noopener noreferrer" class="obw-inline-link-btn"><span>' + escapeHtml(label) + '</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></a>';
 
-            return escapeHtml(plainTextBefore) + buttonHtml;
+            return escapeText(plainTextBefore) + buttonHtml;
           });
         });
 
