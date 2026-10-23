@@ -3168,14 +3168,25 @@ export async function createApp() {
     );
   }
 
-  // GET /api/public/bot-engine?bot_id=… — the widget asks whether this bot is answered here
+  // The agent the website widget's bot id belongs to, when it's set to answer here. Several agents
+  // can carry the same bot id (copies of an agent), so the one that was turned on wins — not
+  // simply the first in the list, which may be another copy with the switch off.
+  async function nativeAgentFor(botId: string): Promise<any | null> {
+    if (!botId) return null;
+    for (const a of readAgents().filter((x: any) => x.botId === botId || x.id === botId)) {
+      const brain = await getBrain(String(a.id)).catch(() => null);
+      if (brain?.nativeWeb) return a;
+    }
+    return null;
+  }
+
+  // GET /api/public/bot-engine?bot_id=… — the widget asks whether this bot is answered here. Never
+  // cached, so the switch in the bot's screen takes effect on the next page load.
   app.get("/api/public/bot-engine", async (req: any, res: any) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=60");
-    const agent = findAgentByBotId(String(req.query.bot_id || req.query.botId || "").trim());
-    if (!agent) return res.json({ native: false });
-    const brain = await getBrain(String(agent.id)).catch(() => null);
-    res.json({ native: !!brain?.nativeWeb });
+    res.setHeader("Cache-Control", "no-store");
+    const agent = await nativeAgentFor(String(req.query.bot_id || req.query.botId || "").trim());
+    res.json({ native: !!agent, ...(agent ? { agentId: agent.id } : {}) });
   });
 
   // POST /api/public/chat { botId, sessionId, message, buttonId?, userName?, userPhone? } — the website
@@ -3183,13 +3194,11 @@ export async function createApp() {
   app.post("/api/public/chat", async (req: any, res: any) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     const body = req.body || {};
-    const agent = findAgentByBotId(String(body.botId || body.bot_id || "").trim());
-    if (!agent) return res.status(404).json({ error: "bot not found" });
     if (!String(body.sessionId || "").trim() || !String(body.message || body.buttonId || "").trim()) {
       return res.status(400).json({ error: "sessionId and message are required" });
     }
-    const brain = await getBrain(String(agent.id));
-    if (!brain.nativeWeb) return res.status(409).json({ error: "this bot is answered by n8n" });
+    const agent = await nativeAgentFor(String(body.botId || body.bot_id || "").trim());
+    if (!agent) return res.status(409).json({ error: "this bot is answered by n8n" });
     try {
       const out = await turnFor(agent, "web", body);
       const sessionId = String(body.sessionId);
@@ -3210,7 +3219,9 @@ export async function createApp() {
     const agent = ownAgentOr403(req, res, req.query.agentId);
     if (!agent) return;
     const [brain, lessons, notes] = await Promise.all([getBrain(agent.id), listLessons(agent.id), listNotes(String(agent.botId || ""), 200)]);
-    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent) });
+    // the same bot id on other agents (copies) — the website goes by the bot id
+    const sameBotId = readAgents().filter((a: any) => a.id !== agent.id && agent.botId && a.botId === agent.botId).map((a: any) => a.businessName || a.name || a.id);
+    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent), botId: agent.botId || "", sameBotId });
   });
 
   // PUT /api/bot-brain { agentId, brain } — engine on/off, Q&A, booking hours, voice notes
