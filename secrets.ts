@@ -89,12 +89,13 @@ export async function portalDeniesBotApp(email: string): Promise<boolean> {
 // The original business (portal tenant 1, the optics) keeps running on Vercel first.
 export const ORIGINAL_TENANT = "1";
 
-// One key for a business: the optics reads Vercel (env) first; then the vault; then SmartEsek's
-// env key for shared keys. '' = not set.
+// One key for a business: the vault first, for every business (Haim, 2026-10-25: "שיהיה רק
+// בפורטל"); the optics only then falls back to Vercel (env) for a key the portal doesn't have;
+// then SmartEsek's env key for shared keys. '' = not set.
 export async function tenantSecret(key: string, tenant: string | number | undefined | null): Promise<string> {
-  if (String(tenant ?? "") === ORIGINAL_TENANT && process.env[key]) return process.env[key] as string;
   const fromVault = (await vaultSecrets(tenant))[key];
   if (fromVault) return fromVault;
+  if (String(tenant ?? "") === ORIGINAL_TENANT && process.env[key]) return process.env[key] as string;
   return SHARED_FALLBACK_KEYS.has(key) ? process.env[key] || "" : "";
 }
 
