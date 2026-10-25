@@ -3291,6 +3291,58 @@ export async function createApp() {
   const postJson = (url: string, body: any, headers: Record<string, string> = {}, ms = 10000) =>
     fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
 
+  // Other apps that get the events of their own numbers — Bonsai's purchase inquiries, whose suppliers
+  // answer on WhatsApp (Haim, 2026-10-26). Each app says itself which numbers are its (GET
+  // <app>/api/whatsapp/numbers, kept a minute: the number chosen for it in the portal plus the ones it
+  // sent from lately) and gets the payload at <app>/api/whatsapp/webhook. The app answers which messages
+  // were its own (a supplier answering an inquiry: outcome "matched" / "ambiguous") — the bot / n8n leave
+  // those alone, everything else on the number they handle as before (the עסק חכם bot shares the number
+  // with Bonsai's inquiries). WA_APP_FORWARD_KEY goes as X-Webhook-Key (the app's WHATSAPP_WEBHOOK_KEY).
+  const WA_APP_FORWARDS = (process.env.WA_APP_FORWARD_URLS ?? "https://bonsai-stock-request.vercel.app")
+    .split(",").map((u) => u.trim().replace(/\/$/, "")).filter(Boolean);
+  const appKeyHeaders = (): Record<string, string> =>
+    process.env.WA_APP_FORWARD_KEY ? { "X-Webhook-Key": process.env.WA_APP_FORWARD_KEY } : {};
+  const appNumbers = new Map<string, { at: number; ids: Set<string> }>();
+  async function numbersOfApp(app: string): Promise<Set<string>> {
+    const hit = appNumbers.get(app);
+    if (hit && Date.now() - hit.at < 60_000) return hit.ids;
+    try {
+      const r = await fetch(`${app}/api/whatsapp/numbers`, { headers: appKeyHeaders(), signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(`answered ${r.status}`);
+      const ids = new Set<string>(((await r.json())?.phoneNumberIds || []).map(String));
+      appNumbers.set(app, { at: Date.now(), ids });
+      return ids;
+    } catch (e: any) {
+      // keep the last known list; ask again in 15s
+      console.warn(`[WA] reading ${app}'s numbers failed:`, e?.message);
+      const ids = hit?.ids || new Set<string>();
+      appNumbers.set(app, { at: Date.now() - 45_000, ids });
+      return ids;
+    }
+  }
+  // The ids of the messages an app took. A message the app never answered for (down, too slow) is the bot's.
+  const APP_CLAIMS = ["matched", "ambiguous"];
+  async function forwardToApps(payload: any, phoneNumberId: string): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    if (!phoneNumberId) return claimed;
+    await Promise.all(
+      WA_APP_FORWARDS.map(async (app) => {
+        if (!(await numbersOfApp(app)).has(phoneNumberId)) return;
+        try {
+          // a supplier's answer is saved and passed on before the app replies — give it time
+          const r = await postJson(`${app}/api/whatsapp/webhook`, payload, appKeyHeaders(), 20000);
+          if (!r.ok) return console.warn(`[WA] forward to ${app} answered ${r.status}`);
+          for (const m of (await r.json().catch(() => ({})))?.messages || []) {
+            if (m?.id && APP_CLAIMS.includes(m.outcome)) claimed.add(String(m.id));
+          }
+        } catch (e: any) {
+          console.warn(`[WA] forward to ${app} failed:`, e?.message);
+        }
+      })
+    );
+    return claimed;
+  }
+
   // One customer message → the bot's answer on WhatsApp. `copied` = the payload's copy to
   // WhastAppSystem: the replies are reported only after it (its handoff check looks for the
   // customer's message). Where the time went is kept for the bot's screen.
@@ -3340,9 +3392,16 @@ export async function createApp() {
 
     // proof for the bot's screen that this number's messages arrive here (not waited for)
     const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
+    // first: what an app took isn't answered by the bot (quick for a number no app has)
+    const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
+    const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
 
     // Not switched (or not ours): on to n8n, untouched
     if (!agent || !brain?.nativeWhatsapp) {
+      if (allClaimed) {
+        await arrival;
+        return res.status(200).send("ok");
+      }
       try {
         const r = await postJson(N8N_WHATSAPP_URL, raw, {}, 25000);
         await arrival;
@@ -3367,7 +3426,7 @@ export async function createApp() {
 
       if (token) {
         for (const m of messages) {
-          if (needsNoAnswer(m) || !(m.text || m.mediaId)) continue;
+          if (needsNoAnswer(m) || !(m.text || m.mediaId) || claimed.has(m.id)) continue;
           if (await claimWaMessage(m.id)) toAnswer.push(m);
         }
         for (const m of toAnswer) {
