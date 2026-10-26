@@ -957,6 +957,12 @@ export const VOICE_SPEECH_SECTION = [
   "- שאלות בלי פנייה: \"מתאים?\", \"נוח?\", \"אפשר להגיע ביום רביעי?\", \"מה עוד אפשר לעזור?\" — לא \"מתאים לך?\", \"אתה יכול?\", \"את מגיעה?\".",
   "- בלי \"אתה\" / \"את\" ובלי מילים שמשתנות לפי מגדר (מגיע/מגיעה, בטוח/בטוחה, יכול/יכולה, תגיע/תגיעי). במקומן: \"ההגעה מתאימה?\", \"אפשר לסמן שמגיעים?\", \"יהיה אפשר להגיע?\".",
   "- על עצמנו מדברים ברבים: \"אנחנו\", \"נשמח\", \"רשמנו\", \"נחזור\".",
+  "",
+  "# דיבור טבעי בעברית בלבד (גובר על כל השאר)",
+  "- כל מה שנאמר ללקוח — בעברית שוטפת, כמו נציג אנושי בטלפון. בלי מילים באנגלית.",
+  "- לא מספרים ללקוח מה קורה מאחורי הקלעים: בלי שמות של כלים או פונקציות (free_slots, move_appointment, cancel_appointment, escalate_to_human, report_call_result וכו'), בלי \"אני קוראת ל...\", \"מפעילה כלי\", \"הפעולה הצליחה\", \"המערכת החזירה\". כשבודקים משהו אפשר להגיד רק \"רגע, בודקים ביומן\".",
+  "- שעות ותאריכים — תמיד במילים בעברית: \"בשתיים וחצי בצהריים\", \"ביום רביעי, עשרים ושמונה באוקטובר\". אף פעם לא ספרות, לא \"14:30\", לא \"28.10\" ולא תאריך בפורמט מחשב. כשהכלי מחזיר say — אומרים אותו כמו שהוא.",
+  "- קודים, מזהים ושדות טכניים (slot_code, מזהה תור וכו') לא נאמרים אף פעם.",
 ].join("\n");
 
 const VOICE_GOALS: Record<VoicePurpose, string[]> = {
@@ -997,9 +1003,10 @@ export function voiceAppointmentTools(withTools: boolean): string {
   return withTools
     ? [
         "# הזזה וביטול (יש כלים — עושים את זה בשיחה)",
-        "- מועד אחר: לשאול איזה יום ובאיזה חלק של היום נוח, ולקרוא ל-free_slots עם היום (או בלי יום — המועדים הקרובים). להציע שתי אפשרויות בלבד, מהמועדים שהכלי החזיר. אחרי הבחירה — לחזור על היום והשעה ולשאול \"להעביר את התור לשם?\". רק אחרי \"כן\" מפורש לקרוא ל-move_appointment עם start של המועד בדיוק כפי שחזר מהכלי. רק אחרי שהכלי אישר להגיד שהתור הועבר ושתגיע הודעת אישור בוואטסאפ.",
-        "- לא יגיעו בכלל: לשאול פעם אחת אם להעביר למועד אחר. לא — לשאול \"לבטל את התור?\", ורק אחרי \"כן\" מפורש לקרוא ל-cancel_appointment. להודות ולסיים.",
-        "- אסור להמציא מועד פנוי, ואסור להגיד שהתור הועבר או בוטל לפני שהכלי אישר. כלי נכשל — לבדוק שוב מועדים ולהציע אחרים; נכשל שוב — להגיד שהצוות יחזור בהקדם לתאם.",
+        "(הכלים פנימיים — ללקוח לא מזכירים אותם, רק \"רגע, בודקים ביומן\".)",
+        "- מועד אחר: לשאול איזה יום ובאיזה חלק של היום נוח, ולבדוק עם free_slots (עם היום, או בלי יום — המועדים הקרובים). להציע שתי אפשרויות בלבד — את ה-say שלהן, כמו שהוא. אחרי הבחירה — לחזור על המועד במילים ולשאול \"להעביר את התור לשם?\". רק אחרי \"כן\" מפורש — move_appointment עם start = ה-slot_code של המועד שנבחר. רק אחרי שהכלי אישר — להגיד את ה-say שחזר (התור הועבר, תגיע הודעת אישור בוואטסאפ).",
+        "- לא יגיעו בכלל: לשאול פעם אחת אם להעביר למועד אחר. לא — לשאול \"לבטל את התור?\", ורק אחרי \"כן\" מפורש — cancel_appointment. להודות ולסיים.",
+        "- אסור להמציא מועד פנוי, ואסור להגיד שהתור הועבר או בוטל לפני שהכלי אישר. כלי מחזיר say_instead — אומרים את זה במילים טבעיות.",
         "- לא קובעים תור חדש בנוסף לקיים — רק מעבירים את הקיים.",
       ].join("\n")
     : [
@@ -1140,8 +1147,31 @@ export function voiceHoursSection(brain: Pick<BotBrain, "booking" | "events" | "
 // calendar, and moving / cancelling the customer's own exam through the CRM (/api/bot/tools — a
 // move / cancel only touches an exam of that phone; the CRM notes it on the lead and sends the WhatsApp
 // confirmation). The phone is ElevenLabs' {{customer_phone}}, never what the model says.
-const spokenSlot = (s: string) =>
-  `יום ${DAY_NAMES[weekdayOf(s.slice(0, 10))]} ${Number(s.slice(8, 10))}.${Number(s.slice(5, 7))} בשעה ${s.slice(11, 16)}`;
+// Times and dates as said in Hebrew (Haim, 2026-10-26: the agent read "13:00" / "28.10" in English
+// letters) — "ביום רביעי, עשרים ושמונה באוקטובר, באחת וחצי בצהריים"
+const HOURS_F = ["שתים עשרה", "אחת", "שתיים", "שלוש", "ארבע", "חמש", "שש", "שבע", "שמונה", "תשע", "עשר", "אחת עשרה"];
+const UNITS_F = ["", "אחת", "שתיים", "שלוש", "ארבע", "חמש", "שש", "שבע", "שמונה", "תשע"];
+const TEENS_F = ["עשר", "אחת עשרה", "שתים עשרה", "שלוש עשרה", "ארבע עשרה", "חמש עשרה", "שש עשרה", "שבע עשרה", "שמונה עשרה", "תשע עשרה"];
+const TENS = ["", "", "עשרים", "שלושים", "ארבעים", "חמישים"];
+const UNITS_M = ["", "אחד", "שניים", "שלושה", "ארבעה", "חמישה", "שישה", "שבעה", "שמונה", "תשעה"];
+const TEENS_M = ["עשרה", "אחד עשר", "שנים עשר", "שלושה עשר", "ארבעה עשר", "חמישה עשר", "שישה עשר", "שבעה עשר", "שמונה עשר", "תשעה עשר"];
+const MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+const numWords = (n: number, units: string[], teens: string[]) =>
+  n < 10 ? units[n] : n < 20 ? teens[n - 10] : `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ו${units[n % 10]}` : ""}`;
+export function hebrewTime(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  const part = h < 12 ? "בבוקר" : h < 16 ? "בצהריים" : h < 19 ? "אחר הצהריים" : "בערב";
+  if (m === 45) return `רבע ל${HOURS_F[(h + 1) % 12]} ${part}`;
+  const hour = HOURS_F[h % 12];
+  const min = m === 0 ? "" : m === 15 ? " ורבע" : m === 30 ? " וחצי" : ` ו${numWords(m, UNITS_F, TEENS_F)}`;
+  return `${hour}${min} ${part}`;
+}
+export function hebrewDate(date: string): string {
+  const d = Number(date.slice(8, 10));
+  return `יום ${DAY_NAMES[weekdayOf(date)]}, ${numWords(d, UNITS_M, TEENS_M)} ב${MONTHS[Number(date.slice(5, 7)) - 1]}`;
+}
+// "ביום רביעי, עשרים ושמונה באוקטובר, בשתיים וחצי בצהריים"
+const spokenSlot = (s: string) => `ב${hebrewDate(s.slice(0, 10))}, ב${hebrewTime(s.slice(11, 16))}`;
 
 export async function voiceTool(name: string, args: any, brain: BotBrain, crm: CrmCaller): Promise<any> {
   const phone = normalizeIsraeliPhone(args?.phone);
@@ -1157,7 +1187,7 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
       const from = asked && asked >= today ? asked : today;
       const days = asked ? 1 : 10;
       const r = await crm({ action: "busy", from, to: addDays(from, days - 1) });
-      if (!r?.configured) return { ok: false, error: "יומן הסניף לא מחובר — להגיד שהצוות יחזור לתאם" };
+      if (!r?.configured) return { ok: false, say_instead: "הצוות יחזור בהקדם לתאם מועד" };
       let slots = freeSlots(brain.booking, r.busy || [], from, days, hoursFor);
       const hour = (s: string) => Number(s.slice(11, 13));
       const tod = String(args?.time_of_day || "");
@@ -1172,35 +1202,37 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
         if (list.length > 1) offer.push(list[Math.max(1, Math.floor(list.length * 0.6))]);
       }
       const closed = asked && !ranges(hoursFor(asked)).length ? dayHours(brain, asked).why || "אין קבלה ביום הזה" : "";
+      // what to say is ready in Hebrew words; slot_code is only for move_appointment — never said
       return {
         ok: true,
+        how_to_say: "להגיד ללקוח רק את say, במילים בעברית כמו שהן. לא להקריא slot_code, ספרות, שמות כלים או פרטים טכניים.",
         ...(closed ? { closed } : {}),
-        slots: offer.slice(0, 6).map((s) => ({ start: s, say: spokenSlot(s) })),
-        ...(asked && slots.length ? { allThatDay: slots.map((s) => s.slice(11, 16)) } : {}),
-        ...(offer.length ? {} : { note: asked ? "אין מועד פנוי ביום הזה — להציע יום אחר" : "אין מועדים פנויים בימים הקרובים — להגיד שהצוות יחזור לתאם" }),
+        slots: offer.slice(0, 6).map((s) => ({ say: spokenSlot(s), slot_code: s })),
+        ...(asked && slots.length > 2 ? { other_times_that_day: slots.map((s) => hebrewTime(s.slice(11, 16))).join(", ") } : {}),
+        ...(offer.length ? {} : { say_instead: asked ? "אין מועד פנוי ביום הזה — להציע יום אחר" : "אין מועדים פנויים בימים הקרובים — להגיד שהצוות יחזור לתאם" }),
       };
     }
     case "move_appointment": {
       const start = String(args?.start || "");
-      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, error: "מועד לא תקין — להשתמש ב-start בדיוק כפי שחזר מ-free_slots" };
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, say_instead: "רגע, נבדוק שוב את המועדים הפנויים", note: "בדיקת מועדים מחדש ואז להעביר עם slot_code בדיוק כפי שחזר" };
       const exam = await nextExam();
-      if (!exam) return { ok: false, error: "לא נמצא תור קרוב על המספר הזה — להגיד שהצוות יחזור לבדוק" };
+      if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק ולתאם" };
       const r = await crm({ action: "busy", from: start.slice(0, 10), to: start.slice(0, 10) });
       // the exam's own time is busy because of the exam itself — it may be "moved" to a free one only
       if (!freeSlots(brain.booking, r?.busy || [], start.slice(0, 10), 1, hoursFor).includes(start)) {
-        return { ok: false, error: "המועד הזה כבר לא פנוי — לקרוא שוב ל-free_slots ולהציע מועד אחר" };
+        return { ok: false, say_instead: "המועד הזה בדיוק נתפס — להציע מועדים פנויים אחרים", note: "לבדוק שוב מועדים פנויים" };
       }
       const res = await crm({ action: "move", phone, examId: exam.id, start });
-      return { ok: true, from: spokenSlot(res?.previousStart || exam.start), to: spokenSlot(start), whatsapp: "תישלח הודעת אישור בוואטסאפ" };
+      return { ok: true, say: `התור הועבר מ${spokenSlot(res?.previousStart || exam.start)} ל${spokenSlot(start)}. תישלח הודעת אישור בוואטסאפ.` };
     }
     case "cancel_appointment": {
       const exam = await nextExam();
-      if (!exam) return { ok: false, error: "לא נמצא תור קרוב על המספר הזה" };
+      if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק" };
       await crm({ action: "cancel", phone, examId: exam.id });
-      return { ok: true, cancelled: spokenSlot(exam.start) };
+      return { ok: true, say: `התור ${spokenSlot(exam.start)} בוטל.` };
     }
     default:
-      return { ok: false, error: "כלי לא מוכר" };
+      return { ok: false, say_instead: "הצוות יחזור בהקדם" };
   }
 }
 

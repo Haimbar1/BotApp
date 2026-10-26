@@ -3780,14 +3780,15 @@ export async function createApp() {
     }
     const found = await businessBot(business);
     const crm = found ? crmFor(found.agent) : null;
-    if (!found || !crm) return res.json({ ok: false, error: "אין חיבור ליומן — להגיד שהצוות יחזור לתאם" });
+    if (!found || !crm) return res.json({ ok: false, say_instead: "הצוות יחזור בהקדם לתאם" });
     try {
       const out = await voiceTool(String(req.params.tool), req.body || {}, found.brain, crm);
       console.log(`[voice tools] ${business} ${req.params.tool}:`, JSON.stringify(out).slice(0, 300));
       res.json(out);
     } catch (e: any) {
       console.warn(`[voice tools] ${business} ${req.params.tool} failed:`, e?.message);
-      res.json({ ok: false, error: `${String(e?.message || "שגיאה").slice(0, 200)} — להגיד שהצוות יחזור לתאם` });
+      // the reason stays in the log; the agent only gets something to say
+      res.json({ ok: false, say_instead: "לא הצלחנו לעדכן את התור כרגע — הצוות יחזור בהקדם לתאם" });
     }
   });
 
