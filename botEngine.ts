@@ -977,10 +977,66 @@ const VOICE_GOALS: Record<VoicePurpose, string[]> = {
   general: [],
 };
 
+// The chat prompt's knowledge as something to say on the phone (Haim, 2026-10-26: the voice prompt
+// was full of what only makes sense in WhatsApp — sample pictures, links, buttons): links, picture /
+// link lines and sentences about sending pictures / links / buttons go, emojis and *bold* marks go.
+const CHAT_ONLY = /תמונ|קישור|לינק|כפתור|JSON|list_options|options|אימוג|הקלק|לחצ\/י|לחץ על|שלח את ה|לשלוח את ה/i;
+export function forVoice(text: string): string {
+  return String(text || "")
+    .split("\n")
+    .map((line) => {
+      if (/^\s*[-•*]?\s*(?:תמונה|תמונות|קישור|לינק|image|url)\s*:/i.test(line)) return null; // "- תמונה: https://…"
+      let l = line.replace(/https?:\/\/\S+/g, "").replace(/\[[^\]]*\]\(\s*\)/g, "");
+      // sentence by sentence: keep what can be said, drop what's about pictures / links / buttons
+      const parts = l.split(/(?<=[.!?])\s+/);
+      const kept = parts.filter((s) => !CHAT_ONLY.test(s));
+      if (kept.length !== parts.length && !kept.join("").trim()) return null;
+      l = kept.join(" ");
+      l = l
+        .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "")
+        .replace(/\*([^*\n]+)\*/g, "$1")
+        .replace(/(\S)[ \t]{2,}/g, "$1 ")
+        .replace(/\s+$/, "");
+      if (!/^\s/.test(line)) l = l.trimStart(); // an emoji at the start of the line, not indentation
+      if (/https?:\/\//.test(line)) {
+        // what pointed at the link that was taken out ("לקביעת תור ביומן -", "לניווט בוויז:")
+        l = l.replace(/[\s\-–:]+$/, "");
+        if (!l.trim() || /^[\s\-•*]*[^:]{0,40}:?$/.test(l) && /(?:קישור|לניווט|בלחיצה|כאן|ביומן)$/.test(l.trim())) return null;
+      }
+      return l;
+    })
+    .filter((l): l is string => l !== null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// The kinds of voice call whose prompt the owner may edit (BotApp → "📞 פרומפט לבוט הקולי")
+// Placeholders in an edited prompt — the live parts are filled on every call:
+//   {{booking_hours}} the hours + each day's last appointment, {{events}} events / holidays,
+//   {{customer_name}} {{customer_context}} {{appointment_when}} {{today}} filled by the CRM.
+export const VOICE_LIVE_PARTS = ["{{booking_hours}}", "{{events}}"];
+
+// What a call gets: the owner's own version of this kind of call's prompt (brain.voicePrompts) or the
+// one written from the smart bot's knowledge, with the live parts filled in
 export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], brainText: string, purpose: VoicePurpose = "general"): string {
+  const template = brain.voicePrompts?.[purpose]?.trim() || voicePromptTemplate(agent, brain, lessons, brainText, purpose);
+  return template
+    .replace(/\{\{\s*booking_hours\s*\}\}/g, () => (brain.booking?.enabled !== false ? voiceHoursSection(brain) : ""))
+    .replace(/\{\{\s*events\s*\}\}/g, () => eventsSection(brain, israelNow().date).trim())
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// The prompt as written from the smart bot's knowledge, with the live parts as placeholders — what
+// the edit box starts from
+export function voicePromptTemplate(agent: any, brain: BotBrain, lessons: BotLesson[], brainText: string, purpose: VoicePurpose = "general"): string {
   const business = agent?.businessName || agent?.name || "העסק";
-  const qa = brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
-  const active = lessons.filter((l) => l.active);
+  const qa = brain.qa
+    .filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`))
+    .map((x) => ({ q: forVoice(x.q), a: forVoice(x.a) }))
+    .filter((x) => x.q && x.a);
+  const active = lessons.filter((l) => l.active).map((l) => forVoice(l.text)).filter(Boolean);
   const goal = VOICE_GOALS[purpose] || [];
   return [
     `את/ה הנציג/ה הקולי/ת של "${business}" בשיחת טלפון. מדברים בעברית, במשפטים קצרים וברורים, בטון חם וטבעי — כמו נציג אנושי.`,
@@ -996,11 +1052,12 @@ export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], b
         : "",
     "",
     goal.length ? "# הידע של העסק (נכתב לצ'אט בוואטסאפ — קח ממנו רק את המידע: מחירים, מבצעים, מוצרים, שעות, כתובת. איך לנהל את השיחה — לפי מה שלמעלה)" : "# הידע של העסק",
-    withoutEventDates(brainText).trim(),
-    qa.length ? "\n# שאלות ותשובות\n" + qa.map((x) => `ש: ${x.q.trim()}\nת: ${x.a.trim()}`).join("\n\n") : "",
-    active.length ? "\n# דגשים שנלמדו משיחות\n" + active.map((l) => `- ${l.text}`).join("\n") : "",
-    eventsSection(brain, israelNow().date),
-    brain.booking?.enabled !== false && goal.length ? "\n" + voiceHoursSection(brain) : "",
+    forVoice(withoutEventDates(brainText)),
+    qa.length ? "\n# שאלות ותשובות\n" + qa.map((x) => `ש: ${x.q}\nת: ${x.a}`).join("\n\n") : "",
+    active.length ? "\n# דגשים שנלמדו משיחות\n" + active.map((l) => `- ${l}`).join("\n") : "",
+    "\n{{events}}",
+    goal.length ? "\n{{booking_hours}}" : "",
+    "\n- מישהו מבקש לראות תמונות, דגמים או קישור — אמור שאפשר לראות הכל באתר, או שנשלח לו בוואטסאפ.",
     brain.voiceNotes?.trim() ? "\n# הנחיות לשיחה הקולית (מבעל העסק — גוברות על כל השאר)\n" + brain.voiceNotes.trim() : "",
   ]
     .filter((x) => x !== "")

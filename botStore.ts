@@ -54,6 +54,9 @@ export interface BotBrain {
   closedOnHolidays?: boolean;
   // free text the owner adds for the voice bot only
   voiceNotes?: string;
+  // the owner's own version of a voice call's prompt, per kind of call (new_lead / confirm / general);
+  // none = written from the knowledge each time (botEngine.ts voicePromptTemplate)
+  voicePrompts?: Record<string, string>;
   autofilledAt?: string;
   updatedAt?: string;
 }

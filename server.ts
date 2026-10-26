@@ -25,7 +25,7 @@ import {
 } from "./storage.js";
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
-import { runBotTurn, voicePrompt, voiceFirstMessage, voiceHoursSection, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
+import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
@@ -3651,7 +3651,78 @@ export async function createApp() {
     if (!agent) return;
     const purpose = (VOICE_PURPOSES as string[]).includes(String(req.query.purpose)) ? (String(req.query.purpose) as VoicePurpose) : "general";
     const [brain, lessons, brainText] = await Promise.all([getBrain(agent.id), listLessons(agent.id), brainTextFor(agent)]);
-    res.json({ success: true, prompt: voicePrompt(agent, brain, lessons, brainText, purpose), firstMessage: voiceFirstMessage(agent, purpose) });
+    const own = brain.voicePrompts?.[purpose]?.trim() || "";
+    res.json({
+      success: true,
+      prompt: voicePrompt(agent, brain, lessons, brainText, purpose), // as a call gets it (the live parts filled)
+      template: own || voicePromptTemplate(agent, brain, lessons, brainText, purpose), // what the edit box shows
+      edited: !!own,
+      firstMessage: voiceFirstMessage(agent, purpose),
+    });
+  });
+
+  // POST /api/bot-brain/voice-prompt { agentId, purpose, prompt } — the owner's own version of that
+  // call's prompt (Haim, 2026-10-26: "צריך אפשרות לערוך"); prompt "" / null = back to the automatic one.
+  // Saved on its own (not with the whole brain), so the screen's other saves never undo it.
+  app.post("/api/bot-brain/voice-prompt", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const purpose = String(req.body?.purpose || "");
+    if (!(VOICE_PURPOSES as string[]).includes(purpose)) return res.status(400).json({ success: false, message: "סוג שיחה לא ידוע" });
+    const text = String(req.body?.prompt || "").replace(/\r\n/g, "\n").trim().slice(0, 60000);
+    const current = await getBrain(agent.id);
+    const voicePrompts = { ...(current.voicePrompts || {}) };
+    if (text) voicePrompts[purpose] = text;
+    else delete voicePrompts[purpose];
+    await saveBrain({ ...current, voicePrompts });
+    res.json({ success: true, edited: !!text });
+  });
+
+  // POST /api/bot-brain/voice-prompt/ai-edit { agentId, purpose, prompt, instruction } — the owner says
+  // what to change ("להוריד את התמונות", "בשישי התור האחרון 13:40") and the AI rewrites the prompt.
+  // Nothing is saved: the screen shows the result in the edit box, the owner saves it.
+  app.post("/api/bot-brain/voice-prompt/ai-edit", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const prompt = String(req.body?.prompt || "").slice(0, 60000);
+    const instruction = String(req.body?.instruction || "").trim().slice(0, 2000);
+    if (!prompt.trim() || !instruction) return res.status(400).json({ success: false, message: "חסר פרומפט או מה לשנות" });
+    const ai = await geminiFor(agentTenant(agent) || undefined);
+    if (!ai) return res.status(503).json({ success: false, message: "AI לא מוגדר בשרת" });
+    try {
+      const response = await generateWithFallback(ai, {
+        model: "gemini-3.5-flash",
+        contents: [{
+          role: "user",
+          parts: [{
+            text:
+              "זה פרומפט של סוכן קולי (שיחת טלפון) של עסק. בעל העסק ביקש לשנות בו משהו. החזר את הפרומפט המלא אחרי השינוי — " +
+              "שנה רק את מה שביקש, ושאר הטקסט נשאר מילה במילה. אל תוסיף מידע שלא כתוב ושלא ביקש.\n" +
+              "המקומות {{booking_hours}}, {{events}}, {{customer_name}}, {{customer_context}}, {{appointment_when}}, {{today}} מתמלאים לבד בכל שיחה — " +
+              "השאר אותם בדיוק במקומם (אלא אם ביקש במפורש להוריד אחד מהם).\n" +
+              "{{booking_hours}} הוא שעות הקבלה והתור האחרון בכל יום, מתוך ההגדרה \"שעות לקביעת תורים\" ב-BotApp, וגובר על שעות שכתובות בטקסט. " +
+              "אם הבקשה היא לשנות שעות קבלה / תור אחרון — שנה גם את השעות שכתובות בטקסט, וב-note כתוב לבעל העסק בעברית שכדי שזה יעבוד צריך לשנות גם את \"שעות לקביעת תורים\" ב-BotApp (שם אורך התור קובע את התור האחרון). " +
+              "אחרת note ריק.\n\n" +
+              `מה לשנות: ${instruction}\n\nהפרומפט:\n${prompt}`,
+          }],
+        }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: { prompt: { type: Type.STRING }, note: { type: Type.STRING } },
+            required: ["prompt"],
+          },
+        },
+      });
+      const parsed = JSON.parse(response.text || "{}");
+      const next = String(parsed.prompt || "").trim();
+      if (next.length < Math.min(200, prompt.trim().length / 3)) throw new Error("the answer is too short");
+      res.json({ success: true, prompt: next, note: String(parsed.note || "").trim() });
+    } catch (e: any) {
+      console.error("[BOT] voice prompt AI edit failed:", e);
+      res.status(500).json({ success: false, message: "התיקון עם AI נכשל, נסו שוב" });
+    }
   });
 
   // POST /api/crm/voice-prompt { purpose } — the CRM, before an AI voice call (Haim, 2026-10-26: the

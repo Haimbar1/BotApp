@@ -57,8 +57,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [message, setMessage] = useState("");
   const [autofilling, setAutofilling] = useState(false);
   const [newLesson, setNewLesson] = useState("");
-  const [voice, setVoice] = useState("");
-  const [voicePurpose, setVoicePurpose] = useState<VoicePurpose>("new_lead");
   const autofillTried = useRef<string>("");
 
   const json = (r: Response) => r.json().catch(() => ({}));
@@ -134,7 +132,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   useEffect(() => {
     setBrain(null);
     setMessage("");
-    setVoice("");
     load().then((b) => {
       // the first time the tab opens for a bot with no Q&A, the bot writes its own
       if (b && !b.qa.length && !b.autofilledAt && autofillTried.current !== agentId) {
@@ -162,12 +159,6 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     const r = await request("/api/bot-brain/lessons", { method: "POST", body: JSON.stringify({ agentId, ...body }) });
     const d: any = await json(r);
     if (d.success) setLessons(d.lessons || []);
-  };
-
-  const loadVoice = async (purpose = voicePurpose) => {
-    const r = await request(`/api/bot-brain/voice-prompt?agentId=${encodeURIComponent(agentId)}&purpose=${purpose}`);
-    const d: any = await json(r);
-    setVoice(d.prompt ? (d.firstMessage ? `[משפט פתיחה] ${d.firstMessage}\n\n` : "") + d.prompt : "");
   };
 
 
@@ -372,37 +363,145 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       <div className={card}>
         <h4 className="text-xs font-black text-white">📞 פרומפט לבוט הקולי</h4>
         <p className="text-[10.5px] text-slate-500">
-          אותו ידע (שכל + שאלות ותשובות + מה שנלמד + אירועים), מנוסח לשיחת טלפון, עם מטרה לכל סוג שיחה. ה-CRM שולח אותו לסוכן הקולי בכל שיחה, יחד עם מה שידוע על הלקוח — אין צורך להעתיק.
+          אותו ידע (שכל + שאלות ותשובות + מה שנלמד + אירועים), מנוסח לשיחת טלפון — בלי תמונות, קישורים וכפתורים — עם מטרה לכל סוג שיחה. ה-CRM שולח אותו לסוכן הקולי בכל שיחה, יחד עם מה שידוע על הלקוח — אין צורך להעתיק. אפשר לערוך אותו ידנית או עם AI.
         </p>
         <textarea className={`${input} min-h-[60px]`} rows={2} value={brain.voiceNotes || ""} placeholder="הנחיות נוספות לשיחה הקולית בלבד (לא חובה) — גוברות על כל השאר" onChange={(e) => edit({ voiceNotes: e.target.value })} />
-        <div className="flex gap-2 flex-wrap">
-          {VOICE_PURPOSE_LABELS.map(([p, label]) => (
-            <button
-              key={p}
-              type="button"
-              className={`${btn} ${voicePurpose === p ? "border-sky-500/60 text-sky-200" : "border-slate-700 text-slate-400"}`}
-              onClick={() => {
-                setVoicePurpose(p);
-                if (voice) loadVoice(p);
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <button type="button" className={`${btn} border-slate-700 text-slate-200`} onClick={() => loadVoice()}>
-            הצג פרומפט קולי
-          </button>
-          {voice && (
-            <button type="button" className={`${btn} border-sky-500/40 text-sky-200`} onClick={() => navigator.clipboard?.writeText(voice).then(() => setMessage("הפרומפט הקולי הועתק ✓"))}>
-              העתק
-            </button>
-          )}
-        </div>
-        {voice && <textarea readOnly className={`${input} min-h-[200px] font-mono text-[10.5px]`} value={voice} />}
+        <VoicePromptEditor key={agentId} agentId={agentId} request={request} onMessage={setMessage} />
       </div>
     </div>
+  );
+}
+
+// The voice prompt of each kind of call, editable (Haim, 2026-10-26): starts from the one written from
+// the knowledge (pictures / links / buttons already taken out); the owner edits it by hand or tells the
+// AI what to change ("✨ תיקון עם AI" — shown in the box, saved only with "שמור"). {{booking_hours}} and
+// {{events}} stay as placeholders, filled on every call; "חזרה לאוטומטי" drops the owner's version.
+function VoicePromptEditor({ agentId, request, onMessage }: { agentId: string; request: Request; onMessage: (m: string) => void }) {
+  const [purpose, setPurpose] = useState<VoicePurpose>("new_lead");
+  const [text, setText] = useState<string | null>(null); // null = not opened yet
+  const [saved, setSaved] = useState("");
+  const [edited, setEdited] = useState(false);
+  const [firstMessage, setFirstMessage] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"" | "load" | "save" | "ai">("");
+  const json = (r: Response) => r.json().catch(() => ({}));
+  const dirty = text !== null && text !== saved;
+
+  const load = async (p = purpose) => {
+    setBusy("load");
+    setNote("");
+    try {
+      const d: any = await json(await request(`/api/bot-brain/voice-prompt?agentId=${encodeURIComponent(agentId)}&purpose=${p}`));
+      setText(d.template || "");
+      setSaved(d.template || "");
+      setEdited(!!d.edited);
+      setFirstMessage(d.firstMessage || "");
+    } finally {
+      setBusy("");
+    }
+  };
+  const save = async (value: string) => {
+    setBusy("save");
+    try {
+      const d: any = await json(await request("/api/bot-brain/voice-prompt", { method: "POST", body: JSON.stringify({ agentId, purpose, prompt: value }) }));
+      if (!d.success) return onMessage(d.message || "השמירה נכשלה");
+      onMessage(value ? "הפרומפט הקולי נשמר ✓ — השיחות הבאות ידברו לפיו" : "חזר לפרומפט האוטומטי ✓");
+      await load();
+    } finally {
+      setBusy("");
+    }
+  };
+  const aiEdit = async () => {
+    if (!text || !instruction.trim()) return;
+    setBusy("ai");
+    setNote("");
+    try {
+      const d: any = await json(await request("/api/bot-brain/voice-prompt/ai-edit", { method: "POST", body: JSON.stringify({ agentId, purpose, prompt: text, instruction }) }));
+      if (!d.success) return onMessage(d.message || "התיקון עם AI נכשל");
+      setText(d.prompt);
+      setNote(d.note || "");
+      setInstruction("");
+      onMessage("ה-AI עדכן את הפרומפט — בדקו ולחצו \"שמור\"");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <>
+      <div className="flex gap-2 flex-wrap">
+        {VOICE_PURPOSE_LABELS.map(([p, label]) => (
+          <button
+            key={p}
+            type="button"
+            disabled={!!busy}
+            className={`${btn} ${purpose === p ? "border-sky-500/60 text-sky-200" : "border-slate-700 text-slate-400"}`}
+            onClick={() => {
+              if (dirty && !window.confirm("יש שינויים שלא נשמרו. לעבור בלי לשמור?")) return;
+              setPurpose(p);
+              if (text !== null) load(p);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {text === null ? (
+        <button type="button" disabled={!!busy} className={`${btn} border-slate-700 text-slate-200 self-start`} onClick={() => load()}>
+          {busy === "load" ? "טוען…" : "הצג וערוך את הפרומפט הקולי"}
+        </button>
+      ) : (
+        <>
+          <div className="text-[10.5px] text-slate-500">
+            {edited ? "✏️ פרומפט שנערך ידנית — שינויים בשכל של הבוט לא נכנסים אליו (חוץ מהשעות והאירועים)." : "🤖 אוטומטי — נכתב מהשכל של הבוט ומתעדכן איתו. עריכה ושמירה הופכות אותו לשלכם."}
+            {" "}
+            <span dir="ltr">{"{{booking_hours}}"}</span> = שעות הקבלה והתור האחרון (מ"שעות לקביעת תורים"), <span dir="ltr">{"{{events}}"}</span> = אירועים וחגים,{" "}
+            <span dir="ltr">{"{{customer_context}}"}</span> = מה שה-CRM יודע על הלקוח — מתמלאים לבד בכל שיחה.
+            {purpose === "new_lead" && " בשיחות ללידים חדשים ה-CRM משתמש בפרומפט שכתוב בסוכן ב-ElevenLabs (ומוסיף לו רק את השעות), אלא אם סומן בהגדרות השיחות שם להשתמש בפרומפט של הבוט החכם."}
+          </div>
+          {firstMessage && <div className="text-[10.5px] text-slate-400">משפט פתיחה: {firstMessage}</div>}
+          <textarea className={`${input} min-h-[260px] font-mono text-[10.5px]`} value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="flex gap-2">
+            <input
+              className={input}
+              value={instruction}
+              disabled={busy === "ai"}
+              placeholder='✨ תיקון עם AI — מה לשנות? למשל "תוריד את כל מה שקשור לתמונות" / "בשישי התור האחרון 13:40"'
+              onChange={(e) => setInstruction(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && aiEdit()}
+            />
+            <button type="button" disabled={!!busy || !instruction.trim()} className={`${btn} border-violet-500/50 text-violet-200 shrink-0`} onClick={aiEdit}>
+              {busy === "ai" ? "מתקן…" : "✨ תקן"}
+            </button>
+          </div>
+          {note && <div className="text-[11px] text-amber-300">⚠️ {note}</div>}
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" disabled={!!busy || !dirty} className={`${btn} border-emerald-500/50 text-emerald-200`} onClick={() => save(text)}>
+              {busy === "save" ? "שומר…" : "שמור"}
+            </button>
+            {dirty && (
+              <button type="button" disabled={!!busy} className={`${btn} border-slate-700 text-slate-300`} onClick={() => { setText(saved); setNote(""); }}>
+                בטל שינויים
+              </button>
+            )}
+            {edited && (
+              <button
+                type="button"
+                disabled={!!busy}
+                className={`${btn} border-rose-500/40 text-rose-200`}
+                onClick={() => window.confirm("למחוק את הגרסה שערכתם ולחזור לפרומפט שנכתב אוטומטית מהשכל של הבוט?") && save("")}
+              >
+                חזרה לאוטומטי
+              </button>
+            )}
+            <button type="button" className={`${btn} border-sky-500/40 text-sky-200`} onClick={() => navigator.clipboard?.writeText(text).then(() => onMessage("הפרומפט הקולי הועתק ✓"))}>
+              העתק
+            </button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
