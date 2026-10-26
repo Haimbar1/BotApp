@@ -25,7 +25,7 @@ import {
 } from "./storage.js";
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
-import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
+import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
@@ -3739,23 +3739,56 @@ export async function createApp() {
       return res.status(401).json({ error: "invalid-token" });
     }
     if (payload?.typ !== "voice-prompt" || !payload?.portalTenantId) return res.status(401).json({ error: "invalid-token" });
-    const tenant = String(payload.portalTenantId);
     const purpose = (VOICE_PURPOSES as string[]).includes(String(req.body?.purpose)) ? (String(req.body.purpose) as VoicePurpose) : "new_lead";
-    const agents = readAgents().filter((a: any) => agentTenant(a) === tenant);
-    if (!agents.length) return res.status(404).json({ error: "no-bot", message: "לעסק הזה אין בוט ב-BotApp" });
-    const brains = await Promise.all(agents.map((a: any) => getBrain(a.id)));
-    const rank = (i: number) => (brains[i].nativeWhatsapp ? 0 : brains[i].nativeWeb ? 1 : 2);
-    const i = agents.map((_: any, k: number) => k).sort((a: number, b: number) => rank(a) - rank(b))[0];
-    const agent = agents[i];
+    const found = await businessBot(String(payload.portalTenantId));
+    if (!found) return res.status(404).json({ error: "no-bot", message: "לעסק הזה אין בוט ב-BotApp" });
+    const { agent, brain } = found;
     const [lessons, brainText] = await Promise.all([listLessons(agent.id), brainTextFor(agent)]);
     res.json({
       agentId: agent.id,
       botName: agent.name || "",
-      prompt: voicePrompt(agent, brains[i], lessons, brainText, purpose),
+      prompt: voicePrompt(agent, brain, lessons, brainText, purpose, !!req.body?.withTools),
       firstMessage: voiceFirstMessage(agent, purpose),
-      // added at the end of an agent's own prompt (the CRM's new-lead calls keep the ElevenLabs prompt)
-      hoursSection: voiceHoursSection(brains[i]),
+      // added at the end of an agent's own prompt (the CRM's new-lead calls keep the ElevenLabs prompt):
+      // speaking without gender + the hours and each day's last appointment
+      hoursSection: `${VOICE_SPEECH_SECTION}\n\n${voiceHoursSection(brain)}`,
     });
+  });
+
+  // A portal business's bot: the one on that business answering WhatsApp here first, then the web, then any
+  async function businessBot(portalTenantId: string): Promise<{ agent: any; brain: any } | null> {
+    const agents = readAgents().filter((a: any) => agentTenant(a) === portalTenantId);
+    if (!agents.length) return null;
+    const brains = await Promise.all(agents.map((a: any) => getBrain(a.id)));
+    const rank = (i: number) => (brains[i].nativeWhatsapp ? 0 : brains[i].nativeWeb ? 1 : 2);
+    const i = agents.map((_: any, k: number) => k).sort((a: number, b: number) => rank(a) - rank(b))[0];
+    return { agent: agents[i], brain: brains[i] };
+  }
+
+  // POST /api/voice-tools/:tool?b=<portal business> — ElevenLabs calls this during a call (the CRM's
+  // confirmation agent's webhook tools: free_slots / move_appointment / cancel_appointment, botEngine.ts
+  // voiceTool). The key is per business: "x-voice-key" = HMAC-SHA256(SSO_SHARED_SECRET,
+  // "voice-tools|<portal business>") — the CRM puts it on the tools when it creates the agent.
+  app.post("/api/voice-tools/:tool", async (req: any, res: any) => {
+    const secret = process.env.SSO_SHARED_SECRET;
+    const business = String(req.query.b || "");
+    if (!secret || !business) return res.status(401).json({ ok: false, error: "unauthorized" });
+    const expected = crypto.createHmac("sha256", secret).update(`voice-tools|${business}`).digest("hex");
+    const given = String(req.headers["x-voice-key"] || "");
+    if (given.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    const found = await businessBot(business);
+    const crm = found ? crmFor(found.agent) : null;
+    if (!found || !crm) return res.json({ ok: false, error: "אין חיבור ליומן — להגיד שהצוות יחזור לתאם" });
+    try {
+      const out = await voiceTool(String(req.params.tool), req.body || {}, found.brain, crm);
+      console.log(`[voice tools] ${business} ${req.params.tool}:`, JSON.stringify(out).slice(0, 300));
+      res.json(out);
+    } catch (e: any) {
+      console.warn(`[voice tools] ${business} ${req.params.tool} failed:`, e?.message);
+      res.json({ ok: false, error: `${String(e?.message || "שגיאה").slice(0, 200)} — להגיד שהצוות יחזור לתאם` });
+    }
   });
 
   // The bot's own conversations as chat records ({ sessionId, message: { type, content } … }, the shape
