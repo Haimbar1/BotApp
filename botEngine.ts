@@ -937,8 +937,9 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
 // the owner copies it in. Each kind of call has its own goal on top (Haim, 2026-10-26):
 //  - new_lead: a new lead who hasn't booked — help, answer anything, and only once they got their
 //    answer offer the eye exam, gently (at most twice in the call, never pushing);
-//  - confirm: a booked exam not confirmed after two WhatsApp reminders — are you coming?
-//    keep / move / cancel, short.
+//  - confirm: a booked exam not confirmed after two WhatsApp reminders — are you coming? A move /
+//    cancel goes to the staff (escalate_to_human; the CRM alerts them after the call) — the voice
+//    agent's tools can only create a Cal.com booking, so it would leave the old exam on the calendar.
 // {{customer_name}}, {{customer_context}}, {{appointment_when}} and {{today}} are filled by the CRM
 // for each call (and sent to ElevenLabs as dynamic variables too).
 export type VoicePurpose = "new_lead" | "confirm" | "general";
@@ -968,10 +969,10 @@ const VOICE_GOALS: Record<VoicePurpose, string[]> = {
     "# מהלך השיחה",
     "1. פתיחה: הצג/י את עצמך ואת העסק, ואמור/י שאת/ה מתקשר/ת לגבי התור {{appointment_when}}. שאל/י: \"רציתי לוודא שזה עדיין מתאים לך?\"",
     "2. מגיע: הודה/י, ואם ישאל — כתובת, חניה, כמה זמן זה לוקח, מה להביא (משקפיים נוכחיים / עדשות). סיים/י.",
-    "3. צריך מועד אחר: בדוק/בדקי בכלי את המועדים הפנויים, הצע/י שתי אפשרויות, חזור/חזרי על המועד החדש ושאל/י \"להעביר?\" — מעבירים רק אחרי \"כן\" מפורש ורק אחרי שהכלי אישר אומרים שהועבר.",
-    "4. לא יגיע: שאל/י פעם אחת אם להעביר למועד אחר. לא — שאל/י \"לבטל את התור?\" ובטל/י רק אחרי \"כן\" מפורש. הודה/י וסיים/י.",
-    "5. לא בטוח: אמור/י שהתור נשאר, ושאם משהו משתנה אפשר לכתוב לנו בוואטסאפ.",
+    "3. צריך מועד אחר / לא יגיע: את/ה לא מזיז/ה ולא מבטל/ת את התור בעצמך, ולא קובע/ת תור חדש (התור הקיים היה נשאר ביומן ויהיו שניים). שאל/י בקצרה מתי בערך נוח לו (יום / חלק ביום), או אם לבטל. אמור/י: \"רשמתי, הצוות יעדכן את התור ויחזור אליך בהקדם\", והפעל/י escalate_to_human עם מה שביקש (להעביר — ומתי נוח לו, או לבטל).",
+    "4. לא בטוח: אמור/י שהתור נשאר, ושאם משהו משתנה אפשר לכתוב לנו בוואטסאפ.",
     "- שאלות אחרות — ענה/י בקצרה מהידע למטה, וחזור/חזרי לשאלה אם הוא מגיע.",
+    "- בסוף השיחה הפעל/י report_call_result (אישר הגעה = success).",
   ],
   general: [],
 };
@@ -988,9 +989,11 @@ export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], b
     goal.length ? "היום: {{today}}." : "",
     ...(goal.length ? ["", ...goal] : []),
     goal.length ? "\n# מה ידוע על הלקוח (מה-CRM)\n{{customer_context}}" : "",
-    goal.length
-      ? "\n# הכלים שלך\nמועדים פנויים, קביעה, הזזה וביטול של תור — רק דרך הכלים שמוגדרים לך. אל תמציא מועד פנוי ואל תאמר שתור נקבע / הועבר / בוטל לפני שהכלי אישר."
-      : "",
+    purpose === "confirm"
+      ? "\n# הכלים שלך\nבשיחה הזו לא קובעים, לא מזיזים ולא מבטלים תורים — בקשה להעביר או לבטל עוברת לצוות דרך escalate_to_human."
+      : goal.length
+        ? "\n# הכלים שלך\nמועדים פנויים, קביעה, הזזה וביטול של תור — רק דרך הכלים שמוגדרים לך. אל תמציא מועד פנוי ואל תאמר שתור נקבע / הועבר / בוטל לפני שהכלי אישר."
+        : "",
     "",
     goal.length ? "# הידע של העסק (נכתב לצ'אט בוואטסאפ — קח ממנו רק את המידע: מחירים, מבצעים, מוצרים, שעות, כתובת. איך לנהל את השיחה — לפי מה שלמעלה)" : "# הידע של העסק",
     withoutEventDates(brainText).trim(),
