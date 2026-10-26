@@ -25,7 +25,7 @@ import {
 } from "./storage.js";
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
-import { runBotTurn, voicePrompt, normalizeIsraeliPhone, type Channel, type CrmCaller } from "./botEngine.js";
+import { runBotTurn, voicePrompt, voiceFirstMessage, voiceHoursSection, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
@@ -3644,12 +3644,47 @@ export async function createApp() {
     }
   });
 
-  // GET /api/bot-brain/voice-prompt?agentId=… — the same knowledge as a prompt for the voice bot
+  // GET /api/bot-brain/voice-prompt?agentId=…&purpose=new_lead|confirm — the same knowledge as a
+  // prompt for the voice bot, for that kind of call
   app.get("/api/bot-brain/voice-prompt", requireAuth, async (req: any, res: any) => {
     const agent = ownAgentOr403(req, res, req.query.agentId);
     if (!agent) return;
+    const purpose = (VOICE_PURPOSES as string[]).includes(String(req.query.purpose)) ? (String(req.query.purpose) as VoicePurpose) : "general";
     const [brain, lessons, brainText] = await Promise.all([getBrain(agent.id), listLessons(agent.id), brainTextFor(agent)]);
-    res.json({ success: true, prompt: voicePrompt(agent, brain, lessons, brainText) });
+    res.json({ success: true, prompt: voicePrompt(agent, brain, lessons, brainText, purpose), firstMessage: voiceFirstMessage(agent, purpose) });
+  });
+
+  // POST /api/crm/voice-prompt { purpose } — the CRM, before an AI voice call (Haim, 2026-10-26: the
+  // voice bot talks from the smart bot's knowledge, per business). Server-to-server: "x-crm-token"
+  // signed with SSO_SHARED_SECRET (typ 'voice-prompt', the portal business id). The business's bot:
+  // the one on that business (the one answering WhatsApp here first, then the web, then any).
+  app.post("/api/crm/voice-prompt", async (req: any, res: any) => {
+    const secret = process.env.SSO_SHARED_SECRET;
+    if (!secret) return res.status(500).json({ error: "sso-not-configured" });
+    let payload: any;
+    try {
+      payload = jwt.verify(String(req.headers["x-crm-token"] || ""), secret);
+    } catch {
+      return res.status(401).json({ error: "invalid-token" });
+    }
+    if (payload?.typ !== "voice-prompt" || !payload?.portalTenantId) return res.status(401).json({ error: "invalid-token" });
+    const tenant = String(payload.portalTenantId);
+    const purpose = (VOICE_PURPOSES as string[]).includes(String(req.body?.purpose)) ? (String(req.body.purpose) as VoicePurpose) : "new_lead";
+    const agents = readAgents().filter((a: any) => agentTenant(a) === tenant);
+    if (!agents.length) return res.status(404).json({ error: "no-bot", message: "לעסק הזה אין בוט ב-BotApp" });
+    const brains = await Promise.all(agents.map((a: any) => getBrain(a.id)));
+    const rank = (i: number) => (brains[i].nativeWhatsapp ? 0 : brains[i].nativeWeb ? 1 : 2);
+    const i = agents.map((_: any, k: number) => k).sort((a: number, b: number) => rank(a) - rank(b))[0];
+    const agent = agents[i];
+    const [lessons, brainText] = await Promise.all([listLessons(agent.id), brainTextFor(agent)]);
+    res.json({
+      agentId: agent.id,
+      botName: agent.name || "",
+      prompt: voicePrompt(agent, brains[i], lessons, brainText, purpose),
+      firstMessage: voiceFirstMessage(agent, purpose),
+      // added at the end of an agent's own prompt (the CRM's new-lead calls keep the ElevenLabs prompt)
+      hoursSection: voiceHoursSection(brains[i]),
+    });
   });
 
   // The bot's own conversations as chat records ({ sessionId, message: { type, content } … }, the shape

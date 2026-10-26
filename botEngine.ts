@@ -933,21 +933,72 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
 // ---------- the voice bot's prompt ----------
 
 // The same knowledge, written for a voice agent (ElevenLabs): no buttons / JSON / images, short
-// spoken sentences. The owner copies it into the voice agent.
-export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], brainText: string): string {
+// spoken sentences. The CRM sends it to the agent with every call (POST /api/crm/voice-prompt), or
+// the owner copies it in. Each kind of call has its own goal on top (Haim, 2026-10-26):
+//  - new_lead: a new lead who hasn't booked — help, answer anything, and only once they got their
+//    answer offer the eye exam, gently (at most twice in the call, never pushing);
+//  - confirm: a booked exam not confirmed after two WhatsApp reminders — are you coming?
+//    keep / move / cancel, short.
+// {{customer_name}}, {{customer_context}}, {{appointment_when}} and {{today}} are filled by the CRM
+// for each call (and sent to ElevenLabs as dynamic variables too).
+export type VoicePurpose = "new_lead" | "confirm" | "general";
+export const VOICE_PURPOSES: VoicePurpose[] = ["new_lead", "confirm", "general"];
+
+const VOICE_GOALS: Record<VoicePurpose, string[]> = {
+  new_lead: [
+    "# מטרת השיחה",
+    "את/ה מתקשר/ת אל {{customer_name}}, שהשאיר/ה פרטים אצלנו ועדיין לא קבע/ה תור לבדיקת ראייה. המטרה: שהלקוח יקבל תשובות לכל מה שמעניין אותו — ואם מתאים לו, שיצא מהשיחה עם תור לבדיקה. לא לדחוף.",
+    "",
+    "# מהלך השיחה",
+    "1. פתיחה: הצג/י את עצמך ואת העסק במשפט אחד, אמור/י שאת/ה חוזר/ת אליו כי השאיר פרטים, ושאל/י אם זה זמן נוח לדבר. לא נוח — שאל/י מתי נוח שנחזור, הודה/י וסיים/י.",
+    "2. הקשבה: שאל/י במה אפשר לעזור / מה חיפש (משקפי ראייה, מולטיפוקל, עדשות מגע, משקפי שמש, מבצע שראה). תן/י לו לדבר.",
+    "3. תשובות: ענה/י על כל שאלה — מחירים, מבצעים, מוצרים, שעות, מיקום, משלוחים, הזמנה קיימת — מהידע של העסק למטה ומהכלים שלך. תשובה קצרה, ואז בדוק/בדקי שהבין (\"זה עונה על מה ששאלת?\").",
+    "4. רק אחרי שהלקוח קיבל תשובה והבין — הצע/י בעדינות לקבוע בדיקת ראייה (למשל \"רוצה שאבדוק לך מתי יש תור פנוי לבדיקה?\"). זו לא מכירה — זו עזרה.",
+    "5. מסכים: בדוק/בדקי בכלי את המועדים הפנויים, הצע/י שתי אפשרויות, וכשבחר — חזור/חזרי על היום והשעה ושאל/י \"לקבוע?\". קובעים רק אחרי \"כן\" מפורש, ורק אחרי שהכלי אישר אומרים שנקבע. אחר כך: תגיע הודעת אישור בוואטסאפ.",
+    "6. לא עכשיו / לא מעוניין: מכבדים. אפשר לשאול פעם אחת אם להזכיר לו בהמשך, ואז מודים ומסיימים בנעימות. ביקש שלא יתקשרו — אומרים שנרשם ולא נתקשר שוב.",
+    "",
+    "# בלי לחץ",
+    "- לכל היותר שתי הצעות לקבוע תור בכל השיחה, ולעולם לא שתיים ברצף — בין הצעה להצעה הלקוח שאל משהו וקיבל תשובה.",
+    "- אל תחזור/תחזרי על הצעה שהלקוח דחה, אל תתווכח/י ואל תשכנע/י. לקוח שמרגיש בנוח חוזר לבד.",
+  ],
+  confirm: [
+    "# מטרת השיחה",
+    "את/ה מתקשר/ת אל {{customer_name}} לגבי התור שלו/ה לבדיקת ראייה {{appointment_when}}. נשלחו אליו תזכורות בוואטסאפ ולא התקבל אישור הגעה. המטרה: לדעת אם הוא מגיע — בשיחה קצרה ונעימה (עד שתי דקות).",
+    "",
+    "# מהלך השיחה",
+    "1. פתיחה: הצג/י את עצמך ואת העסק, ואמור/י שאת/ה מתקשר/ת לגבי התור {{appointment_when}}. שאל/י: \"רציתי לוודא שזה עדיין מתאים לך?\"",
+    "2. מגיע: הודה/י, ואם ישאל — כתובת, חניה, כמה זמן זה לוקח, מה להביא (משקפיים נוכחיים / עדשות). סיים/י.",
+    "3. צריך מועד אחר: בדוק/בדקי בכלי את המועדים הפנויים, הצע/י שתי אפשרויות, חזור/חזרי על המועד החדש ושאל/י \"להעביר?\" — מעבירים רק אחרי \"כן\" מפורש ורק אחרי שהכלי אישר אומרים שהועבר.",
+    "4. לא יגיע: שאל/י פעם אחת אם להעביר למועד אחר. לא — שאל/י \"לבטל את התור?\" ובטל/י רק אחרי \"כן\" מפורש. הודה/י וסיים/י.",
+    "5. לא בטוח: אמור/י שהתור נשאר, ושאם משהו משתנה אפשר לכתוב לנו בוואטסאפ.",
+    "- שאלות אחרות — ענה/י בקצרה מהידע למטה, וחזור/חזרי לשאלה אם הוא מגיע.",
+  ],
+  general: [],
+};
+
+export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], brainText: string, purpose: VoicePurpose = "general"): string {
   const business = agent?.businessName || agent?.name || "העסק";
-  const qa = brain.qa.filter((x) => x.q.trim() && x.a.trim());
+  const qa = brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
   const active = lessons.filter((l) => l.active);
+  const goal = VOICE_GOALS[purpose] || [];
   return [
     `את/ה הנציג/ה הקולי/ת של "${business}" בשיחת טלפון. מדברים בעברית, במשפטים קצרים וברורים, בטון חם וטבעי — כמו נציג אנושי.`,
     "אל תקריא רשימות ארוכות, קישורים או סימנים; אמור לכל היותר שתי אפשרויות בכל פעם ושאל מה מתאים.",
     "מספרים ושעות אמור במילים טבעיות (\"בעשר וחצי\"). אם לא יודעים משהו — אמור שנציג יחזור אליו, ואל תמציא.",
+    goal.length ? "היום: {{today}}." : "",
+    ...(goal.length ? ["", ...goal] : []),
+    goal.length ? "\n# מה ידוע על הלקוח (מה-CRM)\n{{customer_context}}" : "",
+    goal.length
+      ? "\n# הכלים שלך\nמועדים פנויים, קביעה, הזזה וביטול של תור — רק דרך הכלים שמוגדרים לך. אל תמציא מועד פנוי ואל תאמר שתור נקבע / הועבר / בוטל לפני שהכלי אישר."
+      : "",
     "",
-    "# הידע של העסק",
-    brainText.trim(),
+    goal.length ? "# הידע של העסק (נכתב לצ'אט בוואטסאפ — קח ממנו רק את המידע: מחירים, מבצעים, מוצרים, שעות, כתובת. איך לנהל את השיחה — לפי מה שלמעלה)" : "# הידע של העסק",
+    withoutEventDates(brainText).trim(),
     qa.length ? "\n# שאלות ותשובות\n" + qa.map((x) => `ש: ${x.q.trim()}\nת: ${x.a.trim()}`).join("\n\n") : "",
     active.length ? "\n# דגשים שנלמדו משיחות\n" + active.map((l) => `- ${l.text}`).join("\n") : "",
-    brain.voiceNotes?.trim() ? "\n# הנחיות לשיחה הקולית\n" + brain.voiceNotes.trim() : "",
+    eventsSection(brain, israelNow().date),
+    brain.booking?.enabled !== false && goal.length ? "\n" + voiceHoursSection(brain) : "",
+    brain.voiceNotes?.trim() ? "\n# הנחיות לשיחה הקולית (מבעל העסק — גוברות על כל השאר)\n" + brain.voiceNotes.trim() : "",
   ]
     .filter((x) => x !== "")
     .join("\n")
@@ -955,4 +1006,43 @@ export function voicePrompt(agent: any, brain: BotBrain, lessons: BotLesson[], b
     .replace(/^.*(?:JSON|list_options).*$/gim, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// The booking hours as the voice agent must use them (Haim, 2026-10-26: the ElevenLabs agent made up
+// "the last appointment on Friday is 11:40" on its own): each weekday's hours with its last
+// appointment = closing minus one appointment's length, and the next 14 days that differ (events,
+// holidays). Added at the end of the agent's own prompt for new-lead calls, and in voicePrompt.
+export function voiceHoursSection(brain: Pick<BotBrain, "booking" | "events" | "closedOnHolidays">): string {
+  const step = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+  const describe = (spec: string) => {
+    const rs = ranges(spec).filter(([a, b]) => a + step <= b);
+    if (!rs.length) return "";
+    const last = rs[rs.length - 1];
+    return `${rs.map(([a, b]) => `${fromMinutes(a)}–${fromMinutes(b)}`).join(", ")} — תור ראשון ${fromMinutes(rs[0][0])}, תור אחרון ${fromMinutes(last[1] - step)}`;
+  };
+  const week = DAY_NAMES.map((name, i) => `- יום ${name}: ${describe(brain.booking.hours[String(i)] || "") || "אין תורים"}`);
+  const today = israelNow().date;
+  const special: string[] = [];
+  for (let i = 0; i < 14; i++) {
+    const date = addDays(today, i);
+    const d = dayHours(brain, date);
+    const usual = brain.booking.hours[String(weekdayOf(date))] || "";
+    if (d.hours === usual && !d.why) continue;
+    special.push(`- ${showDay(date)}${d.why ? ` (${d.why})` : ""}: ${describe(d.hours) || "סגור — אין תורים"}`);
+  }
+  return [
+    "# שעות קבלה לבדיקות ותור אחרון (מהמערכת — גובר על כל שעה אחרת שכתובה למעלה)",
+    `כל בדיקה נמשכת ${step} דקות, ולכן התור האחרון ביום הוא ${step} דקות לפני סגירה — לא לפני ולא אחרי.`,
+    ...week,
+    ...(special.length ? ["ימים בשבועיים הקרובים שבהם השעות שונות:", ...special] : []),
+    "- אל תציע ואל תקבע תור מחוץ לשעות האלה, ואל תחליט לבד על שעת סיום אחרת. מועדים פנויים — רק מהכלי; אם הכלי מחזיר שעה מחוץ לשעות האלה, אל תציע אותה.",
+  ].join("\n");
+}
+
+// What the agent says when the customer picks up (a call the business starts) — null = the agent's own
+export function voiceFirstMessage(agent: any, purpose: VoicePurpose): string | null {
+  const business = agent?.businessName || agent?.name || "העסק";
+  if (purpose === "new_lead") return `היי {{customer_name}}, מדברים מ${business}. השארת אצלנו פרטים, ורציתי לראות במה אפשר לעזור — זה זמן נוח לדבר?`;
+  if (purpose === "confirm") return `היי {{customer_name}}, מדברים מ${business}, לגבי התור שלך לבדיקת ראייה {{appointment_when}}. רציתי לוודא שזה עדיין מתאים לך?`;
+  return null;
 }

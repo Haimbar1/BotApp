@@ -27,6 +27,13 @@ interface BotEvent { id: string; from: string; to?: string; title: string; detai
 interface ChatLine { role: "user" | "bot"; text: string; options?: string[] }
 
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+// the kinds of AI voice calls the CRM makes (botEngine.ts's VOICE_GOALS)
+type VoicePurpose = "new_lead" | "confirm" | "general";
+const VOICE_PURPOSE_LABELS: [VoicePurpose, string][] = [
+  ["new_lead", "🆕 ליד חדש — קביעת תור"],
+  ["confirm", "✅ אישור הגעה לתור"],
+  ["general", "כללי (בלי מטרה)"],
+];
 
 const card = "bg-[#0C0D12] rounded-xl border border-slate-800 p-4 flex flex-col gap-3";
 const input = "w-full bg-[#11131a] border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500";
@@ -51,6 +58,7 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [autofilling, setAutofilling] = useState(false);
   const [newLesson, setNewLesson] = useState("");
   const [voice, setVoice] = useState("");
+  const [voicePurpose, setVoicePurpose] = useState<VoicePurpose>("new_lead");
   const autofillTried = useRef<string>("");
 
   const json = (r: Response) => r.json().catch(() => ({}));
@@ -156,10 +164,10 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     if (d.success) setLessons(d.lessons || []);
   };
 
-  const loadVoice = async () => {
-    const r = await request(`/api/bot-brain/voice-prompt?agentId=${encodeURIComponent(agentId)}`);
+  const loadVoice = async (purpose = voicePurpose) => {
+    const r = await request(`/api/bot-brain/voice-prompt?agentId=${encodeURIComponent(agentId)}&purpose=${purpose}`);
     const d: any = await json(r);
-    setVoice(d.prompt || "");
+    setVoice(d.prompt ? (d.firstMessage ? `[משפט פתיחה] ${d.firstMessage}\n\n` : "") + d.prompt : "");
   };
 
 
@@ -363,10 +371,27 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       {/* Voice bot */}
       <div className={card}>
         <h4 className="text-xs font-black text-white">📞 פרומפט לבוט הקולי</h4>
-        <p className="text-[10.5px] text-slate-500">אותו ידע (שכל + שאלות ותשובות + מה שנלמד), מנוסח לשיחת טלפון. מעתיקים לסוכן הקולי.</p>
-        <textarea className={`${input} min-h-[60px]`} rows={2} value={brain.voiceNotes || ""} placeholder="הנחיות נוספות לשיחה הקולית בלבד (לא חובה)" onChange={(e) => edit({ voiceNotes: e.target.value })} />
+        <p className="text-[10.5px] text-slate-500">
+          אותו ידע (שכל + שאלות ותשובות + מה שנלמד + אירועים), מנוסח לשיחת טלפון, עם מטרה לכל סוג שיחה. ה-CRM שולח אותו לסוכן הקולי בכל שיחה, יחד עם מה שידוע על הלקוח — אין צורך להעתיק.
+        </p>
+        <textarea className={`${input} min-h-[60px]`} rows={2} value={brain.voiceNotes || ""} placeholder="הנחיות נוספות לשיחה הקולית בלבד (לא חובה) — גוברות על כל השאר" onChange={(e) => edit({ voiceNotes: e.target.value })} />
+        <div className="flex gap-2 flex-wrap">
+          {VOICE_PURPOSE_LABELS.map(([p, label]) => (
+            <button
+              key={p}
+              type="button"
+              className={`${btn} ${voicePurpose === p ? "border-sky-500/60 text-sky-200" : "border-slate-700 text-slate-400"}`}
+              onClick={() => {
+                setVoicePurpose(p);
+                if (voice) loadVoice(p);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-2">
-          <button type="button" className={`${btn} border-slate-700 text-slate-200`} onClick={loadVoice}>
+          <button type="button" className={`${btn} border-slate-700 text-slate-200`} onClick={() => loadVoice()}>
             הצג פרומפט קולי
           </button>
           {voice && (
