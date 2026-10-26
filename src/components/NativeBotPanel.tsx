@@ -44,6 +44,11 @@ const showDate = (iso: string) => {
 };
 const newQaId = () => `qa_${Math.random().toString(36).slice(2, 10)}`;
 
+// Whether the tab holds unsaved changes — App asks before leaving it (another tab / another agent
+// unmounts it, and the edits used to vanish without a word).
+let unsavedNow = false;
+export const smartBotHasUnsaved = () => unsavedNow;
+
 export default function NativeBotPanel({ agentId, request }: { agentId: string; request: Request }) {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
@@ -58,6 +63,24 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const [autofilling, setAutofilling] = useState(false);
   const [newLesson, setNewLesson] = useState("");
   const autofillTried = useRef<string>("");
+  // unsaved edits, for the automatic Q&A fill that finishes later (it must not replace them)
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  unsavedNow = dirty;
+  useEffect(() => () => {
+    unsavedNow = false;
+  }, []);
+
+  // closing / reloading the page with unsaved changes asks first
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const json = (r: Response) => r.json().catch(() => ({}));
 
@@ -116,12 +139,22 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       // the AI takes a while — merge into what is stored NOW (the switch may have been flipped meanwhile)
       const fresh: any = await json(await request(`/api/bot-brain?agentId=${encodeURIComponent(agentId)}`));
       if (fresh?.brain) current = fresh.brain;
-      const known = new Set(current.qa.map((x) => x.q.trim()));
-      const added = (d.qa || []).filter((x: any) => !known.has(String(x.q).trim())).map((x: any) => ({ id: newQaId(), q: x.q, a: x.a }));
-      const hours = Object.keys(current.booking.hours || {}).some((k) => current.booking.hours[k]) ? current.booking.hours : { ...current.booking.hours, ...(d.hours || {}) };
-      const next: Brain = { ...current, qa: [...current.qa, ...added], booking: { ...current.booking, hours }, autofilledAt: new Date().toISOString() };
-      await save(next, true);
-      setMessage(added.length ? `נוספו ${added.length} שאלות ותשובות מתוך השכל — עברו עליהן ותקנו מה שצריך ✨` : "לא נמצאו שאלות חדשות להוסיף");
+      const merge = (base: Brain): Brain => {
+        const known = new Set(base.qa.map((x) => x.q.trim()));
+        const added = (d.qa || []).filter((x: any) => !known.has(String(x.q).trim())).map((x: any) => ({ id: newQaId(), q: x.q, a: x.a }));
+        const hours = Object.keys(base.booking.hours || {}).some((k) => base.booking.hours[k]) ? base.booking.hours : { ...base.booking.hours, ...(d.hours || {}) };
+        return { ...base, qa: [...base.qa, ...added], booking: { ...base.booking, hours }, autofilledAt: new Date().toISOString() };
+      };
+      const addedCount = merge(current).qa.length - current.qa.length;
+      if (dirtyRef.current) {
+        // the owner is editing: add to what's on the screen and let their "שמור" save it all —
+        // saving the server's copy here used to throw their unsaved edits away
+        setBrain((b) => (b ? merge(b) : b));
+        setMessage(addedCount ? `נוספו ${addedCount} שאלות ותשובות מתוך השכל — לחצו "שמור שינויים 💾" כדי לשמור ✨` : "לא נמצאו שאלות חדשות להוסיף");
+        return;
+      }
+      await save(merge(current), true);
+      setMessage(addedCount ? `נוספו ${addedCount} שאלות ותשובות מתוך השכל — עברו עליהן ותקנו מה שצריך ✨` : "לא נמצאו שאלות חדשות להוסיף");
     } catch (e: any) {
       setMessage(e?.message || "המילוי האוטומטי נכשל");
     } finally {
@@ -154,6 +187,12 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
   const addEvent = () =>
     edit({ events: [...events, { id: `ev_${Math.random().toString(36).slice(2, 10)}`, from: new Date().toISOString().slice(0, 10), to: "", title: "", details: "", effect: "closed", hours: "" }] });
   const setHours = (day: number, value: string) => edit({ booking: { ...brain.booking, hours: { ...brain.booking.hours, [String(day)]: value } } });
+
+  const saveButton = (
+    <button type="button" disabled={saving || !dirty} className={`${btn} px-5 py-2 text-xs ${dirty ? "bg-emerald-600 border-emerald-500 text-white" : "border-slate-700 text-slate-400"}`} onClick={() => save(brain)}>
+      {saving ? "שומר…" : dirty ? "שמור שינויים 💾" : "נשמר ✓"}
+    </button>
+  );
 
   const lessonAction = async (body: any) => {
     const r = await request("/api/bot-brain/lessons", { method: "POST", body: JSON.stringify({ agentId, ...body }) });
@@ -351,11 +390,16 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       </div>
 
       {/* Save */}
-      <div className="flex justify-end">
-        <button type="button" disabled={saving || !dirty} className={`${btn} px-5 py-2 text-xs ${dirty ? "bg-emerald-600 border-emerald-500 text-white" : "border-slate-700 text-slate-400"}`} onClick={() => save(brain)}>
-          {saving ? "שומר…" : dirty ? "שמור שינויים 💾" : "נשמר ✓"}
-        </button>
-      </div>
+      <div className="flex justify-end">{saveButton}</div>
+
+      {/* Unsaved changes: the save button stays in view wherever the owner is on the page — the Q&A
+          is at the top and the only button was far below it, so an edited answer was easily left unsaved */}
+      {dirty && (
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 z-40 flex items-center justify-between gap-3 bg-amber-950/95 border border-amber-500/50 rounded-xl px-4 py-2.5 shadow-2xl" dir="rtl">
+          <span className="text-[11px] font-bold text-amber-200">יש שינויים בבוט החכם שעוד לא נשמרו</span>
+          {saveButton}
+        </div>
+      )}
 
       <TestChat agentId={agentId} request={request} onNotes={load} />
 

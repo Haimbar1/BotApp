@@ -37,6 +37,8 @@ const cache = {
 // What is currently stored, as JSON text per "kind:docId" — used to write only what changed.
 const persisted = new Map<string, string>();
 let writeChain: Promise<void> = Promise.resolve();
+// The last database write's failure (null = it went through), so a save can say it didn't
+let lastWriteError: unknown = null;
 
 const key = (kind: Kind, docId: string) => `${kind}:${docId}`;
 
@@ -192,7 +194,9 @@ function schedulePersist() {
         seen.delete(k);
       }
       await persistPhoneMap();
+      lastWriteError = null;
     } catch (e) {
+      lastWriteError = e;
       console.error("[STORAGE] Postgres write failed (will retry on the next change):", e);
     }
   });
@@ -399,4 +403,12 @@ export async function lookupBotIdByPhone(phoneNumberId: string, displayPhone?: s
 // For tests / shutdown.
 export async function flushStorage() {
   await writeChain;
+}
+
+// Waits for the writes so far and says whether they reached the database (always true with files).
+// A route that answers "saved" awaits this first: the write itself never throws, so without it a
+// save during a database outage answered success and was gone after the next reload.
+export async function storageWritten(): Promise<boolean> {
+  await writeChain;
+  return !pool || lastWriteError === null;
 }

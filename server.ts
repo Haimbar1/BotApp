@@ -20,6 +20,7 @@ import {
   setSessionsDoc,
   syncStorage,
   flushStorage,
+  storageWritten,
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
@@ -1137,7 +1138,7 @@ export async function createApp() {
   });
 
   // Save/Synchronize cloud agents list
-  app.post("/api/agents", requireAuth, (req: any, res: any) => {
+  app.post("/api/agents", requireAuth, async (req: any, res: any) => {
     const { agents } = req.body;
     if (!Array.isArray(agents)) {
       return res.status(400).json({ success: false, error: "invalid_payload", message: "הפרופילים חייבים להיות במבנה של מערך" });
@@ -1204,11 +1205,12 @@ export async function createApp() {
           return kept.tenantId == null && sessionTenant ? { ...kept, tenantId: sessionTenant } : kept;
         });
       }
-      const saved = saveAgents(next);
+      // Answered only once the database has it — a write that failed used to answer success
+      const saved = saveAgents(next) && (await storageWritten());
       if (saved) {
         return res.json({ success: true });
       } else {
-        return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת קובץ הסוכנים בשרת" });
+        return res.status(500).json({ success: false, error: "write_failed", message: "השמירה לא הגיעה למסד הנתונים — השינויים לא נשמרו. נסו לשמור שוב בעוד רגע" });
       }
     } else {
       // Normal user: read existing agents and replace ONLY those that belong to the user
@@ -1281,11 +1283,11 @@ export async function createApp() {
 
       // Merge and save
       const mergedList = [...otherAgents, ...userProposedAgents.map(keepStoredWhatsappConfig)];
-      const saved = saveAgents(mergedList);
+      const saved = saveAgents(mergedList) && (await storageWritten());
       if (saved) {
         return res.json({ success: true });
       } else {
-        return res.status(500).json({ success: false, error: "write_failed", message: "נכשל בשמירת קובץ הסוכנים בשרת" });
+        return res.status(500).json({ success: false, error: "write_failed", message: "השמירה לא הגיעה למסד הנתונים — השינויים לא נשמרו. נסו לשמור שוב בעוד רגע" });
       }
     }
   });
@@ -3091,8 +3093,11 @@ export async function createApp() {
   // The agent's prompt as the bot gets it: what was last sent to n8n (or the screen's prompt), with
   // the portal's current frames
   async function brainTextFor(agent: any): Promise<string> {
+    // The prompt as saved on the agent first: the last n8n sync's copy is only a fallback. It used to
+    // come first, so a change saved without a successful sync never reached the bot (Haim, 2026-10-26:
+    // "כשאני מעדכן את הבוט החכם זה לא נשמר" — the old phone number kept coming back).
     const p = agent?.n8nSync?.payload || {};
-    const text = String(p.Prompt || p.prompt || p.businessPrompt || agent?.businessPrompt || "");
+    const text = String(agent?.businessPrompt || p.Prompt || p.prompt || p.businessPrompt || "");
     const tenant = agentTenant(agent);
     const topic = tenant ? await siteFramesTopic(tenant).catch(() => null) : null;
     return topic === null ? text : withFramesTopic(text, topic);
@@ -3480,6 +3485,8 @@ export async function createApp() {
     res.status(200).send("ok");
   });
 
+  const BRAIN_SAVE_FAILED = "השמירה לא הגיעה למסד הנתונים — השינויים לא נשמרו. נסו לשמור שוב בעוד רגע";
+
   // GET /api/bot-brain?agentId=… → { brain, lessons, notes }
   app.get("/api/bot-brain", requireAuth, async (req: any, res: any) => {
     const agent = ownAgentOr403(req, res, req.query.agentId);
@@ -3501,9 +3508,7 @@ export async function createApp() {
       .slice(0, 300);
     const hours: Record<string, string> = {};
     for (let d = 0; d < 7; d++) hours[String(d)] = String(b.booking?.hours?.[String(d)] || "").slice(0, 60);
-    const current = await getBrain(agent.id);
-    const brain = await saveBrain({
-      ...current,
+    const fields = {
       nativeWeb: !!b.nativeWeb,
       nativeWhatsapp: !!b.nativeWhatsapp,
       qa,
@@ -3530,8 +3535,15 @@ export async function createApp() {
         .slice(0, 200),
       closedOnHolidays: b.closedOnHolidays !== false,
       ...(b.autofilledAt ? { autofilledAt: String(b.autofilledAt) } : {}),
-    });
-    res.json({ success: true, brain });
+    };
+    try {
+      const brain = await saveBrain({ ...(await getBrain(agent.id)), ...fields });
+      res.json({ success: true, brain });
+    } catch (e: any) {
+      // Express 4 doesn't answer a request whose async handler threw — the screen sat on "שומר…"
+      console.error("[BOT] saving the brain failed:", e);
+      res.status(500).json({ success: false, message: BRAIN_SAVE_FAILED });
+    }
   });
 
   // POST /api/bot-brain/autofill { agentId } — the owner's customers are busy, so the bot writes its
@@ -3670,12 +3682,17 @@ export async function createApp() {
     const purpose = String(req.body?.purpose || "");
     if (!(VOICE_PURPOSES as string[]).includes(purpose)) return res.status(400).json({ success: false, message: "סוג שיחה לא ידוע" });
     const text = String(req.body?.prompt || "").replace(/\r\n/g, "\n").trim().slice(0, 60000);
-    const current = await getBrain(agent.id);
-    const voicePrompts = { ...(current.voicePrompts || {}) };
-    if (text) voicePrompts[purpose] = text;
-    else delete voicePrompts[purpose];
-    await saveBrain({ ...current, voicePrompts });
-    res.json({ success: true, edited: !!text });
+    try {
+      const current = await getBrain(agent.id);
+      const voicePrompts = { ...(current.voicePrompts || {}) };
+      if (text) voicePrompts[purpose] = text;
+      else delete voicePrompts[purpose];
+      await saveBrain({ ...current, voicePrompts });
+      res.json({ success: true, edited: !!text });
+    } catch (e: any) {
+      console.error("[BOT] saving the voice prompt failed:", e);
+      res.status(500).json({ success: false, message: BRAIN_SAVE_FAILED });
+    }
   });
 
   // POST /api/bot-brain/voice-prompt/ai-edit { agentId, purpose, prompt, instruction } — the owner says

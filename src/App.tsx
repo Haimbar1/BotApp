@@ -60,7 +60,7 @@ import { AppSettingsMenu } from "./components/AppSettingsMenu";
 import CountryPhoneInput from "./components/CountryPhoneInput";
 import { Language, languageNames, translations } from "./translations";
 import WhatsAppSettingsModal from "./components/WhatsAppSettingsModal";
-import NativeBotPanel from "./components/NativeBotPanel";
+import NativeBotPanel, { smartBotHasUnsaved } from "./components/NativeBotPanel";
 import { FirebaseMediaUploader, FirebaseConfigModal } from "./components/FirebaseMediaUploader";
 import { AgentConfig, MessageSourceInfo } from "./types";
 import { SEED_AGENT_252, DEFAULT_INITIAL_AGENTS } from "./defaultAgents";
@@ -3040,11 +3040,13 @@ export default function App() {
     }
   };
 
-  // Synchronously save agent arrays to server-side JSON file
-  const saveAgentsToServer = async (updatedAgents: AgentConfig[], token = sessionToken, isDebounced = false) => {
+  // Save the agent list on the server. Resolves to an error message when the server didn't keep it
+  // ("" = saved, or a delayed save that will report by itself). The answer used to be ignored, so a
+  // refused or failed save looked saved and the change was gone after a reload.
+  const saveAgentsToServer = async (updatedAgents: AgentConfig[], token = sessionToken, isDebounced = false): Promise<string> => {
     try {
       localStorage.setItem("n8n_agents_configs", JSON.stringify(updatedAgents));
-      if (!token) return;
+      if (!token) return "";
 
       if (globalSaveTimeoutId) {
         clearTimeout(globalSaveTimeoutId);
@@ -3052,33 +3054,40 @@ export default function App() {
       // The scope of the list being saved now (not when a delayed save fires)
       const scope = agentListScope || undefined;
 
+      const post = async () => {
+        try {
+          const res = await apiFetch("/api/agents", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ agents: updatedAgents, scope })
+          });
+          const data: any = await res.json().catch(() => ({}));
+          if (res.ok && data.success !== false) return "";
+          return data.message || `השמירה נכשלה (שגיאת שרת ${res.status})`;
+        } catch (e) {
+          console.error("Failed persisting agents to server database:", e);
+          return "השמירה נכשלה — אין חיבור לשרת";
+        }
+      };
+      const report = (error: string) => {
+        if (!error) return;
+        setSyncStatus("error");
+        setSyncMessage(`⚠️ השינויים לא נשמרו: ${error}`);
+      };
+
       if (isDebounced) {
-        globalSaveTimeoutId = setTimeout(async () => {
-          try {
-            await apiFetch("/api/agents", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
-              },
-              body: JSON.stringify({ agents: updatedAgents, scope })
-            });
-          } catch (e) {
-            console.error("Failed persisting agents to server database in debounced call:", e);
-          }
-        }, 1500);
-      } else {
-        await apiFetch("/api/agents", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ agents: updatedAgents, scope })
-        });
+        globalSaveTimeoutId = setTimeout(async () => report(await post()), 1500);
+        return "";
       }
+      const error = await post();
+      report(error);
+      return error;
     } catch (e) {
       console.error("Failed persisting agents to server database:", e);
+      return "השמירה נכשלה";
     }
   };
 
@@ -3916,9 +3925,14 @@ ${videos || "(לא הוגדר)"}
     exitBulkDeleteMode();
   };
 
+  // Leaving "🤖 הבוט החכם" with unsaved changes asks first (leaving drops them)
+  const leaveSmartBotOk = () =>
+    !smartBotHasUnsaved() || window.confirm("יש שינויים בבוט החכם שלא נשמרו. לצאת בלי לשמור?\n\n(לשמירה: ביטול, ואז \"שמור שינויים 💾\")");
+
   // Switch between agents
   const selectAgent = (id: string) => {
     const selected = agents.find(agent => agent.id === id);
+    if (selected && id !== activeId && !leaveSmartBotOk()) return;
     if (selected) {
       setActiveId(id);
       loadAgentToForm(selected);
@@ -4485,11 +4499,15 @@ ${videos || "(לא הוגדר)"}
       });
 
       setAgents(updatedList);
+
+      // 3. Immediately persist updated agents list to server API — and say so if it didn't keep it
+      const saveError = await saveAgentsToServer(updatedList, sessionToken, false);
+      if (saveError) {
+        alert(`⚠️ השינויים לא נשמרו: ${saveError}\n\nהטקסט שכתבתם עדיין כאן — לחצו "שמור" שוב.`);
+        return;
+      }
       setPromptBuilderBackup(updatedAgent);
       setDirtyAgents(prev => ({ ...prev, [activeId]: false }));
-
-      // 3. Immediately persist updated agents list to server API
-      await saveAgentsToServer(updatedList, sessionToken, false);
 
       // 4. Trigger webhook synchronization using the updated agent override
       await handleSyncToWebhook(updatedAgent, false);
@@ -6454,6 +6472,7 @@ ${videos || "(לא הוגדר)"}
               <button
                 type="button"
                 onClick={() => {
+                  if (!leaveSmartBotOk()) return;
                   setAgentPanelTab("prompt");
                   setActiveModalTab("botIdentity");
                   const currentAgent = agents.find(a => a.id === activeId);
@@ -6495,6 +6514,7 @@ ${videos || "(לא הוגדר)"}
                       key={tab.key}
                       type="button"
                       onClick={() => {
+                        if (tab.key !== agentPanelTab && !leaveSmartBotOk()) return;
                         setAgentPanelTab(tab.key);
                         if (tab.key === "prompt") {
                           setActiveModalTab("botIdentity");
@@ -6538,6 +6558,7 @@ ${videos || "(לא הוגדר)"}
                       key={tab.key}
                       type="button"
                       onClick={() => {
+                        if (tab.key !== agentPanelTab && !leaveSmartBotOk()) return;
                         setAgentPanelTab(tab.key);
                         if (tab.key === "prompt") {
                           setActiveModalTab("botIdentity");
