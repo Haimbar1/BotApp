@@ -1004,7 +1004,11 @@ export function voiceAppointmentTools(withTools: boolean): string {
     ? [
         "# הזזה וביטול (יש כלים — עושים את זה בשיחה)",
         "(הכלים פנימיים — ללקוח לא מזכירים אותם, רק \"רגע, בודקים ביומן\".)",
-        "- מועד אחר: לשאול איזה יום ובאיזה חלק של היום נוח, ולבדוק עם free_slots (עם היום, או בלי יום — המועדים הקרובים). להציע שתי אפשרויות בלבד — את ה-say שלהן, כמו שהוא. אחרי הבחירה — לחזור על המועד במילים ולשאול \"להעביר את התור לשם?\". רק אחרי \"כן\" מפורש — move_appointment עם start = ה-slot_code של המועד שנבחר. רק אחרי שהכלי אישר — להגיד את ה-say שחזר (התור הועבר, תגיע הודעת אישור בוואטסאפ).",
+        "- מועד אחר — פשוט וקצר, בלי להתברבר:",
+        "  1. לשאול איזה יום נוח, ולבדוק עם free_slots (day = היום שנאמר; בלי יום — הימים הקרובים).",
+        "  2. להגיד את הטווח הפנוי (free) כמו שהוא — למשל \"ביום רביעי פנוי בין שתים עשרה לארבע, באיזו שעה נוח?\". לא להציע שעות בודדות ולא להקריא רשימות.",
+        "  3. הלקוח אומר שעה — free_slots שוב עם day ועם around = השעה שאמר (HH:MM), ולשאול במשפט אחד את ה-nearest.ask (\"ביום רביעי בשתיים — מתאים?\").",
+        "  4. \"כן\" — move_appointment עם start = nearest.slot_code. רק אחרי שהכלי אישר (ok) — להגיד את ה-say שחזר. הכלי לא אישר — לא להגיד שהועבר, ולהציע את הטווח הפנוי שוב.",
         "- לא יגיעו בכלל: לשאול פעם אחת אם להעביר למועד אחר. לא — לשאול \"לבטל את התור?\", ורק אחרי \"כן\" מפורש — cancel_appointment. להודות ולסיים.",
         "- אסור להמציא מועד פנוי, ואסור להגיד שהתור הועבר או בוטל לפני שהכלי אישר. כלי מחזיר say_instead — אומרים את זה במילים טבעיות.",
         "- לא קובעים תור חדש בנוסף לקיים — רק מעבירים את הקיים.",
@@ -1176,9 +1180,12 @@ const spokenSlot = (s: string) => `ב${hebrewDate(s.slice(0, 10))}, ב${hebrewTi
 export async function voiceTool(name: string, args: any, brain: BotBrain, crm: CrmCaller): Promise<any> {
   const phone = normalizeIsraeliPhone(args?.phone);
   const hoursFor = (d: string) => dayHours(brain, d).hours;
-  const nextExam = async () => {
+  // the exam the call is about (the CRM's {{exam_id}}), else the customer's next one
+  const theExam = async () => {
     const c = phone ? await crm({ action: "customer", phone }) : null;
-    return (c?.upcomingExams || [])[0] as { id: string; start: string } | undefined;
+    const list = (c?.upcomingExams || []) as { id: string; start: string }[];
+    const wanted = String(args?.exam_id || "").trim();
+    return (wanted && list.find((x) => x.id === wanted)) || list[0];
   };
   switch (name) {
     case "free_slots": {
@@ -1193,40 +1200,81 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
       const tod = String(args?.time_of_day || "");
       if (tod === "morning") slots = slots.filter((s) => hour(s) < 12);
       else if (tod === "afternoon") slots = slots.filter((s) => hour(s) >= 12);
-      // two per day — the earliest and one later — over the first days that have room
-      const byDay = new Map<string, string[]>();
-      for (const s of slots) byDay.set(s.slice(0, 10), [...(byDay.get(s.slice(0, 10)) || []), s]);
-      const offer: string[] = [];
-      for (const list of byDay.values()) {
-        offer.push(list[0]);
-        if (list.length > 1) offer.push(list[Math.max(1, Math.floor(list.length * 0.6))]);
+      // Free time as ranges per day, not single times (Haim, 2026-10-26: "say it's free between 12 and
+      // 4, I say 2, and it takes the nearest slot and asks to confirm") — consecutive slots merged
+      const len = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+      const freeByDay = new Map<string, [number, number][]>();
+      for (const s of slots) {
+        const day = s.slice(0, 10);
+        const m = toMinutes(s.slice(11, 16));
+        const list = freeByDay.get(day) || [];
+        const last = list[list.length - 1];
+        if (last && last[1] === m) last[1] = m + len;
+        else list.push([m, m + len]);
+        freeByDay.set(day, list);
+      }
+      const daySay = (day: string, rs: [number, number][]) =>
+        `ב${hebrewDate(day)}: ` +
+        rs.map(([a, b]) => (b - a <= len ? `רק ב${hebrewTime(fromMinutes(a))}` : `פנוי בין ${hebrewTime(fromMinutes(a))} ל${hebrewTime(fromMinutes(b))}`)).join(", ו");
+      const daysWithRoom = [...freeByDay.keys()].slice(0, asked ? 1 : 3);
+      // "around": the time the customer said — that exact time when it fits in a free range, else the nearest slot
+      let nearest: string | undefined;
+      const around = /^\d{1,2}:\d{2}$/.test(String(args?.around || "")) ? String(args.around).padStart(5, "0") : "";
+      const aroundDay = asked || daysWithRoom[0];
+      if (around && aroundDay) {
+        const t = toMinutes(around);
+        if ((freeByDay.get(aroundDay) || []).some(([a, b]) => t >= a && t + len <= b)) nearest = `${aroundDay}T${around}`;
+        else {
+          const sameDay = slots.filter((s) => s.startsWith(aroundDay));
+          nearest = sameDay.sort((x, y) => Math.abs(toMinutes(x.slice(11, 16)) - t) - Math.abs(toMinutes(y.slice(11, 16)) - t))[0];
+        }
       }
       const closed = asked && !ranges(hoursFor(asked)).length ? dayHours(brain, asked).why || "אין קבלה ביום הזה" : "";
       // what to say is ready in Hebrew words; slot_code is only for move_appointment — never said
       return {
         ok: true,
-        how_to_say: "להגיד ללקוח רק את say, במילים בעברית כמו שהן. לא להקריא slot_code, ספרות, שמות כלים או פרטים טכניים.",
+        how_to_say: "להגיד ללקוח את הטווחים הפנויים (free) במילים, כמו שהם, ולתת לבחור שעה. לא להקריא שעות בודדות, slot_code, ספרות או שמות כלים.",
         ...(closed ? { closed } : {}),
-        slots: offer.slice(0, 6).map((s) => ({ say: spokenSlot(s), slot_code: s })),
-        ...(asked && slots.length > 2 ? { other_times_that_day: slots.map((s) => hebrewTime(s.slice(11, 16))).join(", ") } : {}),
-        ...(offer.length ? {} : { say_instead: asked ? "אין מועד פנוי ביום הזה — להציע יום אחר" : "אין מועדים פנויים בימים הקרובים — להגיד שהצוות יחזור לתאם" }),
+        free: daysWithRoom.map((d) => daySay(d, freeByDay.get(d)!)),
+        ...(nearest
+          ? { nearest: { say: spokenSlot(nearest), slot_code: nearest, exact: nearest.slice(11, 16) === around, ask: `לשאול: "${spokenSlot(nearest)} — מתאים?"` } }
+          : {}),
+        ...(daysWithRoom.length ? {} : { say_instead: asked ? "אין מועד פנוי ביום הזה — להציע יום אחר" : "אין מועדים פנויים בימים הקרובים — להגיד שהצוות יחזור לתאם" }),
       };
     }
     case "move_appointment": {
       const start = String(args?.start || "");
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, say_instead: "רגע, נבדוק שוב את המועדים הפנויים", note: "בדיקת מועדים מחדש ואז להעביר עם slot_code בדיוק כפי שחזר" };
-      const exam = await nextExam();
-      if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק ולתאם" };
+      const exam = await theExam();
+      if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק ולתאם", reason: "no-exam" };
+      // Any free time inside the day's reception hours (Haim, 2026-10-26: the customer asked for 14:30,
+      // and only the 20-minute grid's 14:20 / 14:40 were accepted) — not in the next hour, and not
+      // overlapping anything on the calendar but the exam being moved itself
+      const len = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+      const [a, b] = [toMinutes(start.slice(11, 16)), toMinutes(start.slice(11, 16)) + len];
+      const inHours = ranges(hoursFor(start.slice(0, 10))).some(([o, c]) => a >= o && b <= c);
+      const now = israelNow();
+      const soon = `${now.date}T${fromMinutes(Math.min(toMinutes(now.time) + 60, 24 * 60 - 1))}`;
+      const end = `${start.slice(0, 10)}T${fromMinutes(b)}`;
+      const ownEnd = new Date(Date.parse(`${exam.start}:00Z`) + len * 60000).toISOString().slice(0, 16);
       const r = await crm({ action: "busy", from: start.slice(0, 10), to: start.slice(0, 10) });
-      // the exam's own time is busy because of the exam itself — it may be "moved" to a free one only
-      if (!freeSlots(brain.booking, r?.busy || [], start.slice(0, 10), 1, hoursFor).includes(start)) {
-        return { ok: false, say_instead: "המועד הזה בדיוק נתפס — להציע מועדים פנויים אחרים", note: "לבדוק שוב מועדים פנויים" };
+      const clash = (r?.busy || []).some((x: { start: string; end: string }) => {
+        const from = x.start > start ? x.start : start;
+        const to = x.end < end ? x.end : end;
+        return from < to && !(from >= exam.start && to <= ownEnd); // an overlap only with itself is fine
+      });
+      if (!inHours || start < soon || clash) {
+        return {
+          ok: false,
+          say_instead: !inHours ? "בשעה הזו אין קבלה — להציע מועדים פנויים בשעות הקבלה" : "המועד הזה תפוס — להציע מועדים פנויים אחרים",
+          reason: !inHours ? "outside-hours" : start < soon ? "too-soon" : "busy",
+        };
       }
       const res = await crm({ action: "move", phone, examId: exam.id, start });
       return { ok: true, say: `התור הועבר מ${spokenSlot(res?.previousStart || exam.start)} ל${spokenSlot(start)}. תישלח הודעת אישור בוואטסאפ.` };
     }
     case "cancel_appointment": {
-      const exam = await nextExam();
+      const exam = await theExam();
       if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק" };
       await crm({ action: "cancel", phone, examId: exam.id });
       return { ok: true, say: `התור ${spokenSlot(exam.start)} בוטל.` };
