@@ -3407,7 +3407,11 @@ export async function createApp() {
     // all the systems). n8n may send it the same payload too — WhastAppSystem skips repeats.
     if (!agent || !brain?.nativeWhatsapp) {
       const copied = postJson(`${WA_SYSTEM_URL}/api/webhook`, payload, {}, 8000).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
-      if (allClaimed) {
+      // A number of an app (Bonsai) with no bot of its own isn't n8n's — n8n is the optics' bot
+      const appNumber = !agent && phoneNumberId
+        ? (await Promise.all(WA_APP_FORWARDS.map((a) => numbersOfApp(a)))).some((ids) => ids.has(phoneNumberId))
+        : false;
+      if (allClaimed || appNumber) {
         await Promise.all([arrival, copied]);
         return res.status(200).send("ok");
       }
