@@ -3401,19 +3401,23 @@ export async function createApp() {
     const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
     const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
 
-    // Not switched (or not ours): on to n8n, untouched
+    // Not switched (or not ours): on to n8n, untouched — and a copy of every event, from every number
+    // (delivery reports included), to WhastAppSystem, which routes it by the number and passes the
+    // reports on to the task system; the CRM reads them there (Haim, 2026-10-27: one connection for
+    // all the systems). n8n may send it the same payload too — WhastAppSystem skips repeats.
     if (!agent || !brain?.nativeWhatsapp) {
+      const copied = postJson(`${WA_SYSTEM_URL}/api/webhook`, payload, {}, 8000).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
       if (allClaimed) {
-        await arrival;
+        await Promise.all([arrival, copied]);
         return res.status(200).send("ok");
       }
       try {
         const r = await postJson(N8N_WHATSAPP_URL, raw, {}, 25000);
-        await arrival;
+        await Promise.all([arrival, copied]);
         return res.status(200).send(await r.text().catch(() => "ok"));
       } catch (e: any) {
         console.error("[WA] forwarding to n8n failed:", e?.message);
-        await arrival;
+        await Promise.all([arrival, copied]);
         return res.status(200).send("ok"); // Meta would retry and n8n may still be down — not a reason to re-deliver
       }
     }
