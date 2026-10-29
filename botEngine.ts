@@ -367,7 +367,8 @@ function customerSection(c: any, phone: string, verified: boolean): string {
 // context when the customer quoted it, pressed its button, or it is the last thing they got from us
 // (sent in the last 7 days and after the last message in this chat). A click-to-WhatsApp ad, too.
 const CAMPAIGN_DAYS = 7;
-export function replyContext(input: TurnInput, customer: any, lastChatAt: string): string {
+const ARRIVAL_CONFIRM = /^(?:✅\s*)?(?:(?:אני )?מאשר(?:\/ת|ת)?(?: (?:את ה)?הגעה)?|אישור הגעה|אגיע|נגיע|אהיה שם|נהיה שם|מגיע(?:\/ה|ה)?)[\s!.,🙏👍😊🙂]*(?:תודה(?: רבה)?)?[\s!.,🙏👍😊🙂]*$/;
+export function replyContext(input: TurnInput, customer: any, lastChatAt: string, pending = ""): string {
   const lines: string[] = [];
   const ad = input.waContext?.ad;
   if (ad && (ad.headline || ad.body)) {
@@ -381,7 +382,16 @@ export function replyContext(input: TurnInput, customer: any, lastChatAt: string
   const latest = campaigns[0];
   const sentMs = latest ? new Date(latest.sentAt).getTime() : NaN;
   const fresh = !isNaN(sentMs) && Date.now() - sentMs < CAMPAIGN_DAYS * 864e5 && (!lastChatAt || sentMs > new Date(lastChatAt).getTime());
-  const k = quoted || ((input.waContext?.templateButton || replyTo || fresh) && latest) || null;
+  // A customer confirming they'll come (the booking confirmation's / a reminder's "מאשר/ת הגעה" button,
+  // or written) is about their exam, not a campaign and not a request to book (Haim, 2026-10-29)
+  const exams = (customer?.upcomingExams || []) as { id: string; start: string }[];
+  const confirmsArrival = !pending && exams.length > 0 && ARRIVAL_CONFIRM.test(String(input.text || "").trim());
+  if (confirmsArrival) {
+    lines.push(
+      `הלקוח מאשר הגעה לתור הקיים שלו (${showSlot(exams[0].start)}). זה לא בקשה לקבוע או להזיז תור — אל תקרא ל-get_available_slots / book_appointment / reschedule_appointment. הודה לו בקצרה וכתוב שמחכים לו במועד הזה.`
+    );
+  }
+  const k = confirmsArrival ? null : quoted || ((input.waContext?.templateButton || replyTo || fresh) && latest) || null;
   if (k) {
     const sure = quoted || input.waContext?.templateButton;
     lines.push(
@@ -437,7 +447,7 @@ function eventsSection(brain: BotBrain, today: string): string {
   );
 }
 
-function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
+function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string; pending?: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
   const lessons = input.lessons.filter((l) => l.active);
@@ -458,7 +468,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "\n# מה ידוע על הלקוח הזה (מה-CRM)",
     customerSection(customer, phone, !web),
     (() => {
-      const c = replyContext(input, customer, ctx.lastChatAt);
+      const c = replyContext(input, customer, ctx.lastChatAt, ctx.pending);
       return c ? "\n# על מה הלקוח עונה עכשיו\n" + c : "";
     })(),
     eventsSection(input.brain, now.date),
@@ -718,9 +728,26 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, error: "מועד לא תקין" };
       if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח (link_customer_phone)" };
       if (!deps.crm || !input.brain.booking.enabled) return { ok: false, error: "אין גישה ליומן" };
-      // the slot must still be free right now
+      // Haim, 2026-10-29: the bot moved a customer to 15:00, the booking confirmation went out, the
+      // customer pressed its "מאשר/ת הגעה" — and the bot tried to move them to 15:00 again and said the
+      // time was taken (by their own exam). Their exam already at that time = nothing to do.
+      const mine = (st.customer?.upcomingExams || []) as { id: string; start: string }[];
+      const already = mine.find((x) => String(x.start).slice(0, 16) === start);
+      if (already) {
+        return {
+          ok: true,
+          already: true,
+          exam_id: already.id,
+          show: showSlot(start),
+          instruction: "התור של הלקוח כבר קבוע בדיוק למועד הזה — לא צריך לקבוע או להזיז כלום. אם הלקוח אישר הגעה — הודה לו וכתוב שמחכים לו במועד הזה.",
+        };
+      }
+      // the slot must still be free right now — a move may overlap only the exam being moved itself
       const r = await deps.crm({ action: "busy", from: start.slice(0, 10), to: start.slice(0, 10) });
-      if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1, (d) => dayHours(input.brain, d).hours).includes(start)) {
+      const own = name === "reschedule_appointment" ? mine.find((x) => String(x.id) === String(args?.exam_id || "")) : undefined;
+      const ownEnd = own ? new Date(Date.parse(`${own.start.slice(0, 16)}:00Z`) + (Number(input.brain.booking.slotMinutes) || 30) * 60000).toISOString().slice(0, 16) : "";
+      const busy = ((r?.busy || []) as { start: string; end: string }[]).filter((x) => !(own && x.start >= own.start.slice(0, 16) && x.end <= ownEnd));
+      if (!freeSlots(input.brain.booking, busy, start.slice(0, 10), 1, (d) => dayHours(input.brain, d).hours).includes(start)) {
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
       const examId = String(args?.exam_id || "");
@@ -882,7 +909,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       const res = await generate(deps.ai, {
         contents,
         config: {
-          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim(), lastChatAt: conv?.messages?.at(-1)?.at || "" }),
+          systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim(), lastChatAt: conv?.messages?.at(-1)?.at || "", pending: st.confirmed }),
           tools: [{ functionDeclarations: TOOLS }],
           temperature: 0.4,
         },
