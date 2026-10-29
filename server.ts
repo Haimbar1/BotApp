@@ -24,7 +24,7 @@ import {
   lookupBotIdByPhone,
   toIntlDigits,
 } from "./storage.js";
-import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
+import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, agentsBorrowingPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
@@ -1744,6 +1744,14 @@ export async function createApp() {
     const allAgents = readAgents();
     const findByBotId = (id: string) => allAgents.find((a: any) => a.botId === id || a.id === id);
     let agent: any = null;
+    // a number lent in the portal to another business answers there (its agent with a connection first)
+    const borrowers = await agentsBorrowingPhone(allAgents, phoneNumberId);
+    if (borrowers.length) {
+      const connected = borrowers.filter((a: any) => a.whatsappConfig);
+      if (borrowers.length === 1) return { agent: borrowers[0] };
+      if (connected.length === 1) return { agent: connected[0] };
+      return { agent: null, ambiguous: borrowers };
+    }
     const mappedBotId = await lookupBotIdByPhone(phoneNumberId, displayPhone);
     if (mappedBotId) agent = findByBotId(mappedBotId);
     if (!agent && phoneNumberId) {

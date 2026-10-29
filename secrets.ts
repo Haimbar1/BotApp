@@ -122,27 +122,41 @@ export async function saveToVault(tenant: string | number | undefined | null, va
   }
 }
 
-// An agent's WhatsApp (Meta) connection. For another business's agent the vault's values win —
-// one value per thing across the apps; the optics' agents keep their own stored settings.
+// An agent's WhatsApp (Meta) connection: the portal's number for BotApp wins, for every business —
+// one value per thing across the apps, and the number is chosen in the portal ("איזה מספר כל מערכת
+// משתמשת"; Haim, 2026-10-29: the optics too, and any business's number lent to it there).
 export async function effectiveWhatsappConfig(agent: any): Promise<any> {
   const config = { ...(agent?.whatsappConfig || {}) };
   const tenant = agent?.tenantId != null ? String(agent.tenantId) : "";
-  if (!tenant || tenant === ORIGINAL_TENANT) return config;
+  if (!tenant) return config;
   const v = await vaultSecrets(tenant);
   if (v.META_PHONE_NUMBER_ID) config.phoneNumberId = v.META_PHONE_NUMBER_ID;
   if (v.META_WA_ACCESS_TOKEN) config.systemUserAccessToken = v.META_WA_ACCESS_TOKEN;
   if (v.META_WABA_ID) config.wabaId = v.META_WABA_ID;
+  if (v.META_WA_BORROWED_FROM && v.META_WA_DISPLAY_PHONE) config.phoneNumber = v.META_WA_DISPLAY_PHONE;
   return config;
+}
+
+// The agents of a business that borrows this number from another business in the portal — they
+// answer on it, before the lender's agents (the phone → bot map still names the lender's).
+export async function agentsBorrowingPhone(allAgents: any[], phoneNumberId: string): Promise<any[]> {
+  if (!phoneNumberId) return [];
+  const tenants = Array.from(new Set(allAgents.map((a) => (a?.tenantId != null ? String(a.tenantId) : "")))).filter(Boolean);
+  for (const t of tenants) {
+    const v = await vaultSecrets(t);
+    if (v.META_WA_BORROWED_FROM && String(v.META_PHONE_NUMBER_ID || "").trim() === phoneNumberId) {
+      return allAgents.filter((a) => String(a?.tenantId ?? "") === t);
+    }
+  }
+  return [];
 }
 
 // The agents of the business whose portal vault holds this WhatsApp phone number id — for a number
 // entered only in the portal ("מזהים וחיבורים"), which the phone → bot map (built from the agents'
-// own settings) doesn't know. The optics' vault isn't consulted (its agents keep their own settings).
+// own settings) doesn't know.
 export async function agentsForVaultPhone(allAgents: any[], phoneNumberId: string): Promise<any[]> {
   if (!phoneNumberId) return [];
-  const tenants = Array.from(new Set(allAgents.map((a) => (a?.tenantId != null ? String(a.tenantId) : "")))).filter(
-    (t) => t && t !== ORIGINAL_TENANT
-  );
+  const tenants = Array.from(new Set(allAgents.map((a) => (a?.tenantId != null ? String(a.tenantId) : "")))).filter(Boolean);
   for (const t of tenants) {
     if (String((await vaultSecrets(t)).META_PHONE_NUMBER_ID || "").trim() === phoneNumberId) {
       return allAgents.filter((a) => String(a?.tenantId ?? "") === t);
