@@ -481,6 +481,8 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- העברה לנציג (Haim: רק כשהלקוח מבקש במפורש): note_for_staff עם kind=handoff — ורק אז אמור שמישהו יחזור אליו — רק כשהלקוח ביקש במפורש לדבר עם נציג / שיחזרו אליו / שיתקשרו (או לחץ \"🙋 לדבר עם נציג\"). שאלה שאין לך תשובה עליה (למשל \"מתי אתם ב-X?\") היא לא בקשה לנציג — ענה מה שידוע, ואל תבטיח שמישהו יחזור. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
+    // Haim, 2026-11-01: every picture went to the staff ("העברתי אותה לצוות") — only when the conversation needs it
+    "- תמונה מהלקוח (\"[שלח/ה תמונה]\"): אתה לא רואה אותה, והיא נשמרת בשיחה שהצוות קורא. התייחס לכיתוב אם יש, או שאל בקצרה במה מדובר ואיך אפשר לעזור, והמשך את השיחה כרגיל. תמונה היא לא בקשה לנציג: אל תכתוב שהעברת אותה לצוות / שמישהו יבדוק אותה, ואל תקרא ל-note_for_staff בגללה — רק לפי כלל ההעברה לנציג שלמעלה (הלקוח ביקש במפורש, עכשיו או ממש לפני התמונה, למשל \"אשלח לכם מרשם, שנציג יבדוק\").",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
@@ -572,6 +574,7 @@ interface TurnState {
   userText: string; // what the customer wrote this turn
   earlierUserText: string; // the customer's two messages before it (a request for a person may come first)
 }
+const EARLIER_ASK_MS = 30 * 60 * 1000;
 
 const recentUserText = (st: TurnState) => `${st.earlierUserText}\n${st.userText}`;
 
@@ -846,7 +849,11 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     pending: "",
     voice: false,
     userText: "",
-    earlierUserText: (conv?.messages || []).filter((m) => m.role === "user").slice(-2).map((m) => m.text).join("\n"),
+    // only from the last half hour: a request for a person hours ago (already handed over) let a
+    // later picture through as one (Haim, 2026-11-01)
+    earlierUserText: (conv?.messages || [])
+      .filter((m) => m.role === "user" && Date.now() - Date.parse(m.at) <= EARLIER_ASK_MS)
+      .slice(-2).map((m) => m.text).join("\n"),
   };
   if (st.phone) {
     if (st.phone === givenPhone) st.customer = givenCustomer;
