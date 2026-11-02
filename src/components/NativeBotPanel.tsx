@@ -16,6 +16,8 @@ interface Brain {
   nativeWhatsapp?: boolean;
   lastWaMessageAt?: string;
   lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
+  nativeFacebook?: boolean;
+  lastFbMessageAt?: string;
   qa: Qa[];
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
@@ -245,6 +247,8 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
       {message && <div className="text-[11px] text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{message}</div>}
 
       {brain && botId && <WhatsAppCard botId={botId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeWhatsapp: on })} />}
+
+      {brain && <FacebookCard agentId={agentId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeFacebook: on })} />}
 
       {/* Q&A */}
       <div className={card}>
@@ -703,6 +707,69 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
       {brain.lastWaTiming && <WaTiming t={brain.lastWaTiming} />}
       {!connected && webhook !== null && <div className="text-[10.5px] text-amber-300">לבוט הזה לא נראה חיבור וואטסאפ (לשונית "וואטסאפ הגדרות").</div>}
       {note && <div className="text-[11px] text-sky-200">{note}</div>}
+    </div>
+  );
+}
+
+// Facebook (comments + Messenger): (1) the Meta app's Page webhook points at BotApp — n8n still
+// answers; (2) the switch: the new bot answers (server: /api/webhooks/facebook). The Page and its
+// token come from the business's portal vault.
+function FacebookCard({ agentId, brain, saving, request, onSwitch }: { agentId: string; brain: Brain; saving: boolean; request: Request; onSwitch: (on: boolean) => void }) {
+  const [st, setSt] = useState<{ business: boolean; pageId: string; hasToken: boolean; pageName: string; error: string; webhook: string } | null>(null);
+  useEffect(() => {
+    request(`/api/facebook/status?agentId=${encodeURIComponent(agentId)}`)
+      .then((r) => r.json())
+      .then((d) => d?.success && setSt(d))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+  const pageOk = !!(st?.pageId && st.hasToken && st.pageName && !st.error);
+  const arriving = !!brain.lastFbMessageAt;
+
+  return (
+    <div className={card}>
+      <h4 className="text-xs font-black text-white">📘 פייסבוק — תגובות ומסנג'ר</h4>
+      <div className="text-[11px] text-slate-300">
+        דף הפייסבוק:{" "}
+        {st === null ? (
+          "בודק…"
+        ) : pageOk ? (
+          <span className="text-emerald-300 font-bold">{st.pageName} ✓</span>
+        ) : (
+          <span className="text-amber-300 font-bold">
+            {!st.business
+              ? "הבוט לא משויך לעסק בפורטל"
+              : !st.pageId || !st.hasToken
+                ? "חסר מזהה דף / טוקן בפורטל (\"מזהים וחיבורים\" ← פייסבוק)"
+                : `הטוקן לא עובד: ${st.error}`}
+          </span>
+        )}
+        <div className="text-[10.5px] text-slate-500">הטוקן צריך את ההרשאות pages_messaging, pages_manage_engagement, pages_read_engagement ו-pages_manage_metadata.</div>
+      </div>
+      <div className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
+        <b>שלב 1 —</b> התגובות וההודעות מגיעות ל-BotApp:{" "}
+        {arriving ? <span className="text-emerald-300 font-bold">כן ✓</span> : <span className="text-amber-300 font-bold">עדיין ישר ל-n8n</span>}
+        <div className="text-[10.5px] text-slate-500">
+          באפליקציה ב-developers.facebook.com ← Webhooks ← Page: כתובת <span dir="ltr" className="select-all text-slate-300">{st?.webhook || "https://app.smartesek.com/api/webhooks/facebook"}</span>, Verify Token{" "}
+          <span dir="ltr" className="select-all text-slate-300">{BOTAPP_VERIFY_TOKEN}</span>, עם feed, messages ו-messaging_postbacks. כל עוד שלב 2 כבוי — n8n ממשיך לענות כמו היום.
+        </div>
+        {arriving && <div className="text-[10.5px] font-bold text-emerald-300">תגובה / הודעה אחרונה שהגיעה ל-BotApp: {showDate(brain.lastFbMessageAt!)}</div>}
+      </div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px] border-t border-slate-800 pt-2">
+        <div className="text-slate-300">
+          <b>שלב 2 —</b> מי עונה בפייסבוק: {brain.nativeFacebook ? <span className="text-emerald-300 font-bold">🟢 הבוט החדש</span> : <span className="font-bold">⚪ הבוט הישן (n8n)</span>}
+          <div className="text-[10.5px] text-slate-500">תגובה — תשובה קצרה בתגובה עצמה, בלי תפריט. מסנג'ר — שיחה מלאה, האפשרויות ככפתורים.</div>
+        </div>
+        <button
+          type="button"
+          disabled={saving || (!brain.nativeFacebook && (!arriving || !pageOk))}
+          title={!brain.nativeFacebook && !arriving ? "קודם שלב 1" : !brain.nativeFacebook && !pageOk ? "קודם דף וטוקן בפורטל" : ""}
+          onClick={() => onSwitch(!brain.nativeFacebook)}
+          className={`${btn} px-4 py-2 shrink-0 ${brain.nativeFacebook ? "border-slate-600 text-slate-200 bg-slate-800/60" : "border-emerald-500 text-white bg-emerald-600"}`}
+        >
+          {brain.nativeFacebook ? "↩ החזר את הפייסבוק ל-n8n" : "🚀 העבר את הפייסבוק לבוט החדש"}
+        </button>
+      </div>
     </div>
   );
 }

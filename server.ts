@@ -28,7 +28,8 @@ import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig,
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
-import { switchedOnAgentIds, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
+import { switchedOnAgentIds, facebookAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3136,7 +3137,7 @@ export async function createApp() {
   const WA_SYSTEM_URL = (process.env.WHATSAPP_SYSTEM_URL || "https://whatsapp.smartesek.com").replace(/\/$/, "");
   // decided: this bot says itself whether a person is needed — WhastAppSystem then alerts the staff only
   // on handoff (a note_for_staff "handoff" in this turn), never because a reply contains "נבדוק" / "נציג"
-  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string, handoffNote?: string) {
+  async function reportToWsys(agent: any, body: Record<string, unknown>) {
     const tenant = agentTenant(agent);
     const secret = process.env.SSO_SHARED_SECRET;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -3145,18 +3146,17 @@ export async function createApp() {
       headers["x-wa-session"] = jwt.sign({ tenantId: String(tenant), email: "botapp@smartesek.com", role: "crm", typ: "wa_session" }, secret, { expiresIn: "2m" });
     }
     try {
-      await fetch(`${WA_SYSTEM_URL}/api/webhook`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          type: "web_bot_message", session_id: sessionId, direction, text, name,
-          decided: true, ...(direction === "outgoing" && handoffNote ? { handoff: true, handoffNote } : {}),
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
+      await fetch(`${WA_SYSTEM_URL}/api/webhook`, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(8000) });
     } catch (e: any) {
-      console.warn("[BOT] reporting the web chat to WhastAppSystem failed:", e?.message);
+      console.warn(`[BOT] reporting the ${body.type} to WhastAppSystem failed:`, e?.message);
     }
+  }
+  // Messenger goes the same way, as n8n reported it (session "messenger:<PSID>", platform messenger)
+  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string, handoffNote?: string, platform?: string) {
+    await reportToWsys(agent, {
+      type: "web_bot_message", session_id: sessionId, direction, text, name, ...(platform ? { platform } : {}),
+      decided: true, ...(direction === "outgoing" && handoffNote ? { handoff: true, handoffNote } : {}),
+    });
   }
 
   // A note for the staff also goes on the customer's lead in the CRM (when the phone is known)
@@ -3197,6 +3197,7 @@ export async function createApp() {
         phone: body.userPhone || body.phone || undefined,
         name: body.userName || body.name || undefined,
         waContext: body.waContext,
+        fbContext: body.fbContext,
       },
       { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
     );
@@ -3501,6 +3502,165 @@ export async function createApp() {
     res.status(200).send("ok");
   });
 
+  // ---- Facebook comments and Messenger answered here instead of n8n (Haim, 2026-11-02) ----
+  // The Meta app's "Page" webhook is pointed here (instead of n8n's …/webhook/FBComment). The Page is
+  // the business's by its vault's FB_PAGE_ID (portal "מזהים וחיבורים"; FB_PAGE_ACCESS_TOKEN answers).
+  // A business whose bot has the Facebook switch on: every comment is answered in the comment itself
+  // (no buttons, nothing private), every Messenger message in Messenger (options as quick replies),
+  // and both are reported to WhastAppSystem the way n8n did (fb_comment / web_bot_message
+  // "messenger:<PSID>"). Every other Page — and Instagram — goes on to n8n exactly as Meta sent it.
+  const N8N_FACEBOOK_URL = process.env.N8N_FACEBOOK_URL || "https://n8n.srv1239769.hstgr.cloud/webhook/FBComment";
+
+  // The portal business whose vault holds this Page id (each business's vault is cached 5 minutes)
+  async function pageTenant(pageId: string): Promise<string | null> {
+    if (!pageId) return null;
+    const tenants = Array.from(new Set(readAgents().map((a: any) => agentTenant(a)).filter(Boolean))) as string[];
+    for (const t of tenants) if ((await tenantSecret("FB_PAGE_ID", t)).trim() === pageId) return t;
+    return null;
+  }
+
+  // The bot that answers this Page (its Facebook switch on) and the Page's token; null = n8n's
+  async function facebookAgentFor(tenant: string | null): Promise<{ agent: any; token: string } | null> {
+    if (!tenant) return null;
+    const on = new Set(await facebookAgentIds());
+    const agent = readAgents().find((a: any) => on.has(String(a.id)) && agentTenant(a) === tenant);
+    if (!agent) return null;
+    const token = (await tenantSecret("FB_PAGE_ACCESS_TOKEN", tenant)).trim();
+    if (!token) {
+      console.error(`[FB] no FB_PAGE_ACCESS_TOKEN for business ${tenant} — n8n keeps answering`);
+      return null;
+    }
+    return { agent, token };
+  }
+
+  // "Full name: …\nPhone number: …" — a lead form filled from an ad in Messenger (n8n read it the same way)
+  const leadFormPhone = (text: string) => normalizeIsraeliPhone((text.match(/(?:Phone number|phone_number|טלפון|נייד)\s*:?\s*([\d\-+ ]{9,16})/i) || [])[1] || "");
+
+  async function answerFacebookComment(agent: any, m: IncomingFb, token: string) {
+    const post = await postInfo(m.postId || "", token);
+    const name = m.name || "לקוח";
+    const report = (direction: "incoming" | "outgoing", text: string, handoffNote?: string) =>
+      reportToWsys(agent, {
+        type: "fb_comment", direction, postId: m.postId, commentId: m.id, commenterName: name, text, postCaption: post.link, platform: "facebook",
+        decided: true, ...(direction === "outgoing" && handoffNote ? { handoff: true, handoffNote } : {}),
+      });
+    const incoming = report("incoming", m.text);
+    const out = await turnFor(agent, "fb_comment", {
+      sessionId: `fb_comment:${m.postId}:${m.senderId}`,
+      message: m.text,
+      userName: m.name,
+      fbContext: { postText: post.text },
+    });
+    const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
+    let sent = false;
+    if (out.reply) {
+      try {
+        await replyToComment(m.id, token, out.reply);
+        sent = true;
+      } catch (e: any) {
+        console.error("[FB] replying to the comment failed:", e?.message);
+      }
+    }
+    await incoming;
+    if (sent) await report("outgoing", out.reply, handoffNote);
+  }
+
+  async function answerMessenger(agent: any, m: IncomingFb, token: string) {
+    const [, profileName] = await Promise.all([messengerTyping(m.pageId, m.senderId, token), messengerName(m.senderId, token)]);
+    const sessionId = `messenger:${m.senderId}`;
+    const incoming = reportWebChat(agent, sessionId, profileName || "לקוח ממסנג'ר", "incoming", m.text, undefined, "messenger");
+    const out = await turnFor(agent, "messenger", {
+      sessionId,
+      message: m.text,
+      buttonId: m.quickReply,
+      userName: profileName,
+      userPhone: leadFormPhone(m.text) || undefined,
+      waContext: m.ad ? { ad: m.ad } : undefined,
+    });
+    const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
+    const sent: string[] = [];
+    for (const { body, text } of answerToMessenger(m.senderId, out)) {
+      try {
+        await sendMessenger(m.pageId, token, body);
+        sent.push(text);
+      } catch (e: any) {
+        console.error("[FB] sending the Messenger answer failed:", e?.message);
+      }
+    }
+    await incoming;
+    if (sent.length) await reportWebChat(agent, sessionId, out.name || profileName || "לקוח ממסנג'ר", "outgoing", sent.join("\n"), handoffNote, "messenger");
+  }
+
+  // Meta checks the address once when it's set in the app (any of BotApp's verify tokens)
+  app.get("/api/webhooks/facebook", (req: any, res: any) => {
+    if (req.query["hub.mode"] === "subscribe" && (WA_VERIFY_TOKENS().has(String(req.query["hub.verify_token"] || "")) || String(req.query["hub.verify_token"] || "") === process.env.FACEBOOK_VERIFY_TOKEN)) {
+      return res.status(200).send(String(req.query["hub.challenge"] || ""));
+    }
+    res.status(403).send("Forbidden");
+  });
+
+  app.post("/api/webhooks/facebook", async (req: any, res: any) => {
+    const raw = req.body || {};
+    const payload = pagePayload(raw);
+    const toN8n = (body: any) =>
+      postJson(N8N_FACEBOOK_URL, body, {}, 25000).catch((e) => console.error("[FB] forwarding to n8n failed:", e?.message));
+    if (payload?.object !== "page") {
+      // Instagram (or anything else) stays with n8n
+      await toN8n(raw);
+      return res.status(200).send("ok");
+    }
+    // Each Page in the batch: answered here, or its entries go on to n8n untouched
+    const ours: { entry: any; agent: any; token: string }[] = [];
+    const theirs: any[] = [];
+    const arrivals: Promise<unknown>[] = [];
+    for (const entry of payload.entry || []) {
+      const tenant = await pageTenant(String(entry?.id || "")).catch(() => null);
+      const found = await facebookAgentFor(tenant).catch(() => null);
+      // proof for the bot's Facebook card that the Page's events arrive here (switched or not)
+      if (tenant && incomingFacebook({ object: "page", entry: [entry] }).length) {
+        arrivals.push(...readAgents().filter((a: any) => agentTenant(a) === tenant).map((a: any) => noteFbArrival(String(a.id)).catch(() => {})));
+      }
+      if (found) ours.push({ entry, ...found });
+      else theirs.push(entry);
+    }
+    const forwarded = theirs.length ? toN8n(ours.length ? { ...payload, entry: theirs } : raw) : Promise.resolve();
+
+    for (const { entry, agent, token } of ours) {
+      for (const m of incomingFacebook({ object: "page", entry: [entry] })) {
+        // Meta re-delivers what it thinks failed — each comment / message is answered once
+        if (!(await claimWaMessage(`fb_${m.id}`).catch(() => false))) continue;
+        try {
+          if (m.kind === "comment") await answerFacebookComment(agent, m, token);
+          else await answerMessenger(agent, m, token);
+        } catch (e: any) {
+          console.error(`[FB] answering the ${m.kind} failed:`, e?.message || e);
+        }
+      }
+    }
+    await Promise.all([forwarded, ...arrivals]);
+    res.status(200).send("ok");
+  });
+
+  // GET /api/facebook/status?agentId=… — the bot's Facebook card: the Page from the business's vault,
+  // whether its token works, and when its events last arrived here
+  app.get("/api/facebook/status", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.query.agentId);
+    if (!agent) return;
+    const tenant = agentTenant(agent);
+    const pageId = tenant ? (await tenantSecret("FB_PAGE_ID", tenant)).trim() : "";
+    const token = tenant ? (await tenantSecret("FB_PAGE_ACCESS_TOKEN", tenant)).trim() : "";
+    let name = "";
+    let error = "";
+    if (pageId && token) {
+      try {
+        name = await pageName(pageId, token);
+      } catch (e: any) {
+        error = e?.message || "הטוקן לא עובד";
+      }
+    }
+    res.json({ success: true, business: !!tenant, pageId, hasToken: !!token, pageName: name, error, webhook: `${process.env.PUBLIC_URL || "https://app.smartesek.com"}/api/webhooks/facebook` });
+  });
+
   const BRAIN_SAVE_FAILED = "השמירה לא הגיעה למסד הנתונים — השינויים לא נשמרו. נסו לשמור שוב בעוד רגע";
 
   // GET /api/bot-brain?agentId=… → { brain, lessons, notes }
@@ -3527,6 +3687,7 @@ export async function createApp() {
     const fields = {
       nativeWeb: !!b.nativeWeb,
       nativeWhatsapp: !!b.nativeWhatsapp,
+      nativeFacebook: !!b.nativeFacebook,
       qa,
       booking: {
         enabled: !!b.booking?.enabled,

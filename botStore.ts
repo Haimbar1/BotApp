@@ -47,6 +47,10 @@ export interface BotBrain {
   lastWaMessageAt?: string;
   // how long the last WhatsApp answer took, and where the time went (ms; shown in the WhatsApp card)
   lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
+  // the business's Facebook Page (comments + Messenger) is answered here instead of n8n (/api/webhooks/facebook)
+  nativeFacebook?: boolean;
+  // when a comment / Messenger message of the business's Page last reached /api/webhooks/facebook
+  lastFbMessageAt?: string;
   qa: BotQa[];
   booking: BookingHours;
   events?: BotEvent[];
@@ -250,6 +254,15 @@ export async function switchedOnAgentIds(): Promise<string[]> {
   return rows.map((r: any) => r.agent_id);
 }
 
+// The agents whose Facebook switch is on — the candidates for a Page's comments and Messenger
+export async function facebookAgentIds(): Promise<string[]> {
+  const d = db();
+  if (!d) return Object.values(local().brains).filter((b) => b.nativeFacebook).map((b) => b.agentId);
+  await d.ready;
+  const { rows } = await d.pool.query("SELECT agent_id FROM botapp_bot_brain WHERE (data->>'nativeFacebook')::boolean");
+  return rows.map((r: any) => r.agent_id);
+}
+
 // Facts the server keeps on the brain row (merged in place, never over the owner's settings)
 export async function noteBrainFields(agentId: string, fields: Partial<BotBrain>): Promise<void> {
   const d = db();
@@ -269,6 +282,7 @@ export async function noteBrainFields(agentId: string, fields: Partial<BotBrain>
 
 // A customer's WhatsApp message reached BotApp for this agent (shown in the bot's WhatsApp card)
 export const noteWaArrival = (agentId: string) => noteBrainFields(agentId, { lastWaMessageAt: new Date().toISOString() });
+export const noteFbArrival = (agentId: string) => noteBrainFields(agentId, { lastFbMessageAt: new Date().toISOString() });
 
 // ---------- WhatsApp: each incoming message answered once ----------
 

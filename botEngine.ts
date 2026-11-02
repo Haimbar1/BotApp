@@ -25,7 +25,9 @@ import {
 // (a promise that someone will get back, or a reported bot fault) and learning from a correction.
 // The answer is { reply, options, images } — the widget shows options as buttons.
 
-export type Channel = "web" | "test" | "whatsapp";
+// fb_comment = a public comment on the business's Facebook post / ad (answered in the comment, seen by
+// everyone, no buttons); messenger = a private Facebook Messenger chat (options as quick replies)
+export type Channel = "web" | "test" | "whatsapp" | "fb_comment" | "messenger";
 
 export interface CrmCaller {
   (body: Record<string, unknown>): Promise<any>;
@@ -44,6 +46,8 @@ export interface TurnInput {
   name?: string;
   // WhatsApp only: what the message answers — a quoted message, a campaign's template button, an ad
   waContext?: { replyTo?: string; templateButton?: boolean; ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string } };
+  // Facebook comment: the post / ad the comment is on (its text), so "כמה זה עולה?" is answered about it
+  fbContext?: { postText?: string };
 }
 
 export interface TurnDeps {
@@ -444,9 +448,19 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
   const booking = input.brain.booking;
   const bookingOn = booking.enabled && Object.values(booking.hours).some((h) => ranges(h).length);
   const business = input.agent?.businessName || input.agent?.name || "העסק";
-  const web = input.channel === "web" || input.channel === "test";
+  const comment = input.channel === "fb_comment";
+  const messenger = input.channel === "messenger";
+  // the website and Facebook: the customer's phone isn't known / verified (only WhatsApp gives it)
+  const web = input.channel === "web" || input.channel === "test" || comment || messenger;
+  const where = comment
+    ? "בתגובה פומבית לפוסט / למודעה של העסק בפייסבוק — כל מי שרואה את הפוסט רואה גם את התשובה שלך"
+    : messenger
+      ? "בצ'אט פרטי במסנג'ר של דף הפייסבוק של העסק"
+      : web
+        ? "בצ'אט באתר של העסק"
+        : "בוואטסאפ (מספר הטלפון שלו ידוע ומאומת — אל תבקש אותו)";
   return [
-    `אתה הנציג הדיגיטלי של "${business}" ומדבר עם לקוח ${web ? "בצ'אט באתר של העסק" : "בוואטסאפ (מספר הטלפון שלו ידוע ומאומת — אל תבקש אותו)"}.`,
+    `אתה הנציג הדיגיטלי של "${business}" ומדבר עם לקוח ${where}.`,
     `עכשיו: יום ${DAY_NAMES[now.weekday]} ${now.date.slice(8, 10)}/${now.date.slice(5, 7)}/${now.date.slice(0, 4)}, השעה ${now.time} (שעון ישראל).`,
     "",
     "# השכל של הבוט (ההנחיות של העסק — הבסיס לכל תשובה)",
@@ -461,9 +475,12 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       const c = replyContext(input, customer, ctx.lastChatAt);
       return c ? "\n# על מה הלקוח עונה עכשיו\n" + c : "";
     })(),
+    comment && input.fbContext?.postText
+      ? `\n# הפוסט / המודעה שעליהם הלקוח הגיב\n«${input.fbContext.postText.slice(0, 1500)}»\nהתגובה שלו היא על זה (למשל "כמה זה עולה?", "פרטים", "עד מתי?") — ענה בהקשר הזה בלי לשאול על מה הוא מדבר.`
+      : "",
     eventsSection(input.brain, now.date),
     "\n# פתיחה ושם",
-    ctx.profileName ? `שם הלקוח בפרופיל ${web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
+    ctx.profileName ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
     "- פנה ללקוח בשמו הפרטי. יש שני מקורות (הפרופיל וה-CRM) — בחר את מה שנראה כמו שם אמיתי של אדם (לא כינוי, אימוג'י, שם עסק או מספר). אם אף אחד לא נראה כמו שם — בלי שם.",
     ctx.firstToday
@@ -474,10 +491,15 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "\n# כללי עבודה",
     "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — אמור בכנות שאין לך את המידע כרגע. אל תכתוב בתשובה הצעה לפנות לנציג / שנציג יחזור אליו — רק הוסף ל-options את \"🙋 לדבר עם נציג\", והלקוח יבחר אם לבקש.",
     "- השתמש במה שאתה יודע על הלקוח: פנה בשמו, ואם יש לו הזמנה פתוחה / תור קרוב / קמפיין שקיבל — התייחס לזה כשזה רלוונטי, גם לפני שהוא שואל.",
-    web && !phone
+    comment
+      ? "- תגובה פומבית בפייסבוק (Haim: עונים על כל תגובה, רק בתגובה עצמה): ענה קצר — עד 2–3 שורות — ולעניין, על מה שנשאל. אין כאן תפריט וכפתורים: אל תכתוב \"אפשר לבחור מהתפריט\" או משהו דומה, ו-options תמיד []. אל תבקש מספר טלפון או פרטים אישיים ואל תכתוב פרטים אישיים של הלקוח (תורים, רכישות) — כולם רואים. אי אפשר לקבוע / לשנות תור בתגובה: מי שרוצה לתאם, לקבל הצעה אישית או לדבר עם מישהו — הזמן אותו לשלוח לנו הודעה פרטית במסנג'ר (או בוואטסאפ, אם המספר כתוב בשכל). תגובה שהיא רק תיוג של חבר, אימוג'י, \"👍\" או מילה כמו \"מהמם\" — ענה בתודה קצרה וחמה (למשל \"תודה רבה! 🙏\"), בלי ברכת פתיחה ארוכה."
+      : "",
+    web && !phone && !comment
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
       : "",
-    bookingOn
+    comment
+      ? ""
+      : bookingOn
       ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- העברה לנציג (Haim: רק כשהלקוח מבקש במפורש): note_for_staff עם kind=handoff — ורק אז אמור שמישהו יחזור אליו — רק כשהלקוח ביקש במפורש לדבר עם נציג / שיחזרו אליו / שיתקשרו (או לחץ \"🙋 לדבר עם נציג\"). שאלה שאין לך תשובה עליה (למשל \"מתי אתם ב-X?\") היא לא בקשה לנציג — ענה מה שידוע, ואל תבטיח שמישהו יחזור. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
@@ -489,10 +511,15 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "# פורמט התשובה",
     'החזר JSON בלבד, בלי טקסט מסביב: {"reply": "התשובה ללקוח", "options": ["כפתור 1", "כפתור 2"], "images": []}',
     "- options: עד 10 תשובות קצרות (עד 24 תווים כל אחת, אפשר עם אמוג'י) שהלקוח יכול ללחוץ. כמעט בכל תשובה הוסף 2–4 אפשרויות רלוונטיות להמשך — הצעד הבא שהכי סביר שירצה (למשל אחרי מחירים: \"📅 לתאם בדיקת ראייה\", \"👓 לראות מסגרות\"; אחרי שאלה כללית: הנושאים הקרובים). בבחירת מועד — המועדים + \"📅 שבוע הבא\" + \"🕐 מועד אחר\". רק כשאין שום המשך הגיוני (למשל תודה ולהתראות) — [].",
+    messenger
+      ? "- במסנג'ר: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח ככפתורים ללחיצה. כל אפשרות עד 20 תווים. הודעה עם \"Full name\" / \"Phone number\" / \"שם מלא\" / \"טלפון\" היא טופס שהלקוח מילא מהמודעה — קרא ל-link_customer_phone עם המספר, הודה לו ותמשיך משם."
+      : "",
     web ? "" : "- בוואטסאפ: אל תכתוב את האפשרויות גם בתוך reply — הן מוצגות ללקוח כתפריט לחיצה. הודעה שמתחילה ב-🎤 היא תמלול אוטומטי של הודעה קולית ששלח — והתמלול עלול לטעות. בשאלה פשוטה (מחיר, שעות) — ענה, ופתח ב\"הבנתי שאתה שואל…\" כדי שיוכל לתקן. אם ההודעה מבקשת פעולה (תור, ביטול, שיחזרו אליו), מתארת בעיה / כאב / תלונה, או נשמעת מוזרה ולא מתאימה לשיחה — אל תפעל ואל תעביר לצוות: כתוב מה הבנת ושאל אם הבנת נכון. אם כתוב [לא ברור] — בקש בנימוס לכתוב או להקליט שוב.",
     "- images: כתובות תמונה מלאות מהשכל, רק כשמתאים להראות.",
     "- עיצוב: הודעה נעימה לקריאה בטלפון — שורה ריקה בין חלקים, אמוג'י מתאימים ליד נושאים ופריטים (בערך 2–5 בהודעה, לא בכל שורה), רשימות עם • בתחילת שורה (לא כוכבית ולא מקף).",
-    "- הדגשה: כוכבית אחת צמודה למילים המודגשות מבפנים, ורווח לפניה ואחריה מבחוץ, למשל \"אתה מקבל *משקפי שמש במתנה* החודש\" או *800 ₪* (לא \"מקבל*משקפי*\") — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
+    comment || messenger
+      ? "- בפייסבוק אין הדגשה: בלי כוכביות (*) ובלי markdown — רק טקסט ואמוג'י."
+      : "- הדגשה: כוכבית אחת צמודה למילים המודגשות מבפנים, ורווח לפניה ואחריה מבחוץ, למשל \"אתה מקבל *משקפי שמש במתנה* החודש\" או *800 ₪* (לא \"מקבל*משקפי*\") — לדברים החשובים (מחירים, מועדים, מה שהלקוח שאל). בלי ** ובלי markdown אחר.",
   ]
     .filter((x) => x !== "")
     .join("\n");
@@ -875,8 +902,10 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
 
   let answer = { reply: "", options: [] as string[], images: [] as string[] };
+  const comment = input.channel === "fb_comment";
   if (!deps.ai) {
-    answer.reply = "מצטערים, הבוט לא זמין כרגע. אפשר להשאיר מספר טלפון ונחזור אליך בהקדם.";
+    // a public comment gets no answer rather than "leave your phone" (the staff see it in the inbox)
+    answer.reply = comment ? "" : "מצטערים, הבוט לא זמין כרגע. אפשר להשאיר מספר טלפון ונחזור אליך בהקדם.";
   } else {
     const history = (conv?.messages || []).slice(-HISTORY).map((m) => ({
       role: m.role === "user" ? "user" : "model",
@@ -890,7 +919,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
         contents,
         config: {
           systemInstruction: systemPrompt(input, st.customer, st.phone, { firstToday, profileName: String(input.name || conv?.name || "").trim(), lastChatAt: conv?.messages?.at(-1)?.at || "" }),
-          tools: [{ functionDeclarations: TOOLS }],
+          // in a public comment nothing personal happens — no phone, no calendar; only a note for the staff
+          tools: [{ functionDeclarations: input.channel === "fb_comment" ? TOOLS.filter((t) => t.name === "note_for_staff") : TOOLS }],
           temperature: 0.4,
         },
       });
@@ -920,10 +950,13 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       contents.push({ role: "user", parts });
     }
     answer = parseBotAnswer(finalText);
-    if (!answer.reply) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
+    if (!answer.reply && !comment) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
   }
   if (st.pending) answer.options = CONFIRM_OPTIONS[st.pending.split("|")[0]] || answer.options;
   answer.reply = tidyText(answer.reply);
+  // Facebook shows *stars* as they are; a comment has no buttons and no pictures (Haim, 2026-11-02)
+  if (input.channel === "fb_comment" || input.channel === "messenger") answer.reply = answer.reply.replace(/\*([^*\n]+)\*/g, "$1").replace(/\*/g, "");
+  if (input.channel === "fb_comment") answer = { ...answer, options: [], images: [] };
 
   await appendToConversation(
     { botId, sessionId: input.sessionId, agentId: String(input.agent.id), channel: input.channel, phone: st.phone, name: st.name, test: input.channel === "test" },
