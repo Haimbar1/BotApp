@@ -795,6 +795,8 @@ export default function App() {
   // Extracts clean phone number from various session ID formats (WhatsApp, Webhook, etc.)
   const extractPhoneFromSessionId = (sId: string): string => {
     if (!sId) return "";
+    // Facebook sessions hold Facebook ids, never a phone (see parseSessionIdInfo)
+    if (/^(?:fb_comment|messenger):/i.test(String(sId))) return "";
     const parsed = parseSessionIdInfo(sId);
     if (parsed.phone) return parsed.phone;
     const cleanS = String(sId).replace(/@(?:s\.whatsapp\.net|c\.us)/gi, "").trim();
