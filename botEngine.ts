@@ -311,7 +311,7 @@ export function parseBotAnswer(raw: string): { reply: string; options: string[];
     const cut = s.search(/"\s*,\s*"(?:options|images|buttons)"\s*:/);
     const m = cut === -1 && s.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (m) return { reply: m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"'), options: [], images: [] };
-    const text = (cut === -1 ? s : s.slice(0, cut)).replace(/^\s*\{\s*"reply"\s*:\s*"/, "").replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+    const text = (cut === -1 ? s : s.slice(0, cut)).replace(/^(?:\s*\{\s*"reply"\s*:\s*")+/, "").replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
     const arr = s.match(/"options"\s*:\s*(\[[^\]]*\])/);
     const options = ((arr && tryParse(arr[1])) || []).map((o: any) => String(o).trim()).filter(Boolean).slice(0, 10);
     return { reply: text, options, images: [] };
@@ -329,6 +329,16 @@ export function parseBotAnswer(raw: string): { reply: string; options: string[];
     .map((x: any) => (typeof x === "string" ? x : x?.url || x?.link || ""))
     .filter((u: string) => /^https?:\/\//.test(u));
   let reply = String(obj.reply ?? obj.text ?? obj.message ?? "").trim();
+  // the model sometimes writes the JSON again inside the reply ({"reply":"{"reply":"חיים, …) —
+  // Haim, 2026-11-02: the customer got {"reply":" at the start, and WhatsApp then showed the
+  // whole message left-to-right. The inner answer is taken; its options only when there are none
+  if (/^\{\s*\\?"(?:reply|text)\\?"\s*:/.test(reply)) {
+    const inner = parseBotAnswer(reply.replace(/\\"/g, '"'));
+    reply = inner.reply;
+    if (!opts.length) opts = inner.options;
+    for (const u of inner.images) if (!images.includes(u)) images.push(u);
+  }
+  reply = reply.replace(/^\s*\{\s*\\?"(?:reply|text)\\?"\s*:\s*\\?"/, "").trim();
   // an image address written into the text goes out as an image
   const inText = reply.match(/https?:\/\/\S+\.(?:png|jpe?g|webp|gif)(?:\?\S*)?/gi) || [];
   for (const u of inText) if (!images.includes(u)) images.push(u);
