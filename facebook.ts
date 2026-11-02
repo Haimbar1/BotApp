@@ -95,6 +95,25 @@ export async function messengerName(psid: string, token: string): Promise<string
   }
 }
 
+// The vault's FB_PAGE_ACCESS_TOKEN may be the system user's token (the same as WhatsApp's) and not the
+// Page's own; replying to comments and Messenger needs the Page's. Asked for once a day per token;
+// when Meta won't give one, the token itself (already a Page token).
+const pageTokens = new Map<string, { at: number; token: string }>();
+export async function pageAccessToken(pageId: string, token: string): Promise<string> {
+  const key = `${pageId}|${token}`;
+  const hit = pageTokens.get(key);
+  if (hit && Date.now() - hit.at < 86400000) return hit.token;
+  let pageToken = token;
+  try {
+    const d = await graph(`${encodeURIComponent(pageId)}?fields=access_token`, token);
+    if (d?.access_token) pageToken = String(d.access_token);
+  } catch {
+    /* use the token as it is */
+  }
+  pageTokens.set(key, { at: Date.now(), token: pageToken });
+  return pageToken;
+}
+
 // The Page's name for its id — a check that the token works, for the bot's Facebook card
 export async function pageName(pageId: string, token: string): Promise<string> {
   const d = await graph(`${encodeURIComponent(pageId)}?fields=name`, token);

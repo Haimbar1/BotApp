@@ -28,7 +28,7 @@ import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig,
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
-import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
+import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, pageAccessToken, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
 import { switchedOnAgentIds, facebookAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
@@ -3530,7 +3530,8 @@ export async function createApp() {
       console.error(`[FB] no FB_PAGE_ACCESS_TOKEN for business ${tenant} — n8n keeps answering`);
       return null;
     }
-    return { agent, token };
+    const pageId = (await tenantSecret("FB_PAGE_ID", tenant)).trim();
+    return { agent, token: await pageAccessToken(pageId, token) };
   }
 
   // "Full name: …\nPhone number: …" — a lead form filled from an ad in Messenger (n8n read it the same way)
