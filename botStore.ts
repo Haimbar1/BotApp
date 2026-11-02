@@ -51,6 +51,8 @@ export interface BotBrain {
   nativeFacebook?: boolean;
   // when a comment / Messenger message of the business's Page last reached /api/webhooks/facebook
   lastFbMessageAt?: string;
+  // the last time Facebook refused the bot's answer (shown in the Facebook card — Vercel's log isn't at hand)
+  lastFbError?: { at: string; what: string; message: string };
   qa: BotQa[];
   booking: BookingHours;
   events?: BotEvent[];

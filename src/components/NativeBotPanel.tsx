@@ -18,6 +18,7 @@ interface Brain {
   lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
   nativeFacebook?: boolean;
   lastFbMessageAt?: string;
+  lastFbError?: { at: string; what: string; message: string };
   qa: Qa[];
   booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
   voiceNotes?: string;
@@ -770,6 +771,11 @@ function FacebookCard({ agentId, brain, saving, request, onSwitch }: { agentId: 
           {brain.nativeFacebook ? "↩ החזר את הפייסבוק ל-n8n" : "🚀 העבר את הפייסבוק לבוט החדש"}
         </button>
       </div>
+      {brain.lastFbError && (
+        <div className="text-[10.5px] text-rose-300" dir="auto">
+          ⚠️ פייסבוק דחה {brain.lastFbError.what} ({showDate(brain.lastFbError.at)}): {brain.lastFbError.message}
+        </div>
+      )}
     </div>
   );
 }

@@ -3537,6 +3537,9 @@ export async function createApp() {
   // "Full name: …\nPhone number: …" — a lead form filled from an ad in Messenger (n8n read it the same way)
   const leadFormPhone = (text: string) => normalizeIsraeliPhone((text.match(/(?:Phone number|phone_number|טלפון|נייד)\s*:?\s*([\d\-+ ]{9,16})/i) || [])[1] || "");
 
+  const noteFbError = (agent: any, what: string, e: any) =>
+    noteBrainFields(String(agent.id), { lastFbError: { at: new Date().toISOString(), what, message: String(e?.message || e).slice(0, 500) } }).catch(() => {});
+
   async function answerFacebookComment(agent: any, m: IncomingFb, token: string) {
     const post = await postInfo(m.postId || "", token);
     const name = m.name || "לקוח";
@@ -3560,6 +3563,7 @@ export async function createApp() {
         sent = true;
       } catch (e: any) {
         console.error("[FB] replying to the comment failed:", e?.message);
+        await noteFbError(agent, "תשובה בתגובה", e);
       }
     }
     await incoming;
@@ -3586,6 +3590,7 @@ export async function createApp() {
         sent.push(text);
       } catch (e: any) {
         console.error("[FB] sending the Messenger answer failed:", e?.message);
+        await noteFbError(agent, "תשובה במסנג'ר", e);
       }
     }
     await incoming;
