@@ -3519,8 +3519,12 @@ export async function createApp() {
     return null;
   }
 
-  // The bot that answers this Page (its Facebook switch on) and the Page's token; null = n8n's
-  async function facebookAgentFor(tenant: string | null): Promise<{ agent: any; token: string } | null> {
+  // The bot that answers this Page (its Facebook switch on) and the Page's token; null = n8n's.
+  // Messenger needs a token of an app approved for pages_messaging — the vault's Page token (the system
+  // user's app) wasn't ("Cannot message users who are not admins… until pages_messaging permission is
+  // reviewed", 2026-11-02), n8n's app is. FB_MESSENGER_TOKEN = that token; without it Messenger stays
+  // with n8n and only the comments are answered here.
+  async function facebookAgentFor(tenant: string | null): Promise<{ agent: any; token: string; messengerToken: string } | null> {
     if (!tenant) return null;
     const on = new Set(await facebookAgentIds());
     const agent = readAgents().find((a: any) => on.has(String(a.id)) && agentTenant(a) === tenant);
@@ -3531,7 +3535,8 @@ export async function createApp() {
       return null;
     }
     const pageId = (await tenantSecret("FB_PAGE_ID", tenant)).trim();
-    return { agent, token: await pageAccessToken(pageId, token) };
+    const messenger = (await tenantSecret("FB_MESSENGER_TOKEN", tenant)).trim();
+    return { agent, token: await pageAccessToken(pageId, token), messengerToken: messenger ? await pageAccessToken(pageId, messenger) : "" };
   }
 
   // "Full name: …\nPhone number: …" — a lead form filled from an ad in Messenger (n8n read it the same way)
@@ -3616,7 +3621,7 @@ export async function createApp() {
       return res.status(200).send("ok");
     }
     // Each Page in the batch: answered here, or its entries go on to n8n untouched
-    const ours: { entry: any; agent: any; token: string }[] = [];
+    const ours: { entry: any; agent: any; token: string; messengerToken: string }[] = [];
     const theirs: any[] = [];
     const arrivals: Promise<unknown>[] = [];
     for (const entry of payload.entry || []) {
@@ -3626,18 +3631,22 @@ export async function createApp() {
       if (tenant && incomingFacebook({ object: "page", entry: [entry] }).length) {
         arrivals.push(...readAgents().filter((a: any) => agentTenant(a) === tenant).map((a: any) => noteFbArrival(String(a.id)).catch(() => {})));
       }
-      if (found) ours.push({ entry, ...found });
-      else theirs.push(entry);
+      if (!found) theirs.push(entry);
+      else if (!found.messengerToken && entry?.messaging?.length) {
+        // no Messenger token yet: the comments here, the Messenger messages to n8n
+        theirs.push({ id: entry.id, time: entry.time, messaging: entry.messaging });
+        if (entry.changes?.length) ours.push({ entry: { id: entry.id, time: entry.time, changes: entry.changes }, ...found });
+      } else ours.push({ entry, ...found });
     }
     const forwarded = theirs.length ? toN8n(ours.length ? { ...payload, entry: theirs } : raw) : Promise.resolve();
 
-    for (const { entry, agent, token } of ours) {
+    for (const { entry, agent, token, messengerToken } of ours) {
       for (const m of incomingFacebook({ object: "page", entry: [entry] })) {
         // Meta re-delivers what it thinks failed — each comment / message is answered once
         if (!(await claimWaMessage(`fb_${m.id}`).catch(() => false))) continue;
         try {
           if (m.kind === "comment") await answerFacebookComment(agent, m, token);
-          else await answerMessenger(agent, m, token);
+          else await answerMessenger(agent, m, messengerToken);
         } catch (e: any) {
           console.error(`[FB] answering the ${m.kind} failed:`, e?.message || e);
         }
@@ -3664,7 +3673,8 @@ export async function createApp() {
         error = e?.message || "הטוקן לא עובד";
       }
     }
-    res.json({ success: true, business: !!tenant, pageId, hasToken: !!token, pageName: name, error, webhook: `${process.env.PUBLIC_URL || "https://app.smartesek.com"}/api/webhooks/facebook` });
+    const hasMessengerToken = tenant ? !!(await tenantSecret("FB_MESSENGER_TOKEN", tenant)).trim() : false;
+    res.json({ success: true, business: !!tenant, pageId, hasToken: !!token, hasMessengerToken, pageName: name, error, webhook: `${process.env.PUBLIC_URL || "https://app.smartesek.com"}/api/webhooks/facebook` });
   });
 
   const BRAIN_SAVE_FAILED = "השמירה לא הגיעה למסד הנתונים — השינויים לא נשמרו. נסו לשמור שוב בעוד רגע";

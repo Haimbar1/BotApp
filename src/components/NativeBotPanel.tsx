@@ -716,7 +716,7 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
 // answers; (2) the switch: the new bot answers (server: /api/webhooks/facebook). The Page and its
 // token come from the business's portal vault.
 function FacebookCard({ agentId, brain, saving, request, onSwitch }: { agentId: string; brain: Brain; saving: boolean; request: Request; onSwitch: (on: boolean) => void }) {
-  const [st, setSt] = useState<{ business: boolean; pageId: string; hasToken: boolean; pageName: string; error: string; webhook: string } | null>(null);
+  const [st, setSt] = useState<{ business: boolean; pageId: string; hasToken: boolean; hasMessengerToken?: boolean; pageName: string; error: string; webhook: string } | null>(null);
   useEffect(() => {
     request(`/api/facebook/status?agentId=${encodeURIComponent(agentId)}`)
       .then((r) => r.json())
@@ -746,6 +746,13 @@ function FacebookCard({ agentId, brain, saving, request, onSwitch }: { agentId: 
           </span>
         )}
         <div className="text-[10.5px] text-slate-500">הטוקן צריך את ההרשאות pages_messaging, pages_manage_engagement, pages_read_engagement ו-pages_manage_metadata.</div>
+        {st && (
+          <div className={`text-[10.5px] font-bold ${st.hasMessengerToken ? "text-emerald-300" : "text-amber-300"}`}>
+            {st.hasMessengerToken
+              ? "טוקן מסנג'ר ✓ — הבוט עונה גם במסנג'ר"
+              : "אין טוקן מסנג'ר בפורטל (\"טוקן לתשובות במסנג'ר\") — בינתיים הבוט עונה רק על תגובות, ומסנג'ר נשאר ב-n8n"}
+          </div>
+        )}
       </div>
       <div className="text-[11px] text-slate-300 border-t border-slate-800 pt-2">
         <b>שלב 1 —</b> התגובות וההודעות מגיעות ל-BotApp:{" "}
