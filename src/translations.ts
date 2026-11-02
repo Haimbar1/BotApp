@@ -101,7 +101,7 @@ export const translations: Record<Language, Record<string, string>> = {
     filterAll: "הכל",
     filterWeb: "WEB",
     filterWhatsApp: "וואטסאפ",
-    filterFb: "תגובות FB",
+    filterFb: "פייסבוק",
     noFilteredSessions: "לא נמצאו שיחות בערוץ זה",
     clearFilter: "הצג את כל השיחות",
   },

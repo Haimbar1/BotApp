@@ -1,5 +1,12 @@
 import { MessageSourceType, MessageSourceInfo } from "../types";
 
+const MESSENGER: MessageSourceInfo = {
+  type: "facebook",
+  label: "מסנג'ר",
+  icon: "📩",
+  badgeClass: "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
+};
+
 /**
  * Detects the origin channel/source of a message or session.
  * Supports WhatsApp, Web, and Facebook Post / Comments with recognizable emojis and styled badges.
@@ -15,7 +22,9 @@ export function getMessageSourceInfo(text: string = "", rawObj?: any): MessageSo
 
   if (!rawSource && (rawObj?.sessionId || rawObj?.session_id)) {
     const sid = String(rawObj.sessionId || rawObj.session_id).toLowerCase();
-    if (sid.startsWith("web_") || sid.startsWith("web-") || sid.includes("widget") || sid.includes("website") || sid.includes("אתר") || sid.includes("ווב")) {
+    if (sid.startsWith("messenger:")) {
+      rawSource = "messenger";
+    } else if (sid.startsWith("web_") || sid.startsWith("web-") || sid.includes("widget") || sid.includes("website") || sid.includes("אתר") || sid.includes("ווב")) {
       rawSource = "web";
     } else if (sid.startsWith("fb_") || sid.startsWith("fb-") || sid.includes("facebook") || sid.includes("fb_comment") || sid.includes("תגובות") || sid.includes("פייסבוק")) {
       rawSource = "facebook";
@@ -30,6 +39,9 @@ export function getMessageSourceInfo(text: string = "", rawObj?: any): MessageSo
   }
 
   const s = rawSource.toLowerCase().trim();
+
+  // Facebook Messenger (the smart bot's "messenger" channel) — counted with Facebook in the filters
+  if (s === "messenger" || s.includes("מסנג")) return MESSENGER;
 
   // Facebook Post / Comments detection
   if (
@@ -117,6 +129,7 @@ export function getSessionSourceInfo(session: any): MessageSourceInfo {
 
   // 4. Inspect sessionId format
   const sId = String(session.sessionId || session.id || "").toLowerCase();
+  if (sId.startsWith("messenger:")) return MESSENGER;
   if (sId.startsWith("web_") || sId.startsWith("web-") || sId.includes("widget") || sId.includes("אתר") || sId.includes("ווב")) {
     return {
       type: "web",

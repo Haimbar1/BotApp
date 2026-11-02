@@ -699,6 +699,9 @@ export default function App() {
   // Parse session ID format: e.g. "972547866119_bot_generic_252_עסק חכם" -> { phone, botId, customerName }
   const parseSessionIdInfo = (sId: string, knownBotIds: string[] = []): { phone: string; botId: string; customerName: string } => {
     if (!sId) return { phone: "", botId: "", customerName: "" };
+    // Facebook sessions ("fb_comment:<post>:<user>", "messenger:<PSID>") hold Facebook ids, not a phone —
+    // digits inside the Page id read as "09-1359815" (Haim, 2026-11-02)
+    if (/^(?:fb_comment|messenger):/i.test(String(sId))) return { phone: "", botId: "", customerName: "" };
     let cleanS = String(sId).replace(/@(?:s\.whatsapp\.net|c\.us)/gi, "").trim();
     cleanS = cleanS.replace(/^=+/, "");
 
