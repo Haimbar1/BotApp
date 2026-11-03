@@ -29,7 +29,7 @@ import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, age
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, pageAccessToken, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
-import { switchedOnAgentIds, facebookAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, facebookAgentIds, whatsappAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3400,9 +3400,41 @@ export async function createApp() {
     const raw = req.body || {};
     const payload = metaPayload(raw);
     const { phoneNumberId, displayPhone } = payloadNumber(payload);
-    const agent = phoneNumberId ? (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone)).catch(() => ({ agent: null }))).agent : null;
-    const brain = agent ? await getBrain(String(agent.id)).catch(() => null) : null;
     const messages = incomingMessages(payload);
+    let found: any = null;
+    let lookupError = "";
+    if (phoneNumberId) {
+      try {
+        found = (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone))).agent;
+      } catch (e: any) {
+        lookupError = e?.message || String(e);
+      }
+    }
+    // The bot whose WhatsApp switch is on wins: the number's lookup can land on a copy of the agent
+    // (same bot id) or another agent on the same number whose switch is off — and then the message
+    // went to n8n with no trace (Haim, 2026-11-03).
+    let agent: any = found;
+    let brain: any = null;
+    const brainOf = async (a: any) => {
+      try {
+        return await getBrain(String(a.id));
+      } catch {
+        return await getBrain(String(a.id)).catch((e) => ((lookupError ||= `brain: ${e?.message || e}`), null)); // one retry
+      }
+    };
+    if (agent) brain = await brainOf(agent);
+    if (phoneNumberId && !brain?.nativeWhatsapp) {
+      const on = new Set(await whatsappAgentIds().catch(() => [] as string[]));
+      const alt = readAgents().find(
+        (a: any) =>
+          on.has(String(a.id)) &&
+          ((found?.botId && a.botId === found.botId) || String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId)
+      );
+      if (alt) {
+        const altBrain = await brainOf(alt);
+        if (altBrain?.nativeWhatsapp) [agent, brain] = [alt, altBrain];
+      }
+    }
 
     // proof for the bot's screen that this number's messages arrive here (not waited for)
     const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
@@ -3415,6 +3447,11 @@ export async function createApp() {
     // reports on to the task system; the CRM reads them there (Haim, 2026-10-27: one connection for
     // all the systems). n8n may send it the same payload too — WhastAppSystem skips repeats.
     if (!agent || !brain?.nativeWhatsapp) {
+      // why it isn't the new bot's — in the log, so a message that went to n8n can be traced
+      if (messages.length) {
+        const why = !phoneNumberId ? "no number in the payload" : lookupError ? `lookup failed: ${lookupError}` : !agent ? "no agent for this number" : "WhatsApp switch off";
+        console.log(`[WA] ${messages.length} message(s) to ${phoneNumberId || "?"} (${displayPhone || "?"}) not answered here — ${why}${agent ? ` (agent ${agent.id})` : ""}`);
+      }
       const copied = postJson(`${WA_SYSTEM_URL}/api/webhook`, payload, {}, 8000).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
       // A number of an app (Bonsai) with no bot of its own isn't n8n's — n8n is the optics' bot
       const appNumber = !agent && phoneNumberId
@@ -3700,10 +3737,16 @@ export async function createApp() {
       .slice(0, 300);
     const hours: Record<string, string> = {};
     for (let d = 0; d < 7; d++) hours[String(d)] = String(b.booking?.hours?.[String(d)] || "").slice(0, 60);
+    // The switches change only when the screen says which one was pressed (b.switch). A save of
+    // anything else keeps what is stored: a screen opened before the WhatsApp switch was turned on
+    // (another tab / device / person) saved its Q&A with nativeWhatsapp false and sent WhatsApp back
+    // to n8n without anyone noticing (Haim, 2026-11-03).
+    const stored = await getBrain(agent.id).catch(() => null);
+    const SWITCHES = ["nativeWeb", "nativeWhatsapp", "nativeFacebook"] as const;
+    const switches: Record<string, boolean> = {};
+    for (const k of SWITCHES) switches[k] = b.switch === k || !stored ? !!b[k] : !!(stored as any)[k];
     const fields = {
-      nativeWeb: !!b.nativeWeb,
-      nativeWhatsapp: !!b.nativeWhatsapp,
-      nativeFacebook: !!b.nativeFacebook,
+      ...switches,
       qa,
       booking: {
         enabled: !!b.booking?.enabled,
@@ -3730,7 +3773,7 @@ export async function createApp() {
       ...(b.autofilledAt ? { autofilledAt: String(b.autofilledAt) } : {}),
     };
     try {
-      const brain = await saveBrain({ ...(await getBrain(agent.id)), ...fields });
+      const brain = await saveBrain({ ...(stored || (await getBrain(agent.id))), ...fields });
       res.json({ success: true, brain });
     } catch (e: any) {
       // Express 4 doesn't answer a request whose async handler threw — the screen sat on "שומר…"

@@ -114,10 +114,12 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
     }
   };
 
-  const save = async (next: Brain, quiet = false) => {
+  // `switchKey`: the switch that was pressed — only it changes on the server; every other save
+  // keeps the switches as stored (a screen opened earlier would otherwise turn them back)
+  const save = async (next: Brain, quiet = false, switchKey?: "nativeWeb" | "nativeWhatsapp" | "nativeFacebook") => {
     setSaving(true);
     try {
-      const r = await request("/api/bot-brain", { method: "PUT", body: JSON.stringify({ agentId, brain: next }) });
+      const r = await request("/api/bot-brain", { method: "PUT", body: JSON.stringify({ agentId, brain: switchKey ? { ...next, switch: switchKey } : next }) });
       const d: any = await json(r);
       if (!r.ok || !d.success) throw new Error(d.message || "השמירה נכשלה");
       setBrain(d.brain);
@@ -237,7 +239,7 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
           <button
             type="button"
             disabled={saving}
-            onClick={() => save({ ...brain, nativeWeb: !brain.nativeWeb })}
+            onClick={() => save({ ...brain, nativeWeb: !brain.nativeWeb }, false, "nativeWeb")}
             className={`${btn} px-4 py-2 text-xs ${brain.nativeWeb ? "border-slate-600 text-slate-200 bg-slate-800/60" : "border-emerald-500 text-white bg-emerald-600 hover:bg-emerald-500"}`}
           >
             {saving ? "שומר…" : brain.nativeWeb ? "↩ החזר את האתר לבוט הישן (n8n)" : "🚀 העבר את הבוט באתר לבוט החדש"}
@@ -247,9 +249,9 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
 
       {message && <div className="text-[11px] text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-lg px-3 py-2">{message}</div>}
 
-      {brain && botId && <WhatsAppCard botId={botId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeWhatsapp: on })} />}
+      {brain && botId && <WhatsAppCard botId={botId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeWhatsapp: on }, false, "nativeWhatsapp")} />}
 
-      {brain && <FacebookCard agentId={agentId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeFacebook: on })} />}
+      {brain && <FacebookCard agentId={agentId} brain={brain} saving={saving} request={request} onSwitch={(on) => save({ ...brain, nativeFacebook: on }, false, "nativeFacebook")} />}
 
       {/* Q&A */}
       <div className={card}>

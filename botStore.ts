@@ -265,6 +265,15 @@ export async function facebookAgentIds(): Promise<string[]> {
   return rows.map((r: any) => r.agent_id);
 }
 
+// The agents whose WhatsApp switch is on — preferred when several agents share a number / bot id
+export async function whatsappAgentIds(): Promise<string[]> {
+  const d = db();
+  if (!d) return Object.values(local().brains).filter((b) => b.nativeWhatsapp).map((b) => b.agentId);
+  await d.ready;
+  const { rows } = await d.pool.query("SELECT agent_id FROM botapp_bot_brain WHERE (data->>'nativeWhatsapp')::boolean");
+  return rows.map((r: any) => r.agent_id);
+}
+
 // Facts the server keeps on the brain row (merged in place, never over the owner's settings)
 export async function noteBrainFields(agentId: string, fields: Partial<BotBrain>): Promise<void> {
   const d = db();
