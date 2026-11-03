@@ -3404,10 +3404,14 @@ export async function createApp() {
     let found: any = null;
     let lookupError = "";
     if (phoneNumberId) {
-      try {
-        found = (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone))).agent;
-      } catch (e: any) {
-        lookupError = e?.message || String(e);
+      for (let attempt = 0; attempt < 2 && !found; attempt++) {
+        try {
+          found = (await agentForNumber(phoneNumberId, toIntlDigits(displayPhone))).agent;
+          lookupError = "";
+          break;
+        } catch (e: any) {
+          lookupError = e?.message || String(e); // one retry: a passing hiccup (database / portal vault)
+        }
       }
     }
     // The bot whose WhatsApp switch is on wins: the number's lookup can land on a copy of the agent
@@ -3425,14 +3429,21 @@ export async function createApp() {
     if (agent) brain = await brainOf(agent);
     if (phoneNumberId && !brain?.nativeWhatsapp) {
       const on = new Set(await whatsappAgentIds().catch(() => [] as string[]));
-      const alt = readAgents().find(
-        (a: any) =>
-          on.has(String(a.id)) &&
-          ((found?.botId && a.botId === found.botId) || String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId)
-      );
-      if (alt) {
-        const altBrain = await brainOf(alt);
-        if (altBrain?.nativeWhatsapp) [agent, brain] = [alt, altBrain];
+      // the number as the agent's settings or its business's portal vault ("מזהים וחיבורים") have it;
+      // another business's agent only when the lookup found none (a lent number stays the borrower's)
+      const onNumber = async (a: any) => {
+        if (found && agentTenant(a) !== agentTenant(found)) return false;
+        if (String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId) return true;
+        const cfg = await effectiveWhatsappConfig(a).catch(() => null);
+        return String(cfg?.phoneNumberId || "").trim() === phoneNumberId;
+      };
+      for (const a of readAgents().filter((x: any) => on.has(String(x.id)) && x.id !== agent?.id)) {
+        if (!((found?.botId && a.botId === found.botId) || (await onNumber(a)))) continue;
+        const altBrain = await brainOf(a);
+        if (altBrain?.nativeWhatsapp) {
+          [agent, brain] = [a, altBrain];
+          break;
+        }
       }
     }
 
