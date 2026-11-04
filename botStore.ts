@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { storagePool } from "./storage.js";
@@ -130,7 +131,7 @@ const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.ra
 // ---------- local fallback (no database) ----------
 
 const FILE = process.env.VERCEL ? "/tmp/botapp-data/bot-store.json" : path.join(process.cwd(), "data", "bot-store.json");
-let mem: { brains: Record<string, BotBrain>; lessons: BotLesson[]; notes: BotNote[]; convs: Record<string, BotConversation> } | null = null;
+let mem: { brains: Record<string, BotBrain>; lessons: BotLesson[]; notes: BotNote[]; convs: Record<string, BotConversation>; media?: Record<string, { mimeType: string; b64: string }> } | null = null;
 
 function local() {
   if (!mem) {
@@ -195,6 +196,13 @@ function db() {
           PRIMARY KEY (bot_id, session_id)
         );
         CREATE INDEX IF NOT EXISTS botapp_conversations_phone_idx ON botapp_conversations (bot_id, phone);
+        CREATE TABLE IF NOT EXISTS botapp_media (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL DEFAULT '',
+          mime_type TEXT NOT NULL,
+          data BYTEA NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
         CREATE TABLE IF NOT EXISTS botapp_wa_seen (
           message_id TEXT PRIMARY KEY,
           seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -483,4 +491,34 @@ export async function deleteConversation(botId: string, sessionId: string): Prom
   }
   await d.ready;
   await d.pool.query("DELETE FROM botapp_conversations WHERE bot_id = $1 AND session_id = $2", [botId, sessionId]);
+}
+
+// ---------- media the customers sent (a WhatsApp picture) ----------
+// Meta's media links need the business's token and expire, so the file itself is kept here and the
+// chat log shows it through /api/bot-media/<id> (the id is random and long, it is the key).
+
+export async function saveMedia(botId: string, data: Buffer, mimeType: string): Promise<string> {
+  const id = crypto.randomBytes(18).toString("base64url");
+  const d = db();
+  if (!d) {
+    const s = local();
+    s.media = { ...(s.media || {}), [id]: { mimeType, b64: data.toString("base64") } };
+    saveLocal();
+    return id;
+  }
+  await d.ready;
+  await d.pool.query("INSERT INTO botapp_media (id, bot_id, mime_type, data) VALUES ($1, $2, $3, $4)", [id, botId, mimeType, data]);
+  return id;
+}
+
+export async function getMedia(id: string): Promise<{ data: Buffer; mimeType: string } | null> {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(id)) return null;
+  const d = db();
+  if (!d) {
+    const m = local().media?.[id];
+    return m ? { data: Buffer.from(m.b64, "base64"), mimeType: m.mimeType } : null;
+  }
+  await d.ready;
+  const { rows } = await d.pool.query("SELECT mime_type, data FROM botapp_media WHERE id = $1", [id]);
+  return rows[0] ? { data: rows[0].data, mimeType: rows[0].mime_type } : null;
 }

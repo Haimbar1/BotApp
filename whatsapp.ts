@@ -81,6 +81,8 @@ export function incomingMessages(payload: any): IncomingWa[] {
             break;
           case "image":
             text = m.image?.caption ? `[שלח/ה תמונה] ${m.image.caption}` : "[שלח/ה תמונה]";
+            mediaId = m.image?.id;
+            mimeType = m.image?.mime_type;
             break;
           case "video":
             text = m.video?.caption ? `[שלח/ה וידאו] ${m.video.caption}` : "[שלח/ה וידאו]";
@@ -117,7 +119,7 @@ export const needsNoAnswer = (m: IncomingWa) => ["reaction", "sticker", "unsuppo
 
 // ---------- voice notes ----------
 
-async function downloadMedia(mediaId: string, token: string): Promise<{ data: Buffer; mimeType: string }> {
+export async function downloadMedia(mediaId: string, token: string): Promise<{ data: Buffer; mimeType: string }> {
   const meta = await fetch(`${GRAPH}/${encodeURIComponent(mediaId)}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
   const info: any = await meta.json().catch(() => ({}));
   if (!meta.ok || !info?.url) throw new Error(info?.error?.message || `media ${meta.status}`);

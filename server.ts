@@ -28,9 +28,9 @@ import {
 import { tenantSecret, saveToVault, isSharedDemoNumber, effectiveWhatsappConfig, whatsappVaultValues, agentsForVaultPhone, agentsBorrowingPhone, portalBusinessesFor, portalDeniesBotApp, ORIGINAL_TENANT } from "./secrets.js";
 import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, agentImagesWithFrames, withFramesTopic } from "./siteFrames.js";
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
-import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
+import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, downloadMedia, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, pageAccessToken, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
-import { switchedOnAgentIds, facebookAgentIds, whatsappAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, facebookAgentIds, whatsappAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, saveMedia, getMedia, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3265,6 +3265,7 @@ export async function createApp() {
         name: body.userName || body.name || undefined,
         waContext: body.waContext,
         fbContext: body.fbContext,
+        userImages: Array.isArray(body.userImages) ? body.userImages : undefined,
       },
       { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
     );
@@ -3429,6 +3430,17 @@ export async function createApp() {
   // customer's message). Where the time went is kept for the bot's screen.
   async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number) {
     const phone = normalizeIsraeliPhone(msg.from) || msg.from;
+    // a picture: kept here so the chat log can show it (Meta's link needs the token and expires)
+    let userImages: string[] | undefined;
+    if (msg.type === "image" && msg.mediaId) {
+      try {
+        const { data, mimeType } = await downloadMedia(msg.mediaId, token);
+        const type = /^image\//.test(mimeType) ? mimeType : msg.mimeType || "image/jpeg";
+        userImages = [`/api/bot-media/${await saveMedia(String(agent.botId || ""), data, type)}`];
+      } catch (e: any) {
+        console.warn("[WA] keeping the customer's picture failed:", e?.message || e);
+      }
+    }
     const out = await turnFor(agent, "whatsapp", {
       sessionId: `wa_${phone}`,
       message: msg.text,
@@ -3436,6 +3448,7 @@ export async function createApp() {
       userPhone: phone,
       userName: msg.name,
       waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
+      userImages,
     });
     const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
     const ts = Date.now();
@@ -4141,6 +4154,7 @@ export async function createApp() {
           userName: c.name,
           userPhone: c.phone,
           channel: c.channel,
+          ...(m.role === "user" && m.images?.[0] ? { imageUrl: m.images[0] } : {}),
           message: {
             type: m.role === "bot" ? "ai" : "human",
             content: m.role === "bot" ? JSON.stringify({ reply: m.text, options: m.options || [], ...(m.images?.[0] ? { image: m.images[0] } : {}) }) : m.text,
@@ -4170,6 +4184,20 @@ export async function createApp() {
   }
 
   // GET /api/bot-conversations?botId=… — merged into the chats screen next to n8n's
+  // A picture a customer sent on WhatsApp (saveMedia). No login: an <img> can't send one, and the
+  // random 24-character id is the key, the way Meta's own media links work.
+  app.get("/api/bot-media/:id", async (req: any, res: any) => {
+    try {
+      const m = await getMedia(String(req.params.id || ""));
+      if (!m) return res.status(404).send("not found");
+      res.set({ "Content-Type": m.mimeType, "Cache-Control": "private, max-age=31536000, immutable", "X-Robots-Tag": "noindex", "X-Content-Type-Options": "nosniff" });
+      res.send(m.data);
+    } catch (e: any) {
+      console.error("[BOT] reading media failed:", e?.message || e);
+      res.status(500).send("error");
+    }
+  });
+
   app.get("/api/bot-conversations", requireAuth, async (req: any, res: any) => {
     const botId = String(req.query.botId || "").trim();
     const agent = findAgentByBotId(botId);

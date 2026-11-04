@@ -48,6 +48,8 @@ export interface TurnInput {
   waContext?: { replyTo?: string; templateButton?: boolean; ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string } };
   // Facebook comment: the post / ad the comment is on (its text), so "כמה זה עולה?" is answered about it
   fbContext?: { postText?: string };
+  // pictures the customer sent with this message (links to /api/bot-media/…), kept on their message
+  userImages?: string[];
 }
 
 export interface TurnDeps {
@@ -899,7 +901,10 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   st.voice = userText.startsWith("🎤") && st.confirmed !== "voice";
   const today = israelNow().date;
   const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
-  const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
+  const userMsg = msg("user", userText, {
+    ...(input.buttonId ? { buttonId: input.buttonId } : {}),
+    ...(input.userImages?.length ? { images: input.userImages } : {}),
+  });
 
   let answer = { reply: "", options: [] as string[], images: [] as string[] };
   const comment = input.channel === "fb_comment";

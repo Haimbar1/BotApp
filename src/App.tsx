@@ -1542,6 +1542,7 @@ export default function App() {
             name: itemName,
             userName: itemName,
             userPhone: itemPhone,
+            ...(typeof item.imageUrl === "string" && item.imageUrl ? { imageUrl: item.imageUrl } : {}),
             message: {
               type: finalType,
               content: finalContent
@@ -7468,10 +7469,10 @@ ${videos || "(לא הוגדר)"}
                                         : "bg-[#1d2235]/60 border-slate-700/30 text-slate-100 rounded-tr-none"
                                     }`}
                                   >
-                                    {parsed.imageUrl && (
+                                    {(parsed.imageUrl || msg.imageUrl) && (
                                       <div className="mb-2.5 rounded-xl overflow-hidden border border-slate-700/50 bg-black/40 p-1">
-                                        <a href={parsed.imageUrl} target="_blank" rel="noopener noreferrer" title="לחץ להגדלת התמונה בחלון חדש">
-                                          <img src={parsed.imageUrl} alt="מדיה מצורפת" className="max-w-xs max-h-64 object-cover rounded-lg hover:opacity-90 transition cursor-pointer" />
+                                        <a href={parsed.imageUrl || msg.imageUrl} target="_blank" rel="noopener noreferrer" title="לחץ להגדלת התמונה בחלון חדש">
+                                          <img src={parsed.imageUrl || msg.imageUrl} alt="מדיה מצורפת" className="max-w-xs max-h-64 object-cover rounded-lg hover:opacity-90 transition cursor-pointer" />
                                         </a>
                                       </div>
                                     )}
