@@ -17,7 +17,7 @@ Existing integration points between this and the other two:
 
 ## Deployment: Vercel, like the other projects (used to be Cloud Run)
 
-`server.ts` exports `createApp()` (all /api routes); `api/index.ts` wraps it as one Vercel serverless function and `vercel.json` rewrites `/api/*` to it, exactly like the CRM. Pushing to `main` deploys frontend and backend together. The old Google Cloud Run service is no longer used. Locally (`npm run dev`) or in a container, `startServer()` runs the same app plus Vite/static files. Environment variables (set in Vercel): DATABASE_URL, SSO_SHARED_SECRET, GOOGLE_CLIENT_ID, GEMINI_API_KEY, BOTAPP_SERVICE_KEY, META_APP_ID, META_APP_SECRET, EVOLUTION_API_URL, EVOLUTION_GLOBAL_KEY, optionally ALLOWED_EMAILS / PORTAL_URL.
+`server.ts` exports `createApp()` (all /api routes); `api/index.ts` wraps it as one Vercel serverless function and `vercel.json` rewrites `/api/*` to it, exactly like the CRM. Pushing to `main` deploys frontend and backend together. The old Google Cloud Run service is no longer used. Locally (`npm run dev`) or in a container, `startServer()` runs the same app plus Vite/static files. Environment variables (set in Vercel): DATABASE_URL, SSO_SHARED_SECRET, GOOGLE_CLIENT_ID, GEMINI_API_KEY, BOTAPP_SERVICE_KEY, META_APP_ID, META_APP_SECRET, EVOLUTION_API_URL, EVOLUTION_GLOBAL_KEY, N8N_DATABASE_URL (n8n's Postgres, for the chat log), optionally ALLOWED_EMAILS / PORTAL_URL.
 
 ## The help assistant ("העוזר")
 
@@ -52,6 +52,10 @@ Google OAuth (`/api/auth/google`) and the portal's SSO (`/api/auth/sso`); only s
 ## WhatsApp connection: Evolution API, not Meta's official Cloud API
 
 This repo talks to WhatsApp through a **self-hosted Evolution API instance** (`/api/evolution/*` routes — create/recreate instance, QR-code connect, connection state, logout, incoming-webhook receiver at `/api/webhooks/evolution`), an open-source, unofficial WhatsApp bridge — **not** the same Meta Cloud API integration WhastAppSystem- uses. Default API URL in code: `http://72.61.185.147:60486` (same host IP, different port, as the Postgres server configured for the CRM project — Haim appears to run multiple self-hosted services on one VPS at that IP). Don't assume WhastAppSystem-'s Meta-API patterns (template messages, webhook payload shapes, etc.) carry over here — this is a genuinely different WhatsApp integration mechanism with its own quirks.
+
+## Chat log: n8n's `chat_history` read straight from Postgres
+
+`fetchLiveChats` (server.ts — used by `/api/chats`, "לוג שיחות", and `/api/crm/bot-chats`) runs n8n's chats-webhook query itself: `SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id` (`readChatHistoryRows`), on `N8N_DATABASE_URL` (n8n's Postgres; else `CHAT_HISTORY_DATABASE_URL`, else `DATABASE_URL`). If that fails (no table / no connection) it waits 5 minutes before trying the DB again and uses the old webhook (`…/webhook/932a697d-…`) meanwhile. The browser no longer calls that webhook itself; it only asks `/api/chats`.
 
 ## n8n integration
 

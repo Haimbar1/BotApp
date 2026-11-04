@@ -1,4 +1,5 @@
 import express from "express";
+import pg from "pg";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
@@ -2546,6 +2547,35 @@ export async function createApp() {
     return String(rawContent);
   }
 
+  // n8n's chat memory (table chat_history) read directly, instead of through n8n's chats webhook,
+  // which ran only: SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id.
+  // Database: N8N_DATABASE_URL (n8n's Postgres), else DATABASE_URL. null = couldn't read it (the
+  // webhook is then tried as before).
+  let chatHistoryPool: pg.Pool | null = null;
+  let chatHistoryUnavailableUntil = 0;
+  async function readChatHistoryRows(botId: string): Promise<any[] | null> {
+    const url = process.env.N8N_DATABASE_URL || process.env.CHAT_HISTORY_DATABASE_URL || process.env.DATABASE_URL;
+    if (!url || !botId || Date.now() < chatHistoryUnavailableUntil) return null;
+    try {
+      if (!chatHistoryPool) {
+        chatHistoryPool = new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 6000 });
+        chatHistoryPool.on("error", (e) => console.warn("[CHAT_HISTORY] pool error:", e?.message || e));
+      }
+      const pattern = "%" + botId.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+      const { rows } = await chatHistoryPool.query(
+        "SELECT * FROM chat_history WHERE session_id LIKE $1 ORDER BY id ASC",
+        [pattern]
+      );
+      console.log(`[CHAT_HISTORY] ${rows.length} rows from Postgres for botId "${botId}"`);
+      return rows;
+    } catch (e: any) {
+      // e.g. no chat_history table in this database — don't retry on every request for a while
+      console.warn("[CHAT_HISTORY] direct read failed, using the n8n webhook:", e?.message || e);
+      chatHistoryUnavailableUntil = Date.now() + 5 * 60 * 1000;
+      return null;
+    }
+  }
+
   // The bot's conversations as n8n keeps them (its chat memory), normalized to the chat format
   // (used by /api/chats and by the CRM's campaign conversations, /api/crm/bot-chats). ok = n8n answered.
   async function fetchLiveChats(botId: string): Promise<{ ok: boolean; chats: any[] }> {
@@ -2567,7 +2597,15 @@ export async function createApp() {
     let finalMethod = "";
     let finalUrl = "";
 
-    for (const item of urlsToTry) {
+    // First: n8n's chat memory straight from its Postgres (the same query the webhook runs).
+    const fromDb = await readChatHistoryRows(botId);
+    if (fromDb) {
+      rawData = fromDb;
+      responseOk = true;
+      finalMethod = "DB";
+    }
+
+    for (const item of (responseOk ? [] : urlsToTry)) {
       try {
         console.log(`[SERVER] Trying to fetch chats from N8N: ${item.method} -> ${item.url} for botId: "${botId}"`);
         const controller = new AbortController();
