@@ -17,7 +17,7 @@ Existing integration points between this and the other two:
 
 ## Deployment: Vercel, like the other projects (used to be Cloud Run)
 
-`server.ts` exports `createApp()` (all /api routes); `api/index.ts` wraps it as one Vercel serverless function and `vercel.json` rewrites `/api/*` to it, exactly like the CRM. Pushing to `main` deploys frontend and backend together. The old Google Cloud Run service is no longer used. Locally (`npm run dev`) or in a container, `startServer()` runs the same app plus Vite/static files. Environment variables (set in Vercel): DATABASE_URL, SSO_SHARED_SECRET, GOOGLE_CLIENT_ID, GEMINI_API_KEY, BOTAPP_SERVICE_KEY, META_APP_ID, META_APP_SECRET, EVOLUTION_API_URL, EVOLUTION_GLOBAL_KEY, N8N_DATABASE_URL (n8n's Postgres, for the chat log), optionally ALLOWED_EMAILS / PORTAL_URL.
+`server.ts` exports `createApp()` (all /api routes); `api/index.ts` wraps it as one Vercel serverless function and `vercel.json` rewrites `/api/*` to it, exactly like the CRM. Pushing to `main` deploys frontend and backend together. The old Google Cloud Run service is no longer used. Locally (`npm run dev`) or in a container, `startServer()` runs the same app plus Vite/static files. Environment variables (set in Vercel): DATABASE_URL, SSO_SHARED_SECRET, GOOGLE_CLIENT_ID, GEMINI_API_KEY, BOTAPP_SERVICE_KEY, META_APP_ID, META_APP_SECRET, EVOLUTION_API_URL, EVOLUTION_GLOBAL_KEY, optionally ALLOWED_EMAILS / PORTAL_URL.
 
 ## The help assistant ("העוזר")
 
@@ -55,7 +55,7 @@ This repo talks to WhatsApp through a **self-hosted Evolution API instance** (`/
 
 ## Chat log: n8n's `chat_history` read straight from Postgres
 
-`fetchLiveChats` (server.ts — used by `/api/chats`, "לוג שיחות", and `/api/crm/bot-chats`) runs n8n's chats-webhook query itself: `SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id` (`readChatHistoryRows`), on `N8N_DATABASE_URL` (n8n's Postgres; else `CHAT_HISTORY_DATABASE_URL`, else `DATABASE_URL`). If that fails (no table / no connection) it waits 5 minutes before trying the DB again and uses the old webhook (`…/webhook/932a697d-…`) meanwhile. The browser no longer calls that webhook itself; it only asks `/api/chats`.
+`fetchLiveChats` (server.ts — used by `/api/chats`, "לוג שיחות", and `/api/crm/bot-chats`) runs n8n's chats-webhook query itself: `SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id` (`readChatHistoryRows`), on `DATABASE_URL` (the same name as every other app; if `chat_history` isn't in that database — BotApp's is `botapp` — the other databases on the same server are searched for it with the same login, once per instance). If that fails (no table / no connection) it waits 5 minutes before trying the DB again and uses the old webhook (`…/webhook/932a697d-…`) meanwhile. The browser no longer calls that webhook itself; it only asks `/api/chats`.
 
 ## n8n integration
 

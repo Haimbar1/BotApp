@@ -2549,18 +2549,45 @@ export async function createApp() {
 
   // n8n's chat memory (table chat_history) read directly, instead of through n8n's chats webhook,
   // which ran only: SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id.
-  // Database: N8N_DATABASE_URL (n8n's Postgres), else DATABASE_URL. null = couldn't read it (the
-  // webhook is then tried as before).
+  // Connection: DATABASE_URL (same name as in all the other apps). If chat_history isn't in that
+  // database (BotApp's is "botapp"), the other databases on the same server are searched for it
+  // with the same login, once. null = couldn't read it (the webhook is then tried as before).
   let chatHistoryPool: pg.Pool | null = null;
   let chatHistoryUnavailableUntil = 0;
+  const hasChatHistory = async (pool: pg.Pool) =>
+    (await pool.query("SELECT to_regclass('chat_history') IS NOT NULL AS ok")).rows[0]?.ok === true;
+  async function openChatHistoryPool(url: string): Promise<pg.Pool> {
+    const open = (u: string) => {
+      const pool = new pg.Pool({ connectionString: u, max: 2, connectionTimeoutMillis: 6000 });
+      pool.on("error", (e) => console.warn("[CHAT_HISTORY] pool error:", e?.message || e));
+      return pool;
+    };
+    const first = open(url);
+    if (await hasChatHistory(first)) return first;
+    const { rows } = await first.query(
+      "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname <> current_database() ORDER BY datname"
+    );
+    for (const { datname } of rows) {
+      const u = new URL(url);
+      u.pathname = "/" + encodeURIComponent(datname);
+      const other = open(u.toString());
+      try {
+        if (await hasChatHistory(other)) {
+          console.log(`[CHAT_HISTORY] chat_history found in database "${datname}"`);
+          await first.end().catch(() => {});
+          return other;
+        }
+      } catch { /* no access to that database */ }
+      await other.end().catch(() => {});
+    }
+    await first.end().catch(() => {});
+    throw new Error("no chat_history table in any database on the DATABASE_URL server");
+  }
   async function readChatHistoryRows(botId: string): Promise<any[] | null> {
-    const url = process.env.N8N_DATABASE_URL || process.env.CHAT_HISTORY_DATABASE_URL || process.env.DATABASE_URL;
+    const url = process.env.DATABASE_URL;
     if (!url || !botId || Date.now() < chatHistoryUnavailableUntil) return null;
     try {
-      if (!chatHistoryPool) {
-        chatHistoryPool = new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 6000 });
-        chatHistoryPool.on("error", (e) => console.warn("[CHAT_HISTORY] pool error:", e?.message || e));
-      }
+      if (!chatHistoryPool) chatHistoryPool = await openChatHistoryPool(url);
       const pattern = "%" + botId.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
       const { rows } = await chatHistoryPool.query(
         "SELECT * FROM chat_history WHERE session_id LIKE $1 ORDER BY id ASC",
@@ -2569,8 +2596,10 @@ export async function createApp() {
       console.log(`[CHAT_HISTORY] ${rows.length} rows from Postgres for botId "${botId}"`);
       return rows;
     } catch (e: any) {
-      // e.g. no chat_history table in this database — don't retry on every request for a while
       console.warn("[CHAT_HISTORY] direct read failed, using the n8n webhook:", e?.message || e);
+      const pool = chatHistoryPool;
+      chatHistoryPool = null;
+      pool?.end().catch(() => {});
       chatHistoryUnavailableUntil = Date.now() + 5 * 60 * 1000;
       return null;
     }
