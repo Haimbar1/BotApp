@@ -1567,36 +1567,11 @@ export default function App() {
         return [];
       };
 
-      const webhookChatsUrl = "https://n8n.srv1239769.hstgr.cloud/webhook/932a697d-8cc7-4141-9a00-973c72020584";
+      // The chats come from /api/chats: the server reads n8n's chat_history from Postgres
+      // (the n8n webhook is only its fallback).
       let fetchedSuccessfully = false;
 
-      // Tier 1: Try /api/fetch-config proxy
-      try {
-        const proxyUrl = `/api/fetch-config?url=${encodeURIComponent(webhookChatsUrl)}&botId=${encodeURIComponent(targetBotId)}`;
-        console.log(`[CLIENT] [Tier 1] Fetching chats via proxy: "${proxyUrl}"`);
-        const response = await apiFetch(proxyUrl, {
-          headers: { "Authorization": `Bearer ${sessionToken}` }
-        });
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success && result.data) {
-            const rawRecords = extractRecordsFromPayload(result.data);
-            if (rawRecords.length > 0) {
-              const liveChats = processRecords(rawRecords);
-              if (active && liveChats.length > 0) {
-                console.log(`[CLIENT] Successfully loaded ${liveChats.length} chats from Tier 1`);
-                setChats(liveChats);
-                fetchedSuccessfully = true;
-              }
-            }
-          }
-        }
-      } catch (tier1Err) {
-        console.warn("[CLIENT] Tier 1 proxy fetch failed:", tier1Err);
-      }
-
-      // Tier 2: Try direct /api/chats backend endpoint
-      if (!fetchedSuccessfully) {
+      {
         try {
           console.log(`[CLIENT] [Tier 2] Fetching chats via /api/chats for botId: "${targetBotId}"`);
           const response = await apiFetch(`/api/chats?botId=${encodeURIComponent(targetBotId)}`, {
@@ -1615,29 +1590,6 @@ export default function App() {
           }
         } catch (tier2Err) {
           console.warn("[CLIENT] Tier 2 /api/chats fetch failed:", tier2Err);
-        }
-      }
-
-      // Tier 3: Direct Webhook GET to n8n (client-side fallback)
-      if (!fetchedSuccessfully) {
-        try {
-          const directWebhookUrl = `${webhookChatsUrl}?botId=${encodeURIComponent(targetBotId)}`;
-          console.log(`[CLIENT] [Tier 3] Fetching chats directly from Webhook: "${directWebhookUrl}"`);
-          const response = await fetch(directWebhookUrl, { method: "GET" });
-          if (response.ok) {
-            const rawJson = await response.json();
-            const rawRecords = extractRecordsFromPayload(rawJson);
-            if (rawRecords.length > 0) {
-              const liveChats = processRecords(rawRecords);
-              if (active && liveChats.length > 0) {
-                console.log(`[CLIENT] Successfully loaded ${liveChats.length} chats from Tier 3`);
-                setChats(liveChats);
-                fetchedSuccessfully = true;
-              }
-            }
-          }
-        } catch (tier3Err) {
-          console.warn("[CLIENT] Tier 3 direct webhook fetch failed:", tier3Err);
         }
       }
 

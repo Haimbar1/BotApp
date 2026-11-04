@@ -53,6 +53,10 @@ Google OAuth (`/api/auth/google`) and the portal's SSO (`/api/auth/sso`); only s
 
 This repo talks to WhatsApp through a **self-hosted Evolution API instance** (`/api/evolution/*` routes — create/recreate instance, QR-code connect, connection state, logout, incoming-webhook receiver at `/api/webhooks/evolution`), an open-source, unofficial WhatsApp bridge — **not** the same Meta Cloud API integration WhastAppSystem- uses. Default API URL in code: `http://72.61.185.147:60486` (same host IP, different port, as the Postgres server configured for the CRM project — Haim appears to run multiple self-hosted services on one VPS at that IP). Don't assume WhastAppSystem-'s Meta-API patterns (template messages, webhook payload shapes, etc.) carry over here — this is a genuinely different WhatsApp integration mechanism with its own quirks.
 
+## Chat log: n8n's `chat_history` read straight from Postgres
+
+`fetchLiveChats` (server.ts — used by `/api/chats`, "לוג שיחות", and `/api/crm/bot-chats`) runs n8n's chats-webhook query itself: `SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id` (`readChatHistoryRows`), on `DATABASE_URL` (the same name as every other app; if `chat_history` isn't in that database — BotApp's is `botapp` — the other databases on the same server are searched for it with the same login, once per instance). If that fails (no table / no connection) it waits 5 minutes before trying the DB again and uses the old webhook (`…/webhook/932a697d-…`) meanwhile. The browser no longer calls that webhook itself; it only asks `/api/chats`.
+
 ## n8n integration
 
 `/api/whatsapp/n8n-credentials` exists — n8n (workflow automation) is mentioned as part of this product's toolset in earlier project notes, but the exact data flow through this endpoint wasn't traced during this exploration. Investigate `server.ts` directly before making changes here.

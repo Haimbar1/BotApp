@@ -1,4 +1,5 @@
 import express from "express";
+import pg from "pg";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
@@ -2546,6 +2547,64 @@ export async function createApp() {
     return String(rawContent);
   }
 
+  // n8n's chat memory (table chat_history) read directly, instead of through n8n's chats webhook,
+  // which ran only: SELECT * FROM chat_history WHERE session_id LIKE '%<botId>%' ORDER BY id.
+  // Connection: DATABASE_URL (same name as in all the other apps). If chat_history isn't in that
+  // database (BotApp's is "botapp"), the other databases on the same server are searched for it
+  // with the same login, once. null = couldn't read it (the webhook is then tried as before).
+  let chatHistoryPool: pg.Pool | null = null;
+  let chatHistoryUnavailableUntil = 0;
+  const hasChatHistory = async (pool: pg.Pool) =>
+    (await pool.query("SELECT to_regclass('chat_history') IS NOT NULL AS ok")).rows[0]?.ok === true;
+  async function openChatHistoryPool(url: string): Promise<pg.Pool> {
+    const open = (u: string) => {
+      const pool = new pg.Pool({ connectionString: u, max: 2, connectionTimeoutMillis: 6000 });
+      pool.on("error", (e) => console.warn("[CHAT_HISTORY] pool error:", e?.message || e));
+      return pool;
+    };
+    const first = open(url);
+    if (await hasChatHistory(first)) return first;
+    const { rows } = await first.query(
+      "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname <> current_database() ORDER BY datname"
+    );
+    for (const { datname } of rows) {
+      const u = new URL(url);
+      u.pathname = "/" + encodeURIComponent(datname);
+      const other = open(u.toString());
+      try {
+        if (await hasChatHistory(other)) {
+          console.log(`[CHAT_HISTORY] chat_history found in database "${datname}"`);
+          await first.end().catch(() => {});
+          return other;
+        }
+      } catch { /* no access to that database */ }
+      await other.end().catch(() => {});
+    }
+    await first.end().catch(() => {});
+    throw new Error("no chat_history table in any database on the DATABASE_URL server");
+  }
+  async function readChatHistoryRows(botId: string): Promise<any[] | null> {
+    const url = process.env.DATABASE_URL;
+    if (!url || !botId || Date.now() < chatHistoryUnavailableUntil) return null;
+    try {
+      if (!chatHistoryPool) chatHistoryPool = await openChatHistoryPool(url);
+      const pattern = "%" + botId.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+      const { rows } = await chatHistoryPool.query(
+        "SELECT * FROM chat_history WHERE session_id LIKE $1 ORDER BY id ASC",
+        [pattern]
+      );
+      console.log(`[CHAT_HISTORY] ${rows.length} rows from Postgres for botId "${botId}"`);
+      return rows;
+    } catch (e: any) {
+      console.warn("[CHAT_HISTORY] direct read failed, using the n8n webhook:", e?.message || e);
+      const pool = chatHistoryPool;
+      chatHistoryPool = null;
+      pool?.end().catch(() => {});
+      chatHistoryUnavailableUntil = Date.now() + 5 * 60 * 1000;
+      return null;
+    }
+  }
+
   // The bot's conversations as n8n keeps them (its chat memory), normalized to the chat format
   // (used by /api/chats and by the CRM's campaign conversations, /api/crm/bot-chats). ok = n8n answered.
   async function fetchLiveChats(botId: string): Promise<{ ok: boolean; chats: any[] }> {
@@ -2567,7 +2626,15 @@ export async function createApp() {
     let finalMethod = "";
     let finalUrl = "";
 
-    for (const item of urlsToTry) {
+    // First: n8n's chat memory straight from its Postgres (the same query the webhook runs).
+    const fromDb = await readChatHistoryRows(botId);
+    if (fromDb) {
+      rawData = fromDb;
+      responseOk = true;
+      finalMethod = "DB";
+    }
+
+    for (const item of (responseOk ? [] : urlsToTry)) {
       try {
         console.log(`[SERVER] Trying to fetch chats from N8N: ${item.method} -> ${item.url} for botId: "${botId}"`);
         const controller = new AbortController();
