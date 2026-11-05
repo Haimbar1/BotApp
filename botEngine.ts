@@ -460,7 +460,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
         ? "בצ'אט באתר של העסק"
         : "בוואטסאפ (מספר הטלפון שלו ידוע ומאומת — אל תבקש אותו)";
   return [
-    `אתה הנציג הדיגיטלי של "${business}" ומדבר עם לקוח ${where}.`,
+    `אתה נועם, הנציג הדיגיטלי של "${business}", ומדבר עם לקוח ${where}.`,
+    // Haim, 2026-11-05: the WhatsApp / website bot is "נועם" (the voice bot is "נועה") — so everyone,
+    // the customers and the staff in the CRM, knows which bot did what
+    "- שמך נועם. כשאתה מציג את עצמך, כשהלקוח שואל מי אתה / עם מי הוא מדבר, או כשאתה חותם — אתה נועם, הנציג הדיגיטלי של העסק (גם אם בהנחיות של העסק מופיע שם אחר לבוט). אל תציג את עצמך כאדם מהצוות ואל תדבר בשם אדם מסוים מהעסק.",
     `עכשיו: יום ${DAY_NAMES[now.weekday]} ${now.date.slice(8, 10)}/${now.date.slice(5, 7)}/${now.date.slice(0, 4)}, השעה ${now.time} (שעון ישראל).`,
     "",
     "# השכל של הבוט (ההנחיות של העסק — הבסיס לכל תשובה)",
@@ -766,11 +769,11 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
-        const res = await deps.crm({ action: "book", phone: st.phone, name: String(args?.customer_name || st.name || "לקוח"), start, minutes: input.brain.booking.slotMinutes });
+        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: String(args?.customer_name || st.name || "לקוח"), start, minutes: input.brain.booking.slotMinutes });
         if (args?.customer_name) st.name = String(args.customer_name);
         return { ok: true, start, show: showSlot(res.start || start) };
       }
-      const res = await deps.crm({ action: "move", phone: st.phone, examId: String(args?.exam_id || ""), start });
+      const res = await deps.crm({ action: "move", via: input.channel, phone: st.phone, examId: String(args?.exam_id || ""), start });
       return { ok: true, from: res.previousStart ? showSlot(res.previousStart) : undefined, to: showSlot(start) };
     }
     case "cancel_appointment": {
@@ -779,7 +782,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       const ask = needsConfirmation(st, `cancel|${String(args?.exam_id || "")}`, `עוד לא בוטל כלום. שאל את הלקוח: \"לבטל את התור שלך ל*…*?\" (כתוב את המועד). הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.cancel.join(" / ")}). אחרי שיאשר — קרא שוב.`);
       if (ask) return ask;
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — התור לא בוטל באמת" };
-      const res = await deps.crm({ action: "cancel", phone: st.phone, examId: String(args?.exam_id || "") });
+      const res = await deps.crm({ action: "cancel", via: input.channel, phone: st.phone, examId: String(args?.exam_id || "") });
       return { ok: true, cancelled: res.start ? showSlot(res.start) : undefined };
     }
     case "note_for_staff": {
@@ -1318,13 +1321,13 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
           reason: !inHours ? "outside-hours" : start < soon ? "too-soon" : "busy",
         };
       }
-      const res = await crm({ action: "move", phone, examId: exam.id, start });
+      const res = await crm({ action: "move", via: "voice", phone, examId: exam.id, start });
       return { ok: true, say: `התור הועבר מ${spokenSlot(res?.previousStart || exam.start)} ל${spokenSlot(start)}. תישלח הודעת אישור בוואטסאפ.` };
     }
     case "cancel_appointment": {
       const exam = await theExam();
       if (!exam) return { ok: false, say_instead: "לא מצאנו את התור במערכת — הצוות יחזור לבדוק" };
-      await crm({ action: "cancel", phone, examId: exam.id });
+      await crm({ action: "cancel", via: "voice", phone, examId: exam.id });
       return { ok: true, say: `התור ${spokenSlot(exam.start)} בוטל.` };
     }
     default:

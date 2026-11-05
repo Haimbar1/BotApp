@@ -3227,11 +3227,11 @@ export async function createApp() {
   }
 
   // A note for the staff also goes on the customer's lead in the CRM (when the phone is known)
-  const NOTE_TITLES: Record<string, string> = { handoff: "🙋 הבוט: לחזור ללקוח", bug: "🐞 תקלה בבוט — לטיפול", lesson: "🧠 הבוט למד" };
+  const NOTE_TITLES: Record<string, string> = { handoff: "🙋 נועם (הבוט): לחזור ללקוח", bug: "🐞 תקלה בבוט נועם — לטיפול", lesson: "🧠 נועם (הבוט) למד" };
   const noteToCrm = (agent: any) => async (note: BotNote) => {
     const crm = crmFor(agent);
     if (!crm || !note.phone || note.kind === "lesson") return;
-    await crm({ action: "note", phone: note.phone, title: NOTE_TITLES[note.kind], text: note.text, important: true });
+    await crm({ action: "note", via: note.channel, phone: note.phone, title: NOTE_TITLES[note.kind], text: note.text, important: true });
   };
 
   const findAgentById = (agentId: string) => readAgents().find((a: any) => a.id === agentId);
