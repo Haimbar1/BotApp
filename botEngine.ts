@@ -413,8 +413,34 @@ export const withoutEventDates = (text: string) =>
 // answer "are you open on…?" and mention what's relevant.
 const EVENTS_AHEAD = 120;
 const HOLIDAYS_AHEAD = 60;
-function eventsSection(brain: BotBrain, today: string): string {
+// Haim, 2026-11-08: "אני הגעתי עכשיו, אתם תהיו במועדון, נכון?" four minutes before a glasses pickup
+// at the club — the bot answered that the calendar has nothing at the club today. The list only said
+// "יום ראשון 08/11: איסוף משקפיים (10:00–12:00)"; today's events now say so, with where they stand.
+const LATE_ARRIVAL_MIN = 60;
+export function todayEvents(brain: BotBrain, now: { date: string; time: string }): { e: BotEvent; status: string }[] {
+  const t = toMinutes(now.time);
+  return (brain.events || [])
+    .filter((e) => e.from <= now.date && (e.to || e.from) >= now.date)
+    .map((e) => {
+      if (!e.startTime || !e.endTime) return { e, status: e.effect === "closed" ? "היום (כל היום) — סגור" : "היום (כל היום)" };
+      const [a, b] = [toMinutes(e.startTime), toMinutes(e.endTime)];
+      const status =
+        t < a
+          ? `היום, מתחיל בעוד ${a - t < 60 ? `${a - t} דקות` : `כ-${Math.round((a - t) / 60)} שעות`} (${e.startTime}–${e.endTime})`
+          : t < b
+            ? `מתקיים עכשיו (${e.startTime}–${e.endTime}, עד ${e.endTime})`
+            : `הסתיים היום לפני ${t - b} דקות (${e.startTime}–${e.endTime})`;
+      return { e, status };
+    })
+    .filter((x) => !x.status.startsWith("הסתיים") || toMinutes(x.e.endTime!) + LATE_ARRIVAL_MIN > t);
+}
+
+// "I'm here / on my way / will you be at the club?" — said on the day of an event, it's about the event
+const ARRIVING = /הגעתי|הגענו|אני כאן|אני פה|אנחנו כאן|אנחנו פה|אני בחוץ|אני למטה|אני בכניסה|אני ליד|אני בדרך|בדרך אליכם|עוד (?:מעט|כמה דקות|\d+ דקות) (?:אני )?(?:מגיע|מגיעה|אגיע|שם)|מגיע עכשיו|מגיעה עכשיו|אתם (?:תהיו|נמצאים|כבר|פה|כאן|שם)|תהיו ב|איפה אתם|לא רואה אתכם|לא מוצא אתכם|לא מוצאת אתכם|איפה בדיוק/;
+
+export function eventsSection(brain: BotBrain, today: string, now?: { date: string; time: string }, text = ""): string {
   const until = addDays(today, EVENTS_AHEAD);
+  const happening = now && now.date === today ? todayEvents(brain, now) : [];
   const span = (e: BotEvent) => (e.to && e.to !== e.from ? `${showDay(e.from)} עד ${showDay(e.to)}` : showDay(e.from));
   const effect = (e: BotEvent) => (e.effect === "closed" ? " — סגור, לא קובעים תורים" : e.effect === "hours" ? ` — שעות קבלה: ${e.hours}` : "");
   const lines = (brain.events || [])
@@ -433,11 +459,19 @@ function eventsSection(brain: BotBrain, today: string): string {
   return (
     "\n# אירועים וימים מיוחדים (מהיומן — המקור היחיד לתאריכים שלהם)\n" +
     (lines.length ? lines.join("\n") : "- כרגע אין ביומן אירועים מתוכננים (ימי סיוע, ביקורים בישובים וכו').") +
+    (happening.length
+      ? `\n\n## היום (${now!.time})\n` +
+        happening.map(({ e, status }) => `- ${e.title.replace(/\s*\(\d{2}:\d{2}–\d{2}:\d{2}\)$/, "")}${e.place?.trim() ? ` 📍 ${e.place.trim()}` : ""} — ${status}${e.details?.trim() ? `. ${e.details.trim()}` : ""}`).join("\n") +
+        "\n- לקוח שכותב היום שהוא הגיע / נמצא שם / בדרך / שואל \"אתם תהיו ב...?\" / \"איפה אתם?\" — קשר את זה לאירוע של היום (גם אם הוא קורא למקום אחרת: \"המועדון\", \"המתנ\"ס\", \"האולם\", \"הישוב\" — לפי 📍, הכותרת והפרטים). אשר לו שאתם שם, איפה בדיוק ועד מתי (\"כן! אנחנו במועדון ב-10:00, עוד 4 דקות — מחכים לך 😊\"). לעולם אל תגיד שאין אירוע היום כשיש כאן אחד. אם לא ברור אם הוא בסניף או באירוע — שאל (\"הגעת לסניף או ל[האירוע]?\"), בלי להעביר לנציג. אם האירוע הסתיים זה עתה — אמור זאת בעדינות והצע את הסניף / האירוע הבא."
+      : "") +
+    (happening.length && ARRIVING.test(text)
+      ? `\n- ⚠️ ההודעה הנוכחית של הלקוח היא כנראה על האירוע של היום (${happening.map((x) => x.e.title.replace(/\s*\(\d{2}:\d{2}–\d{2}:\d{2}\)$/, "")).join(" / ")}) — ענה בהתאם.`
+      : "") +
     "\n- אם בשיחה הזו אמרת קודם תאריך של אירוע שלא מופיע ברשימה (למשל מהשכל הישן) — הוא שגוי: אל תחזור עליו, ותקן (\"סליחה, טעיתי קודם — ...\").\n- תאריכים של ימי סיוע, ביקורים בישובים / באזורים, ימי פתיחה ואירועים — רק מהרשימה הזו. תאריכים כאלה שכתובים בשכל או בשאלות ותשובות ישנים — לעולם אל תשתמש בהם ואל תזכיר אותם. אם הלקוח שואל על אירוע / מקום שאין ברשימה — אמור שכרגע אין מועד מתוכנן (בלי להמציא ובלי להעביר לנציג)." +
     "\n- כשהלקוח שואל מתי אתם במקום / באזור מסוים (למשל \"מתי אתם במשגב?\") — חפש ברשימה אירוע באותו מקום או קרוב אליו (אותו אזור, עד כחצי שעה נסיעה — למשל משגב ↔ כרמיאל, סכנין, מעלות; פרדס חנה ↔ חדרה, זכרון יעקב) לפי 📍, הכותרת והפרטים, וענה עם התאריכים והמקום המדויק (\"אנחנו לא במשגב עצמה, אבל ב-3/11 נהיה בכרמיאל — 15 דקות ממך\"). אם אין שום אירוע באזור — אמור שכרגע לא מתוכנן והצע את הסניף.\n- כשהלקוח שואל אם פתוחים / מתי אפשר להגיע / על סניף — ענה לפי הרשימה הזו. אם יש כאן משהו שקשור למה שהלקוח מתעניין בו (למשל פתיחת סניף באזור שלו, יום סיוע) — הזכר אותו בקצרה." +
     // Haim, 2026-10-28: a customer whose glasses were ready at the branch said "אגיע היום" and was
     // told that today's pickup is in Harish — an event announced only to the customers who ordered there
-    "\n- איסוף משקפיים / יום סיוע / ביקור במקום מסוים — רק ללקוח שקיבל עליו הודעה (מופיע אצלו ב\"הודעות וואטסאפ שהלקוח קיבל לאחרונה\") או ששואל עליו בעצמו. לקוח שההזמנה שלו הגיעה לסניף / מוכנה לאיסוף, או שאומר \"אגיע\" / \"אגיע היום\" בלי להזכיר את האירוע — אוסף בסניף, בכתובת ובשעות הפתיחה של העסק: אל תציע לו את האיסוף באירוע ואל תחבר אותו אליו."
+    "\n- איסוף משקפיים / יום סיוע / ביקור במקום מסוים — רק ללקוח שקיבל עליו הודעה (מופיע אצלו ב\"הודעות וואטסאפ שהלקוח קיבל לאחרונה\") או ששואל עליו בעצמו. לקוח שההזמנה שלו הגיעה לסניף / מוכנה לאיסוף, או שאומר \"אגיע\" / \"אגיע היום\" בלי להזכיר את האירוע — אוסף בסניף, בכתובת ובשעות הפתיחה של העסק: אל תציע לו את האיסוף באירוע ואל תחבר אותו אליו. זה לא חל על לקוח שכותב ביום האירוע שהוא כבר הגיע / בדרך / שואל אם תהיו במקום (\"במועדון\", ביישוב) — הוא מדבר על האירוע של היום (ראה \"היום\" למעלה)."
   );
 }
 
@@ -481,7 +515,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     comment && input.fbContext?.postText
       ? `\n# הפוסט / המודעה שעליהם הלקוח הגיב\n«${input.fbContext.postText.slice(0, 1500)}»\nהתגובה שלו היא על זה (למשל "כמה זה עולה?", "פרטים", "עד מתי?") — ענה בהקשר הזה בלי לשאול על מה הוא מדבר.`
       : "",
-    eventsSection(input.brain, now.date),
+    eventsSection(input.brain, now.date, now, input.text),
     "\n# פתיחה ושם",
     ctx.profileName ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
@@ -663,8 +697,10 @@ async function readCalendarEvents(deps: TurnDeps): Promise<BotEvent[]> {
   try {
     const r = await deps.crm({ action: "events", from: today, to: addDays(today, 120) });
     const now = israelNow();
-    // an event that already ended today (a morning aid day asked about in the evening) isn't coming up
-    const over = (e: any) => !e.allDay && String(e.to || e.from) === now.date && String(e.endTime || "") !== "" && String(e.endTime) <= now.time;
+    // an event that ended today more than an hour ago (a morning aid day asked about in the evening)
+    // isn't coming up; one that ended a moment ago stays — "I'm here" from a customer who came late
+    const over = (e: any) =>
+      !e.allDay && String(e.to || e.from) === now.date && /^\d{2}:\d{2}$/.test(String(e.endTime || "")) && toMinutes(String(e.endTime)) + LATE_ARRIVAL_MIN <= toMinutes(now.time);
     return (r?.events || []).filter((e: any) => !over(e)).map((e: any): BotEvent => {
       const hours = e.allDay ? "" : ` (${e.effect === "closed" ? "סגור " : ""}${e.startTime}–${e.endTime})`;
       return {
@@ -675,6 +711,7 @@ async function readCalendarEvents(deps: TurnDeps): Promise<BotEvent[]> {
         details: e.details || "",
         place: e.place || "",
         effect: e.allDay && e.effect === "closed" ? "closed" : "info",
+        ...(!e.allDay && e.startTime && e.endTime ? { startTime: String(e.startTime), endTime: String(e.endTime) } : {}),
       };
     });
   } catch (e: any) {

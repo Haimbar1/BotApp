@@ -35,6 +35,9 @@ export interface BotEvent {
   // closed = no appointments those days; hours = these hours instead of the weekday's; info = only for the bot to know
   effect: "closed" | "hours" | "info";
   hours?: string; // for "hours": "HH:mm-HH:mm[, …]"
+  // a timed event from the CRM calendar (a pickup 10:00–12:00) — so the bot knows it's starting / on now
+  startTime?: string; // HH:mm
+  endTime?: string;
 }
 
 export interface BotBrain {
