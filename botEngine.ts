@@ -508,6 +508,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "- העברה לנציג (Haim: רק כשהלקוח מבקש במפורש): note_for_staff עם kind=handoff — ורק אז אמור שמישהו יחזור אליו — רק כשהלקוח ביקש במפורש לדבר עם נציג / שיחזרו אליו / שיתקשרו (או לחץ \"🙋 לדבר עם נציג\"). שאלה שאין לך תשובה עליה (למשל \"מתי אתם ב-X?\") היא לא בקשה לנציג — ענה מה שידוע, ואל תבטיח שמישהו יחזור. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
     // Haim, 2026-11-01: every picture went to the staff ("העברתי אותה לצוות") — only when the conversation needs it
     "- תמונה מהלקוח (\"[שלח/ה תמונה]\"): אתה לא רואה אותה, והיא נשמרת בשיחה שהצוות קורא. התייחס לכיתוב אם יש, או שאל בקצרה במה מדובר ואיך אפשר לעזור, והמשך את השיחה כרגיל. תמונה היא לא בקשה לנציג: אל תכתוב שהעברת אותה לצוות / שמישהו יבדוק אותה, ואל תקרא ל-note_for_staff בגללה — רק לפי כלל ההעברה לנציג שלמעלה (הלקוח ביקש במפורש, עכשיו או ממש לפני התמונה, למשל \"אשלח לכם מרשם, שנציג יבדוק\").",
+    // Haim, 2026-11-08: a customer who decided not to come goes to "לא רלוונטי" with the reason
+    comment
+      ? ""
+      : "- לקוח שאומר בבירור שהוא לא רוצה להגיע / לא מעוניין, מכל סיבה (רחוק, יקר, קנה במקום אחר, לא צריך): נסה פעם אחת בעדינות אם יש משהו שיעזור (למשל סניף / אירוע קרוב אליו, אם כתוב בשכל) — ואם הוא עדיין לא מעוניין, קרא ל-mark_not_relevant עם הסיבה במילים שלו, ונפרד בחום (בלי לספר לו שסימנת). אם יש לו תור קבוע — קודם שאל אם לבטל אותו. \"לא עכשיו\" / \"אחר כך\" / \"בחודש הבא\" / \"אחרי החגים\" הוא לא סירוב — אל תקרא לכלי.",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
@@ -579,6 +583,15 @@ const TOOLS = [
       type: "object",
       properties: { kind: { type: "string", enum: ["handoff", "bug"] }, text: { type: "string", description: "מה צריך לעשות / מה התקלה, בקצרה" } },
       required: ["kind", "text"],
+    },
+  },
+  {
+    name: "mark_not_relevant",
+    description: "מסמן ב-CRM שהלקוח לא מעוניין / לא יגיע (מעביר את הליד לשלב \"לא רלוונטי\" עם הסיבה). רק כשהלקוח אמר בבירור שהוא לא רוצה להגיע / לא מעוניין — לא כש\"לא עכשיו\" / \"אחר כך\" / \"אחרי החגים\".",
+    parametersJsonSchema: {
+      type: "object",
+      properties: { reason: { type: "string", description: "הסיבה במילים של הלקוח, בקצרה — למשל 'רחוק לה, גרה בבאר שבע', 'כבר קנה משקפיים במקום אחר', 'יקר לו'" } },
+      required: ["reason"],
     },
   },
   {
@@ -806,6 +819,25 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       st.notes.push(note);
       if (!test && deps.onNote) await deps.onNote(note).catch((e) => console.warn("[BOT] onNote failed:", e?.message));
       return { ok: true };
+    }
+    case "mark_not_relevant": {
+      // Haim, 2026-11-08: a customer told the bot it's too far for her and won't come — he moved her
+      // to "לא רלוונטי" by hand. The CRM moves the lead with "סיבה: …" (refused while an exam is booked)
+      if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
+      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(st.userText.replace(/^🎤\s*/, "").trim())) {
+        return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תסמן. ענה למה שכתב עכשיו." };
+      }
+      const reason = String(args?.reason || "").trim().slice(0, 300);
+      if (!reason) return { ok: false, error: "חסרה סיבה" };
+      if (!st.phone) return { ok: false, error: "אין מספר טלפון של הלקוח — אין מה לסמן. ענה לו בנימוס." };
+      if (!deps.crm) return { ok: false, error: "אין חיבור ל-CRM" };
+      if (test) return { ok: true, test: true, note: "שיחת בדיקה — הליד לא הועבר באמת" };
+      const res = await deps.crm({ action: "not_relevant", via: input.channel, phone: st.phone, reason });
+      if (res?.upcomingExam) {
+        return { ok: false, upcomingExam: { exam_id: res.upcomingExam.id, show: showSlot(res.upcomingExam.start) }, error: "ללקוח יש תור קבוע. אם הוא לא מגיע — שאל אם לבטל את התור (cancel_appointment), ורק אחרי שבוטל קרא שוב ל-mark_not_relevant." };
+      }
+      if (res?.found === false) return { ok: false, error: "הלקוח לא נמצא ב-CRM — אין מה לסמן. ענה לו בנימוס." };
+      return { ok: true, moved: !!res?.moved, note: "סומן בשקט ב-CRM — אל תספר על כך ללקוח" };
     }
     case "learn_from_correction": {
       if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
