@@ -441,6 +441,17 @@ function eventsSection(brain: BotBrain, today: string): string {
   );
 }
 
+// "יום שלישי = 10.11 (2026-11-10)" for the coming 9 days — so "after Tuesday" becomes a date without counting
+function nextDaysLine(now: { date: string }): string {
+  const [y, m, d] = now.date.split("-").map(Number);
+  const out: string[] = [];
+  for (let i = 0; i < 9; i++) {
+    const iso = new Date(Date.UTC(y, m - 1, d + i)).toISOString().slice(0, 10);
+    out.push(`${i === 0 ? "היום " : i === 1 ? "מחר " : ""}יום ${DAY_NAMES[weekdayOf(iso)]} = ${iso}`);
+  }
+  return out.join(", ");
+}
+
 function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
@@ -512,6 +523,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     comment
       ? ""
       : "- לקוח שאומר בבירור שהוא לא רוצה להגיע / לא מעוניין, מכל סיבה (רחוק, יקר, קנה במקום אחר, לא צריך): נסה פעם אחת בעדינות אם יש משהו שיעזור (למשל סניף / אירוע קרוב אליו, אם כתוב בשכל) — ואם הוא עדיין לא מעוניין, קרא ל-mark_not_relevant עם הסיבה במילים שלו, ונפרד בחום (בלי לספר לו שסימנת). אם יש לו תור קבוע — קודם שאל אם לבטל אותו. \"לא עכשיו\" / \"אחר כך\" / \"בחודש הבא\" / \"אחרי החגים\" הוא לא סירוב — אל תקרא לכלי.",
+    // Haim, 2026-11-08: "אני מחוסן" + "רק ביום שלישי נדע" — no city, no task to call him after Tuesday
+    comment
+      ? ""
+      : "- רישום ב-CRM (בשקט, בלי לספר ללקוח ובלי לשאול אותו על זה): כשהלקוח אומר איפה הוא גר / מאיפה הוא מגיע (\"אני מחוסן\", \"גרה בכרמיאל\") — קרא ל-update_city עם שם היישוב בלבד (\"חוסן\"). כשהלקוח מבקש שיחזרו אליו במועד מסוים (\"תתקשרו ביום ראשון אחר הצהריים\"), או אומר שיידע / יחליט / יהיה פנוי רק ביום מסוים (\"רק ביום שלישי נדע\", \"אחרי החגים\", \"בשבוע הבא\") ולא נקבע תור — קרא ל-schedule_follow_up עם היום לחזור אליו (\"רק ביום שלישי נדע\" = היום שאחרי יום שלישי הקרוב; \"בשבוע הבא\" = יום ראשון הבא; לא בשבת) ושעה אם נאמרה (בוקר 10:00, צהריים 13:00, אחר הצהריים 16:00, ערב 18:00), ואז אמור לו בחום שנחזור אליו אז. הימים הקרובים: " + nextDaysLine(now) + ".",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
@@ -592,6 +607,34 @@ const TOOLS = [
       type: "object",
       properties: { reason: { type: "string", description: "הסיבה במילים של הלקוח, בקצרה — למשל 'רחוק לה, גרה בבאר שבע', 'כבר קנה משקפיים במקום אחר', 'יקר לו'" } },
       required: ["reason"],
+    },
+  },
+  // Haim, 2026-11-08: a new lead wrote "אני מחוסן" and "רק ביום שלישי נדע" — the city stayed empty and
+  // nobody was reminded to call him after Tuesday
+  {
+    name: "update_city",
+    description: "רושם ב-CRM את העיר / היישוב של הלקוח, כשהוא אומר איפה הוא גר או מאיפה הוא מגיע (\"אני מחוסן\", \"גרה בכרמיאל\"). בשקט, בלי לספר ללקוח.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "שם היישוב בלבד, בלי מ/ב בהתחלה — 'מחוסן' → 'חוסן', 'מכרמיאל' → 'כרמיאל'" },
+        replace: { type: "boolean", description: "true רק כשהלקוח אומר שעבר דירה / מתקן עיר שכבר רשומה" },
+      },
+      required: ["city"],
+    },
+  },
+  {
+    name: "schedule_follow_up",
+    description: "פותח ב-CRM משימה לצוות לחזור ללקוח ביום (ובשעה) שסוכם — כשהלקוח ביקש שיחזרו אליו במועד מסוים, או אמר שיידע / יחליט רק ביום מסוים, ולא נקבע תור. בשקט.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD — היום לחזור אליו. \"רק ביום שלישי נדע\" = היום שאחרי יום שלישי הקרוב" },
+        time: { type: "string", description: "HH:mm אם נאמרה שעה או חלק יום (בוקר 10:00, צהריים 13:00, אחר הצהריים 16:00, ערב 18:00); אחרת ריק" },
+        what: { type: "string", description: "מה לעשות, קצר — למשל 'להתקשר לתאם בדיקת ראייה (יידע אחרי יום שלישי)'" },
+        why: { type: "string", description: "מה הלקוח אמר, במשפט" },
+      },
+      required: ["date", "what"],
     },
   },
   {
@@ -838,6 +881,33 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       }
       if (res?.found === false) return { ok: false, error: "הלקוח לא נמצא ב-CRM — אין מה לסמן. ענה לו בנימוס." };
       return { ok: true, moved: !!res?.moved, note: "סומן בשקט ב-CRM — אל תספר על כך ללקוח" };
+    }
+    case "update_city": {
+      // a voice note may be heard wrong — no confirmation round for this (it's silent and harmless), but
+      // the CRM keeps an existing city unless the customer said they moved
+      const city = String(args?.city || "").trim().slice(0, 40);
+      if (!city) return { ok: false, error: "חסרה עיר" };
+      if (!st.phone) return { ok: false, error: "אין מספר טלפון של הלקוח — אין איפה לרשום. המשך בשיחה." };
+      if (!deps.crm) return { ok: false, error: "אין חיבור ל-CRM" };
+      if (test) return { ok: true, test: true, note: "שיחת בדיקה — העיר לא נרשמה באמת" };
+      const res = await deps.crm({ action: "city", via: input.channel, phone: st.phone, city, replace: !!args?.replace, said: st.userText.slice(0, 200) });
+      if (res?.found === false) return { ok: false, error: "הלקוח לא נמצא ב-CRM — המשך בשיחה כרגיל." };
+      return { ok: true, note: "נרשם בשקט — אל תספר על כך ללקוח, המשך בשיחה" };
+    }
+    case "schedule_follow_up": {
+      const date = String(args?.date || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "date: YYYY-MM-DD" };
+      if (date < israelNow().date) return { ok: false, error: "התאריך כבר עבר — בחר את היום הנכון מהרשימה בהנחיות" };
+      if (weekdayOf(date) === 6) return { ok: false, error: "שבת — בחר את יום ראשון שאחריה (או יום שישי לפני)" };
+      const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(args?.time || "")) ? String(args.time) : "";
+      const what = String(args?.what || "").trim().slice(0, 100) || "לחזור ללקוח";
+      if (!st.phone) return { ok: false, error: "אין מספר טלפון של הלקוח — בקש אותו כדי שנוכל לחזור אליו." };
+      if (!deps.crm) return { ok: false, error: "אין חיבור ל-CRM" };
+      if (test) return { ok: true, test: true, note: "שיחת בדיקה — המשימה לא נפתחה באמת" };
+      const res = await deps.crm({ action: "follow_up", via: input.channel, phone: st.phone, date, time, what, why: String(args?.why || st.userText).slice(0, 400) });
+      if (res?.found === false) return { ok: false, error: "הלקוח לא נמצא ב-CRM — השאר note_for_staff kind=handoff עם המועד." };
+      if (res?.ok === false) return { ok: false, error: String(res?.error || "המשימה לא נפתחה") };
+      return { ok: true, existed: !!res?.existed, note: "המשימה נפתחה. אפשר להגיד ללקוח שנחזור אליו במועד שסוכם (בלי להבטיח שעה מדויקת אם לא נקבעה)." };
     }
     case "learn_from_correction": {
       if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
