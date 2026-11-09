@@ -1294,6 +1294,105 @@ export async function createApp() {
     }
   });
 
+  // Duplicating a bot (Haim, 2026-11-09 — a branch is the same bot with a different address / hours,
+  // and must use its own business's CRM, calendar and number). The businesses a copy can go to:
+  // the one the screen is in, the portal's list, and every business that already has a bot.
+  app.get("/api/agents/duplicate-targets", requireAuth, async (req: any, res: any) => {
+    if (!isSuper(req.user)) return res.status(403).json({ success: false, message: "שכפול בוט מורשה למנהל המערכת בלבד" });
+    const byId = new Map<string, string>();
+    const add = (id: any, name: any) => {
+      const key = id != null ? String(id).trim() : "";
+      if (!key) return;
+      if (!byId.get(key)) byId.set(key, String(name || "").trim());
+    };
+    if (req.user?.tenantId) add(req.user.tenantId, req.user.tenantName);
+    const portal = await portalBusinessesFor(String(req.user?.email || "").toLowerCase().trim()).catch(() => null);
+    for (const t of portal || []) add(t.id, t.name);
+    const agentsNow = readAgents();
+    for (const a of agentsNow) if (a?.tenantId != null) add(a.tenantId, "");
+    // A business known only from its bots is named by them
+    for (const a of agentsNow) {
+      const key = a?.tenantId != null ? String(a.tenantId) : "";
+      if (key && !byId.get(key) && a.businessName) byId.set(key, String(a.businessName));
+    }
+    res.json({
+      success: true,
+      current: req.user?.tenantId ? String(req.user.tenantId) : null,
+      targets: Array.from(byId.entries())
+        .map(([id, name]) => ({ id, name: name || `עסק ${id}` }))
+        .sort((a, b) => Number(a.id) - Number(b.id) || a.id.localeCompare(b.id)),
+    });
+  });
+
+  // The copy gets the knowledge (every prompt block, the Q&A, booking hours, voice prompts, the active
+  // lessons) and nothing that ties it to the source's number or channels: no WhatsApp connection (in a
+  // business it comes from that business's portal keys), a new bot id, not active, every "answered here"
+  // switch off, no n8n sync, and not the source's special days (aid days / closures are per branch).
+  app.post("/api/agents/:id/duplicate", requireAuth, async (req: any, res: any) => {
+    if (!isSuper(req.user)) return res.status(403).json({ success: false, message: "שכפול בוט מורשה למנהל המערכת בלבד" });
+    const all = readAgents();
+    const source = all.find((a: any) => a.id === req.params.id);
+    if (!source) return res.status(404).json({ success: false, message: "הבוט לא נמצא — רעננו את הדף" });
+    const rawTarget = req.body?.tenantId;
+    const tenantId =
+      rawTarget === null || rawTarget === ""
+        ? undefined
+        : rawTarget != null
+          ? String(rawTarget).trim()
+          : source.tenantId != null
+            ? String(source.tenantId)
+            : undefined;
+    const name = String(req.body?.businessName || "").trim() || `${source.businessName || "בוט"} (העתק)`;
+    const usedBotIds = new Set(all.map((a: any) => String(a.botId || "")));
+    let botId = "";
+    do botId = "bot_" + Math.floor(Math.random() * 900000 + 100000);
+    while (usedBotIds.has(botId));
+    const {
+      whatsappConfig, n8nSync, framesSync, framesTopic, framesStatus, lastSyncedAt, websiteRefreshedAt,
+      sendPulseBotId, ...knowledge
+    } = source;
+    const copy: any = {
+      ...knowledge,
+      id: "agent_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+      botId,
+      businessName: name,
+      name: `${name} _ ${source.agentType === "support" ? "שירות" : "מכירות"}`,
+      status: "Not Active",
+      tenantId,
+    };
+    if (!(saveAgents([...all, copy]) && (await storageWritten()))) {
+      return res.status(500).json({ success: false, message: "השמירה לא הגיעה למסד הנתונים — נסו שוב בעוד רגע" });
+    }
+    const copied = { qa: 0, lessons: 0, booking: false };
+    try {
+      const brain = await getBrain(source.id);
+      await saveBrain({
+        agentId: copy.id,
+        nativeWeb: false,
+        nativeWhatsapp: false,
+        nativeFacebook: false,
+        qa: (brain.qa || []).map((q) => ({ ...q })),
+        booking: { ...brain.booking, hours: { ...(brain.booking?.hours || {}) } },
+        events: [],
+        ...(brain.closedOnHolidays !== undefined ? { closedOnHolidays: brain.closedOnHolidays } : {}),
+        ...(brain.voiceNotes ? { voiceNotes: brain.voiceNotes } : {}),
+        ...(brain.voicePrompts ? { voicePrompts: { ...brain.voicePrompts } } : {}),
+        ...(brain.autofilledAt ? { autofilledAt: brain.autofilledAt } : {}),
+      });
+      copied.qa = (brain.qa || []).length;
+      copied.booking = !!brain.booking?.enabled;
+      for (const l of (await listLessons(source.id)).reverse()) {
+        if (!l.active) continue;
+        await addLesson({ agentId: copy.id, text: l.text, source: l.source, ...(l.quote ? { quote: l.quote } : {}), active: true });
+        copied.lessons++;
+      }
+    } catch (err: any) {
+      console.error("[agents] duplicating the smart bot's settings failed:", err?.message);
+      return res.json({ success: true, agent: copy, copied, warning: "הבוט שוכפל, אבל ההגדרות של הבוט החכם (שאלות ותשובות, שעות לקביעת תורים) לא הועתקו — יש להזין אותן בבוט החדש" });
+    }
+    res.json({ success: true, agent: copy, copied });
+  });
+
   // ---------------- WHATSAPP BUSINESS & N8N API ROUTES ----------------
 
   // Get WhatsApp Business Config for current user/agent

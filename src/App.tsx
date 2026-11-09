@@ -475,6 +475,8 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   // Admin inside a business: only that business's agents unless "show all businesses" is on.
   const [listBusiness, setListBusiness] = useState<{ id: string; name: string } | null>(null);
+  // The platform administrator (the server checks again on every admin-only action)
+  const isPlatformAdminUser = (sessionUser?.email || "").toLowerCase().trim() === "haim.bar@gmail.com";
   const [showAllBusinesses, setShowAllBusinesses] = useState<boolean>(() => {
     try {
       return localStorage.getItem("botapp_show_all_businesses") === "1";
@@ -1984,6 +1986,14 @@ export default function App() {
 
   // Safe Delete Agent state variables
   const [agentIdToDelete, setAgentIdToDelete] = useState<string | null>(null);
+  // "שכפל בוט" window (super admin): the bot being copied, the businesses it can go to, and the result
+  const [dupSource, setDupSource] = useState<AgentConfig | null>(null);
+  const [dupTargets, setDupTargets] = useState<{ id: string; name: string }[]>([]);
+  const [dupTenant, setDupTenant] = useState<string>("");
+  const [dupName, setDupName] = useState<string>("");
+  const [dupBusy, setDupBusy] = useState<boolean>(false);
+  const [dupError, setDupError] = useState<string>("");
+  const [dupDone, setDupDone] = useState<{ name: string; tenantName: string; inList: boolean; text: string } | null>(null);
   // Bulk delete (super user): pick several agents and delete them at once
   const [bulkDeleteMode, setBulkDeleteMode] = useState(false);
   const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
@@ -4077,27 +4087,85 @@ ${videos || "(לא הוגדר)"}
   };
 
   // Duplicate current agent
-  const duplicateAgent = () => {
+  // Duplicate a bot (Haim, 2026-11-09 — a branch: the same bot, its own business's CRM / calendar /
+  // number). Done by the server (/api/agents/:id/duplicate): the copy gets the knowledge, the Q&A,
+  // booking hours and lessons, but not the source's WhatsApp connection, switches or n8n sync — the
+  // browser's old copy carried the number along, so two bots answered it (and a copy moved to another
+  // business wrote the source's number into that business's keys).
+  const duplicateAgent = async () => {
     const current = agents.find(agent => agent.id === activeId);
     if (!current) return;
+    if (!isPlatformAdminUser) {
+      alert("שכפול בוט מורשה למנהל המערכת בלבד.");
+      return;
+    }
+    setDupSource(current);
+    setDupName(`${current.businessName || "בוט"} (העתק)`);
+    setDupTenant(current.tenantId != null ? String(current.tenantId) : "");
+    setDupTargets(current.tenantId != null ? [{ id: String(current.tenantId), name: listBusiness?.id === String(current.tenantId) ? listBusiness.name : `עסק ${current.tenantId}` }] : []);
+    setDupError("");
+    setDupDone(null);
+    try {
+      const res = await apiFetch("/api/agents/duplicate-targets", { headers: { "Authorization": `Bearer ${sessionToken}` } });
+      const data: any = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(data.targets)) setDupTargets(data.targets);
+    } catch {
+      /* the source's business stays the only choice */
+    }
+  };
 
-    const newId = "agent_" + Date.now();
-    const duplicated: AgentConfig = {
-      ...current,
-      id: newId,
-      businessName: `${current.businessName} (העתק)`,
-      botId: `${current.botId}_copy`
-    };
-
-    const updated = [...agents, duplicated];
-    setAgents(updated);
-    setActiveId(newId);
-    setDirtyAgents(prev => ({ ...prev, [newId]: true }));
-    loadAgentToForm(duplicated);
-    saveAgentsToServer(updated);
-
-    // Trigger automatic synchronization to the webhook with the isNewBot parameter set to true
-    handleSyncToWebhook(duplicated, true);
+  const executeDuplicateAgent = async () => {
+    if (!dupSource || dupBusy) return;
+    setDupBusy(true);
+    setDupError("");
+    try {
+      // A save still waiting would send the list without the copy and delete it — send it first
+      if (globalSaveTimeoutId) {
+        clearTimeout(globalSaveTimeoutId);
+        globalSaveTimeoutId = null;
+        const err = await saveAgentsToServer(agents, sessionToken, false);
+        if (err) {
+          setDupError(`קודם צריך לשמור את השינויים האחרונים, והשמירה נכשלה: ${err}`);
+          return;
+        }
+      }
+      const res = await apiFetch(`/api/agents/${encodeURIComponent(dupSource.id)}/duplicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${sessionToken}` },
+        body: JSON.stringify({ tenantId: dupTenant || null, businessName: dupName.trim() }),
+      });
+      const data: any = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success || !data.agent) {
+        setDupError(data.message || `השכפול נכשל (שגיאת שרת ${res.status})`);
+        return;
+      }
+      const copy: AgentConfig = data.agent;
+      const tenantName = dupTargets.find(t => t.id === dupTenant)?.name || (dupTenant ? `עסק ${dupTenant}` : "ללא עסק");
+      // The list on the screen must hold the copy before anything is saved again
+      const inList = !listBusiness || showAllBusinesses || String(copy.tenantId ?? "") === listBusiness.id;
+      await fetchAgentsFromServer(sessionToken);
+      if (inList) {
+        setActiveId(copy.id);
+        loadAgentToForm(copy);
+      }
+      const c = data.copied || {};
+      const parts = [
+        "כל חלקי השכל (הפרומפט)",
+        c.qa ? `${c.qa} שאלות ותשובות` : "",
+        c.booking ? "שעות לקביעת תורים" : "",
+        c.lessons ? `${c.lessons} לקחים` : "",
+      ].filter(Boolean);
+      setDupDone({
+        name: copy.businessName,
+        tenantName,
+        inList,
+        text: data.warning || `הועתקו: ${parts.join(", ")}.`,
+      });
+    } catch {
+      setDupError("השכפול נכשל — אין חיבור לשרת");
+    } finally {
+      setDupBusy(false);
+    }
   };
 
   // Toggle active / not active status for an agent with WhatsApp Instance mutual exclusivity rule
@@ -6250,14 +6318,17 @@ ${videos || "(לא הוגדר)"}
             {/* Quick Actions */}
             <div className="pt-2 border-t border-slate-850 flex flex-col gap-2">
               <div className="flex gap-2">
+                {isPlatformAdminUser && (
                 <button
                   type="button"
                   onClick={duplicateAgent}
+                  title="יצירת בוט חדש עם אותו ידע — למשל לסניף, עם CRM, יומן ומספר משלו"
                   className="flex-1 py-1.5 text-[10px] bg-[#141822] text-slate-300 hover:bg-[#1E2433] font-bold rounded-lg transition-colors flex items-center justify-center gap-1 border border-slate-800 cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5" />
-                  שכפל פעיל
+                  שכפל בוט
                 </button>
+                )}
                 {sessionUser?.email === "haim.bar@gmail.com" && agents.length > 1 && !bulkDeleteMode && (
                   <button
                     type="button"
@@ -9217,6 +9288,102 @@ ${videos || "(לא הוגדר)"}
                 </div>
               </div>
 
+            </motion.div>
+          </div>
+        )}
+
+        {dupSource && (
+          <div className="fixed inset-0 z-[110] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#0b0c16] border border-sky-500/30 rounded-2xl w-full max-w-md p-6 flex flex-col gap-4 shadow-2xl font-sans text-right max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center gap-3 border-b border-slate-850 pb-3">
+                <div className="p-2.5 bg-sky-500/10 rounded-xl border border-sky-500/20">
+                  <Copy className="w-5 h-5 text-sky-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-sky-300">שכפול בוט</h3>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 font-bold mt-0.5">מעתיק את: {dupSource.businessName || "ללא שם"}</p>
+                </div>
+              </div>
+
+              {dupDone ? (
+                <div className="space-y-3 text-xs">
+                  <p className="font-extrabold text-emerald-400">✅ נוצר הבוט "{dupDone.name}" בעסק: {dupDone.tenantName}</p>
+                  <p className="text-slate-300 leading-relaxed">{dupDone.text}</p>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1.5 text-slate-300 leading-relaxed">
+                    <p className="font-black text-slate-200">מה עכשיו:</p>
+                    {!dupDone.inList && <p>• הבוט נמצא בעסק אחר — היכנסו אליו מהפורטל (הריבוע של הבוט באותו עסק), או סמנו "הצג את כל העסקים".</p>}
+                    <p>• ב"🧠 השכל של הסוכן" משנים את מה ששונה: כתובת, טלפון, שעות פתיחה (אפשר לחפש את הכתובת הישנה ב"חיפוש טקסט בפרומפט").</p>
+                    <p>• ב"🤖 הבוט החכם" ← "📅 הבוט קובע, מזיז ומבטל תורים" — השעות של הסניף. אירועים וימים מיוחדים לא הועתקו (הם של כל סניף).</p>
+                    <p>• ב"📱 וואטסאפ" — המספר של העסק מגיע מהפורטל ("מזהים וחיבורים"); ואז "חבר Webhook".</p>
+                    <p>• הבוט נוצר "לא פעיל", וכל המתגים של הבוט החכם (אתר / וואטסאפ / פייסבוק) כבויים — מדליקים כשהכל מוכן.</p>
+                    <p>• הבוט קורא את הלקוחות, היומן והאירועים של העסק שהוא משויך אליו.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setDupSource(null); setDupDone(null); }}
+                    className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-extrabold rounded-xl text-xs transition cursor-pointer"
+                  >
+                    סגור
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-400">שם הבוט החדש</label>
+                    <input
+                      type="text"
+                      className="w-full p-2.5 bg-slate-950 border border-slate-800 focus:border-sky-500 rounded-xl text-xs text-white focus:outline-none font-bold"
+                      value={dupName}
+                      onChange={(e) => setDupName(e.target.value)}
+                      dir="rtl"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-400">לאיזה עסק (סניף) הבוט החדש שייך?</label>
+                    <select
+                      className="w-full p-2.5 bg-slate-950 border border-slate-800 focus:border-sky-500 rounded-xl text-xs text-white focus:outline-none font-bold"
+                      value={dupTenant}
+                      onChange={(e) => setDupTenant(e.target.value)}
+                      dir="rtl"
+                    >
+                      {dupTargets.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}{String(dupSource.tenantId ?? "") === t.id ? " (כמו הבוט המקורי)" : ""}</option>
+                      ))}
+                      <option value="">ללא עסק</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">הבוט ישתמש ב-CRM, ביומן, באירועים ובמספר הוואטסאפ של העסק שנבחר. העסק לא חסר ברשימה? אפשר לשייך אחר כך בפורטל ← "ניהול מערכת" ← "בוטים".</p>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] text-slate-400 leading-relaxed">
+                    יועתקו: כל חלקי השכל, שאלות ותשובות, שעות לקביעת תורים, הפרומפטים לבוט הקולי והלקחים.
+                    <br />
+                    לא יועתקו: חיבור הוואטסאפ, אירועים וימים מיוחדים, והמתגים (הבוט החדש לא עונה ללקוחות עד שמפעילים אותו).
+                  </div>
+                  {dupError && <p className="text-[11px] font-bold text-rose-400">{dupError}</p>}
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDupSource(null)}
+                      className="flex-1 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-300 font-bold rounded-xl text-xs transition cursor-pointer"
+                    >
+                      ביטול
+                    </button>
+                    <button
+                      type="button"
+                      onClick={executeDuplicateAgent}
+                      disabled={dupBusy || !dupName.trim()}
+                      className="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-extrabold rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {dupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{dupBusy ? "משכפל..." : "שכפל"}</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </motion.div>
           </div>
         )}
