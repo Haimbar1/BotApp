@@ -2363,8 +2363,11 @@
       }
     }
 
-    // Upgrade sessionId if user phone is available
-    var activePhone = getUserPhone();
+    // Upgrade sessionId if user phone is available — only for n8n (its memory is keyed by it). The
+    // SmartEsek bot keeps the same conversation: switching mid-chat split the chat in two, and the bot
+    // answered the rest with no memory of what was said before the phone (Haim, 2026-11-13). It learns
+    // the phone itself; a returning visitor still starts on "<phone>_<bot>" (getSessionId).
+    var activePhone = nativeChatUrl ? null : getUserPhone();
     if (activePhone) {
       var updatedSid = activePhone + '_' + botId;
       if (sessionId !== updatedSid) {
