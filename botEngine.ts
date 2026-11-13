@@ -346,7 +346,7 @@ function customerSection(c: any, phone: string, verified: boolean): string {
   const lines: string[] = [`טלפון: ${phone}`];
   if (!c.found) lines.push("הלקוח עדיין לא רשום ב-CRM (לקוח חדש).");
   else {
-    if (c.name) lines.push(`שם: ${c.name}`);
+    if (!isPlaceholderName(c.name)) lines.push(`שם: ${c.name}`);
     if (c.stage) lines.push(`שלב ב-CRM: ${c.stage}`);
     if (c.city) lines.push(`עיר: ${c.city}`);
     if (c.firstContact) lines.push(`פנה לראשונה: ${String(c.firstContact).slice(0, 10)}`);
@@ -452,6 +452,23 @@ function nextDaysLine(now: { date: string }): string {
   return out.join(", ");
 }
 
+// A name that isn't a person's: "לקוח" / "לקוחה" / "customer", a phone number, empty (Haim, 2026-11-13 —
+// נועם booked הוד'יה דינה קוטלר as "לקוח" and called her that in the chat, though her WhatsApp
+// profile had her name)
+const PLACEHOLDER_NAME = /^(?:ה?לקוח(?:ה|\/ה)?(?:\s+(?:חדש(?:ה)?|יקר(?:ה)?|ממסנג'ר|מהאתר|וואטסאפ))?|customer|client|user|guest|unknown|לא ידוע|אורח(?:ת)?|ליד(?:\s+חדש)?|null|undefined)$/i;
+export function isPlaceholderName(name: unknown): boolean {
+  const n = String(name || "").replace(/[\u200e\u200f\u202a-\u202e]/g, "").trim();
+  if (!n) return true;
+  if (!/[\p{L}]/u.test(n)) return true; // digits / emojis / punctuation only
+  return PLACEHOLDER_NAME.test(n);
+}
+// The name to book with: what the bot gave, unless it's a placeholder — then the conversation's
+// (WhatsApp profile / what the customer said / the CRM card), else the CRM's
+function bookingName(given: unknown, st: TurnState): string {
+  for (const n of [given, st.name, st.customer?.name]) if (!isPlaceholderName(n)) return String(n).trim();
+  return "לקוח";
+}
+
 function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { firstToday: boolean; profileName: string; lastChatAt: string }): string {
   const now = israelNow();
   const qa = input.brain.qa.filter((x) => x.q.trim() && x.a.trim() && !EVENT_DATE_LINE(`${x.q} ${x.a}`));
@@ -494,9 +511,10 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       : "",
     eventsSection(input.brain, now.date),
     "\n# פתיחה ושם",
-    ctx.profileName ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
-    customer?.name ? `שם הלקוח ב-CRM: ${customer.name}` : "",
-    "- פנה ללקוח בשמו הפרטי. יש שני מקורות (הפרופיל וה-CRM) — בחר את מה שנראה כמו שם אמיתי של אדם (לא כינוי, אימוג'י, שם עסק או מספר). אם אף אחד לא נראה כמו שם — בלי שם.",
+    !isPlaceholderName(ctx.profileName) ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
+    !isPlaceholderName(customer?.name) ? `שם הלקוח ב-CRM: ${customer.name}` : "",
+    "- פנה ללקוח בשמו הפרטי. יש שני מקורות (הפרופיל וה-CRM) — בחר את מה שנראה כמו שם אמיתי של אדם (לא כינוי, אימוג'י, שם עסק או מספר). אם אף אחד לא נראה כמו שם — בלי שם. לעולם אל תפנה ללקוח במילה \"לקוח\" / \"לקוחה\" כאילו זה שמו.",
+    "- בקביעת תור, customer_name = השם המלא של האדם (מהפרופיל / מה-CRM / ממה שאמר בשיחה, מה שנראה כמו שם אמיתי), לא \"לקוח\". אם אין שם אמיתי — שאל אותו לשמו לפני שאתה קובע.",
     ctx.firstToday
       ? `- זו התשובה הראשונה שלך ללקוח היום: פתח בברכה חמה + שמו. ${greetingContext(israelNow())}.` +
         (customer?.found ? " הלקוח כבר מוכר לנו — הראה שמכירים אותו (למשל \"שמחים לשמוע ממך שוב\"), ואם יש משהו פתוח שלו (הזמנה, תור) — התייחס." : "") +
@@ -746,7 +764,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!phone) return { ok: false, error: "המספר לא נראה כמו מספר טלפון ישראלי תקין — בקש שוב בנימוס" };
       st.phone = phone;
       st.customer = await readCustomer(deps, phone);
-      if (st.customer?.name && !st.name) st.name = st.customer.name;
+      if (!isPlaceholderName(st.customer?.name) && isPlaceholderName(st.name)) st.name = st.customer.name;
       return { ok: true, customer: customerSection(st.customer, phone, false) };
     }
     case "get_available_slots": {
@@ -825,8 +843,8 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
-        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: String(args?.customer_name || st.name || "לקוח"), start, minutes: input.brain.booking.slotMinutes });
-        if (args?.customer_name) st.name = String(args.customer_name);
+        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: bookingName(args?.customer_name, st), start, minutes: input.brain.booking.slotMinutes });
+        if (!isPlaceholderName(args?.customer_name)) st.name = String(args.customer_name).trim();
         return { ok: true, start, show: showSlot(res.start || start) };
       }
       const res = await deps.crm({ action: "move", via: input.channel, phone: st.phone, examId: String(args?.exam_id || ""), start });
@@ -994,7 +1012,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       st.customer = await readCustomer(deps, st.phone);
       timing.customer = Date.now() - t1;
     }
-    if (st.customer?.name && !st.name) st.name = st.customer.name;
+    if (!isPlaceholderName(st.customer?.name) && isPlaceholderName(st.name)) st.name = st.customer.name;
   }
   const userText = String(input.text || "").trim();
   const lastBot = [...(conv?.messages || [])].reverse().find((m) => m.role === "bot");
