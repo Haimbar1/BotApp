@@ -107,6 +107,7 @@ export interface ConvMessage {
   // the bot asked the customer to confirm this action (book / move / cancel / a voice note it heard);
   // the action itself is only allowed on the next turn, see runBotTurn
   pending?: string;
+  booked?: string[]; // exams this answer booked (YYYY-MM-DDTHH:mm)
 }
 
 export interface BotConversation {

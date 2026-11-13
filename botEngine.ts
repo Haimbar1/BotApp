@@ -532,7 +532,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     comment
       ? ""
       : bookingOn
-      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק."
+      ? "- קביעת תור (ההוראה הזו גוברת על כל הוראה בשכל לשלוח קישור לקביעת תור — יש לך גישה ישירה ליומן): כשהלקוח רוצה לתאם / לקבוע תור (גם בלחיצה על כפתור כמו \"תיאום תור\") — אל תסתפק בשליחת קישור: הצע לתאם איתך כאן בצ'אט עכשיו, ואם בשכל יש קישור לקביעה עצמית — הוסף אותו כאפשרות נוספת למי שמעדיף. כדי לתאם: קרא ל-get_available_slots. בתשובה כתוב קודם באופן כללי באילו ימים ושעות מקבלים לבדיקה (receptionHours), ואם בתוצאה יש specialDays — ציין בקצרה איזה יום סגור / בשעות אחרות ולמה, ואז ב-options בדיוק את המועדים שב-suggested (שתיים מכל יום, כולל שישי — הטקסט שב-button) ובסוף \"📅 שבוע הבא\" ו-\"🕐 מועד אחר\". בחר \"שבוע הבא\" — קרא שוב ל-get_available_slots עם week_after = המועד האחרון מבין הכפתורים שהצגת, בפורמט YYYY-MM-DDTHH:mm והצג באותו אופן; \"מועד אחר\" — שאל איזה יום / שעה מתאימים לו ובחר מ-allFree. כשהלקוח לוחץ על מועד — זה התאריך והשעה שבכפתור (השנה מהתאריך של היום). לעולם אל תקבע / תזיז / תבטל בלי אישור מפורש: גם אם הלקוח ביקש יום או שעה, קודם כתוב לו בדיוק איזה מועד אתה עומד לקבוע ושאל \"לקבוע?\" (המערכת לא תקבע בלי שאלה כזו בהודעה הקודמת). אחרי שאישר — book_appointment (צריך שם ומספר טלפון). שינוי תור: get_available_slots ואז reschedule_appointment עם ה-exam_id מהתור שלו. ביטול: cancel_appointment. אחרי כל פעולה אשר ללקוח את המועד במדויק. אחרי שתור נקבע — הוא קבוע: אל תקרא שוב ל-book_appointment על אותו תור כשהלקוח ממשיך לשאול על דברים אחרים, ואל תציע לו שוב מועדים אלא אם ביקש לשנות או תור נוסף."
       : "- קביעת תורים דרכך לא הופעלה עדיין: אם הלקוח רוצה לקבוע / לשנות תור, פעל לפי מה שכתוב בשכל (קישור / טלפון), ואם אין — אסוף שם, טלפון ומועד מועדף והשאר הערה לנציג.",
     "- העברה לנציג (Haim: רק כשהלקוח מבקש במפורש): note_for_staff עם kind=handoff — ורק אז אמור שמישהו יחזור אליו — רק כשהלקוח ביקש במפורש לדבר עם נציג / שיחזרו אליו / שיתקשרו (או לחץ \"🙋 לדבר עם נציג\"). שאלה שאין לך תשובה עליה (למשל \"מתי אתם ב-X?\") היא לא בקשה לנציג — ענה מה שידוע, ואל תבטיח שמישהו יחזור. כשהלקוח רק מודה / נפרד / כותב אוקיי — ענה בקצרה ובחום, בלי \"נציג יחזור אליך\" ובלי note_for_staff.",
     // Haim, 2026-11-01: every picture went to the staff ("העברתי אותה לצוות") — only when the conversation needs it
@@ -674,6 +674,8 @@ interface TurnState {
   slotsOffered: Set<string>;
   confirmed: string; // what the bot asked to confirm in its last message (the customer answers now)
   pending: string; // what this answer asks the customer to confirm
+  booked: string[]; // exams booked in this turn
+  bookedEarlier: Set<string>; // exams this conversation booked before
   voice: boolean; // this message is a transcribed voice note
   userText: string; // what the customer wrote this turn
   earlierUserText: string; // the customer's two messages before it (a request for a person may come first)
@@ -686,6 +688,14 @@ const recentUserText = (st: TurnState) => `${st.earlierUserText}\n${st.userText}
 // heard wrong ("it hurts" — never said). So booking / moving / cancelling, and acting on a voice note
 // (a note for the staff, a lesson), go in two turns: first the bot says what it's about to do / what
 // it heard and asks, and only on the customer's next message is the action allowed.
+// The customer's words that mention the city, for the CRM note — not just the current message,
+// which may be a button ("👓 סוגי מסגרות ומחירים" was quoted as where she said Karmiel). '' = not found.
+function saidAbout(city: string, st: TurnState): string {
+  const c = city.replace(/^ה/, "").trim();
+  const found = [st.userText, ...st.earlierUserText.split("\n").reverse()].find((t) => c && t.includes(c));
+  return (found || "").slice(0, 200);
+}
+
 function needsConfirmation(st: TurnState, key: string, ask: string): any | null {
   if (st.confirmed === key) return null;
   st.pending = key;
@@ -825,9 +835,26 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, error: "מועד לא תקין" };
       if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח (link_customer_phone)" };
       if (!deps.crm || !input.brain.booking.enabled) return { ok: false, error: "אין גישה ליומן" };
+      // Haim, 2026-11-13: right after booking 14:30 the model called book again on the customer's next
+      // click ("סוגי מסגרות"), the calendar had her own exam there, and the bot told her "14:30 is taken"
+      // and offered times again. A time that is already this customer's exam is never "taken".
+      const own = ((st.customer?.upcomingExams || []) as { id: string; start: string }[]).find((x) => String(x.start || "").slice(0, 16) === start);
+      if (own) {
+        return {
+          ok: true,
+          already_booked: true,
+          exam_id: own.id,
+          show: showSlot(start),
+          note: "התור הזה כבר קבוע ללקוח (נקבע כבר). לא נקבע שוב ולא קרה כלום. אל תגיד שהמועד תפוס ואל תציע מועדים — ענה על מה שהלקוח שאל עכשיו, ואם צריך הזכר שהתור שלו קבוע.",
+        };
+      }
       // the slot must still be free right now
       const r = await deps.crm({ action: "busy", from: start.slice(0, 10), to: start.slice(0, 10) });
       if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1, (d) => dayHours(input.brain, d).hours).includes(start)) {
+        // busy because this conversation booked it (the CRM's exam list may lag a minute behind)
+        if (st.bookedEarlier.has(start) || st.booked.includes(start)) {
+          return { ok: true, already_booked: true, show: showSlot(start), note: "התור הזה כבר נקבע ללקוח קודם בשיחה. לא נקבע שוב. אל תגיד שהמועד תפוס ואל תציע מועדים — ענה על מה שהלקוח שאל עכשיו." };
+        }
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
       const examId = String(args?.exam_id || "");
@@ -845,6 +872,9 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (name === "book_appointment") {
         const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: bookingName(args?.customer_name, st), start, minutes: input.brain.booking.slotMinutes });
         if (!isPlaceholderName(args?.customer_name)) st.name = String(args.customer_name).trim();
+        // a second call in the same turn must see it as booked (above)
+        if (st.customer) st.customer.upcomingExams = [...(st.customer.upcomingExams || []), { id: String(res.id || ""), start }];
+        st.booked.push(start);
         return { ok: true, start, show: showSlot(res.start || start) };
       }
       const res = await deps.crm({ action: "move", via: input.channel, phone: st.phone, examId: String(args?.exam_id || ""), start });
@@ -908,7 +938,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!st.phone) return { ok: false, error: "אין מספר טלפון של הלקוח — אין איפה לרשום. המשך בשיחה." };
       if (!deps.crm) return { ok: false, error: "אין חיבור ל-CRM" };
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — העיר לא נרשמה באמת" };
-      const res = await deps.crm({ action: "city", via: input.channel, phone: st.phone, city, replace: !!args?.replace, said: st.userText.slice(0, 200) });
+      const res = await deps.crm({ action: "city", via: input.channel, phone: st.phone, city, replace: !!args?.replace, said: saidAbout(city, st) });
       if (res?.found === false) return { ok: false, error: "הלקוח לא נמצא ב-CRM — המשך בשיחה כרגיל." };
       return { ok: true, note: "נרשם בשקט — אל תספר על כך ללקוח, המשך בשיחה" };
     }
@@ -997,6 +1027,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     slotsOffered: new Set(),
     confirmed: "",
     pending: "",
+    booked: [],
+    bookedEarlier: new Set((conv?.messages || []).flatMap((m: any) => (Array.isArray(m.booked) ? m.booked : []))),
     voice: false,
     userText: "",
     // only from the last half hour: a request for a person hours ago (already handed over) let a
@@ -1089,6 +1121,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
         ...(answer.options.length ? { options: answer.options } : {}),
         ...(answer.images.length ? { images: answer.images } : {}),
         ...(st.pending ? { pending: st.pending } : {}),
+        ...(st.booked.length ? { booked: st.booked } : {}),
       }),
     ]
   );
