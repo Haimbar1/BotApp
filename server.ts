@@ -3318,9 +3318,12 @@ export async function createApp() {
     }
   }
   // Messenger goes the same way, as n8n reported it (session "messenger:<PSID>", platform messenger)
-  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string, handoffNote?: string, platform?: string) {
+  // `at` = when the message was really written (WhastAppSystem orders the chat by it); `phone` = the
+  // visitor's, once known, so the CRM's lead tab finds the website chat (Haim, 2026-11-13)
+  async function reportWebChat(agent: any, sessionId: string, name: string, direction: "incoming" | "outgoing", text: string, handoffNote?: string, platform?: string, extra: { at?: string; phone?: string } = {}) {
     await reportToWsys(agent, {
       type: "web_bot_message", session_id: sessionId, direction, text, name, ...(platform ? { platform } : {}),
+      at: extra.at || new Date().toISOString(), ...(extra.phone ? { phone: extra.phone } : {}),
       decided: true, ...(direction === "outgoing" && handoffNote ? { handoff: true, handoffNote } : {}),
     });
   }
@@ -3432,15 +3435,18 @@ export async function createApp() {
     }
     const agent = await nativeAgentFor(String(body.botId || body.bot_id || "").trim());
     if (!agent) return res.status(409).json({ error: "this bot is answered by n8n" });
+    const receivedAt = new Date().toISOString();
     try {
       const out = await turnFor(agent, "web", body);
       const sessionId = String(body.sessionId);
       const name = out.name || String(body.userName || "");
+      const phone = out.phone || undefined;
       await Promise.all([
-        reportWebChat(agent, sessionId, name, "incoming", String(body.message || "")),
+        reportWebChat(agent, sessionId, name, "incoming", String(body.message || ""), undefined, undefined, { at: receivedAt, phone }),
         reportWebChat(
           agent, sessionId, name, "outgoing", [out.reply, ...out.options.map((o) => `• ${o}`)].join("\n"),
-          out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined
+          out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined,
+          undefined, { at: new Date().toISOString(), phone }
         ),
       ]);
       res.json({ reply: out.reply, options: out.options, images: out.images, phone: out.phone, name: out.name });
