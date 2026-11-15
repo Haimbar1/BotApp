@@ -55,6 +55,9 @@ export interface TurnDeps {
   crm: CrmCaller | null; // null = the business has no CRM link (no portal business / no shared secret)
   // a note for the staff was written (also shown in the BotApp chat) — e.g. put it on the CRM lead
   onNote?: (note: BotNote) => Promise<void>;
+  // ms timestamp the answer must be ready by (WhatsApp on Vercel: the function is cut off at 60s,
+  // and then the customer saw "typing…" and got nothing). The AI is not asked again after it.
+  deadline?: number;
 }
 
 export interface TurnResult {
@@ -66,7 +69,7 @@ export interface TurnResult {
   notes: BotNote[];
   // where the time went, in ms (shown in the bot's screen): customer = the CRM read, ai = each model
   // call, tools = each tool, total
-  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number };
+  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number; error?: string };
 }
 
 const TZ = "Asia/Jerusalem";
@@ -991,15 +994,31 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
 // "Thinking" off: it made the answer several times slower without better answers (the CRM's help
 // assistant measured 8s vs 4s; Haim 2026-10-23: "the answer comes slowly"). A model that refuses a
 // zero thinking budget is asked again with its default.
-async function generate(ai: GoogleGenAI, params: any): Promise<any> {
+// A model that hangs is given up on after MODEL_TIMEOUT_MS and the next one is asked — on WhatsApp
+// a hung call meant "typing…" and then nothing at all (Haim, 2026-11-15).
+const MODEL_TIMEOUT_MS = 20000;
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: any;
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => (timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms))),
+  ]).finally(() => clearTimeout(timer));
+}
+async function generate(ai: GoogleGenAI, params: any, deadline?: number): Promise<any> {
   let last: any = null;
+  const budget = () => {
+    const left = deadline ? deadline - Date.now() : MODEL_TIMEOUT_MS;
+    if (left < 2000) throw new Error(`no time left for the AI${last ? ` (before: ${last?.message || last})` : ""}`);
+    return Math.min(MODEL_TIMEOUT_MS, left);
+  };
   for (const model of MODELS) {
     try {
-      return await ai.models.generateContent({ ...params, model, config: { ...params.config, thinkingConfig: { thinkingBudget: 0 } } });
+      return await withTimeout(ai.models.generateContent({ ...params, model, config: { ...params.config, thinkingConfig: { thinkingBudget: 0 } } }), budget(), model);
     } catch (e: any) {
+      if (/no time left/.test(String(e?.message || ""))) throw e;
       if (/thinking/i.test(String(e?.message || ""))) {
         try {
-          return await ai.models.generateContent({ ...params, model });
+          return await withTimeout(ai.models.generateContent({ ...params, model }), budget(), model);
         } catch (e2: any) {
           e = e2;
         }
@@ -1082,6 +1101,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     }));
     const contents: any[] = [...history, { role: "user", parts: [{ text: userText || "(הלקוח לחץ על כפתור)" }] }];
     let finalText = "";
+    // an AI that fails or is too slow ends in the "sorry" reply below, never in silence
+    try {
     for (let round = 0; round < 6; round++) {
       const ta = Date.now();
       const res = await generate(deps.ai, {
@@ -1092,7 +1113,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
           tools: [{ functionDeclarations: input.channel === "fb_comment" ? TOOLS.filter((t) => t.name === "note_for_staff") : TOOLS }],
           temperature: 0.4,
         },
-      });
+      }, deps.deadline);
       timing.ai.push(Date.now() - ta);
       const calls = res.functionCalls || [];
       if (!calls.length) {
@@ -1117,6 +1138,11 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       for (const c of linking) parts.push(await runOne(c));
       parts.push(...(await Promise.all(calls.filter((c: any) => c.name !== "link_customer_phone").map(runOne))));
       contents.push({ role: "user", parts });
+    }
+    } catch (e: any) {
+      timing.error = e?.message || String(e);
+      console.error(`[BOT] no answer from the AI (${input.channel}, ${input.sessionId}):`, timing.error);
+      finalText = "";
     }
     answer = parseBotAnswer(finalText);
     if (!answer.reply && !comment) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";

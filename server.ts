@@ -3346,7 +3346,7 @@ export async function createApp() {
     return agent;
   };
 
-  async function turnFor(agent: any, channel: Channel, body: any) {
+  async function turnFor(agent: any, channel: Channel, body: any, deadline?: number) {
     const [brain, lessons, brainText, ai] = await Promise.all([
       getBrain(String(agent.id)),
       listLessons(String(agent.id)),
@@ -3368,7 +3368,7 @@ export async function createApp() {
         waContext: body.waContext,
         fbContext: body.fbContext,
       },
-      { ai, crm: crmFor(agent), onNote: noteToCrm(agent) }
+      { ai, crm: crmFor(agent), onNote: noteToCrm(agent), deadline }
     );
   }
 
@@ -3532,16 +3532,36 @@ export async function createApp() {
   // One customer message → the bot's answer on WhatsApp. `copied` = the payload's copy to
   // WhastAppSystem: the replies are reported only after it (its handoff check looks for the
   // customer's message). Where the time went is kept for the bot's screen.
-  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number) {
+  // The customer always gets something (Haim, 2026-11-15: "typing…" and then nothing): a turn that
+  // fails or runs past `deadline` (Vercel cuts the function at 60s) answers with an apology, and a
+  // list Meta refuses goes again as plain text with the options as "•" lines.
+  const WA_SORRY = "סליחה, נתקלתי בתקלה זמנית 🙏 אפשר לכתוב לי שוב בעוד רגע, או להשאיר הודעה ונחזור אליך.";
+  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number, deadline?: number) {
     const phone = normalizeIsraeliPhone(msg.from) || msg.from;
-    const out = await turnFor(agent, "whatsapp", {
-      sessionId: `wa_${phone}`,
-      message: msg.text,
-      buttonId: msg.buttonId,
-      userPhone: phone,
-      userName: msg.name,
-      waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
-    });
+    const turnStarted = Date.now();
+    let out: Awaited<ReturnType<typeof turnFor>>;
+    let failure = "";
+    try {
+      const turn = turnFor(agent, "whatsapp", {
+        sessionId: `wa_${phone}`,
+        message: msg.text,
+        buttonId: msg.buttonId,
+        userPhone: phone,
+        userName: msg.name,
+        waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
+      }, deadline);
+      // the AI stops at the deadline by itself; this catches the rest (CRM, database) hanging
+      const hardStop = deadline ? deadline + 5000 - Date.now() : 0;
+      let timer: any;
+      out = hardStop > 0
+        ? await Promise.race([turn, new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("the turn took too long")), hardStop)))]).finally(() => clearTimeout(timer))
+        : await turn;
+      if (out.timing.error) failure = `AI: ${out.timing.error}`;
+    } catch (e: any) {
+      failure = e?.message || String(e);
+      console.error("[WA] the bot's turn failed — sending an apology:", failure);
+      out = { reply: WA_SORRY, options: [], images: [], notes: [], timing: { customer: 0, ai: [], tools: [], total: Date.now() - turnStarted } } as any;
+    }
     const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
     const ts = Date.now();
     const sent: { text: string; messageId?: string }[] = [];
@@ -3549,7 +3569,19 @@ export async function createApp() {
       try {
         sent.push({ text, messageId: await sendWhatsApp(msg.phoneNumberId, token, payload) });
       } catch (e: any) {
-        console.error("[WA] sending the bot's answer failed:", e?.message);
+        console.error(`[WA] sending the bot's answer (${payload.type}) failed:`, e?.message);
+        failure ||= `Meta (${payload.type}): ${e?.message || e}`;
+        if (payload.type === "image") continue;
+        // a refused list / long text → once more as plain text
+        try {
+          const body = text.slice(0, 4096);
+          if (payload.type === "interactive" || body !== payload.text?.body) {
+            sent.push({ text, messageId: await sendWhatsApp(msg.phoneNumberId, token, { messaging_product: "whatsapp", recipient_type: "individual", to: msg.from, type: "text", text: { body } }) });
+          }
+        } catch (e2: any) {
+          console.error("[WA] sending the answer as plain text failed too:", e2?.message);
+          failure = `${failure} · plain text: ${e2?.message || e2}`;
+        }
       }
     }
     const sendMs = Date.now() - ts;
@@ -3563,12 +3595,14 @@ export async function createApp() {
         }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message))
       ),
       noteBrainFields(String(agent.id), {
-        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs },
+        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(failure ? { error: failure.slice(0, 300) } : {}), ...(sent.length ? {} : { nothingSent: true }) },
       }).catch(() => {}),
     ]);
   }
 
   app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
+    // the answer must be out well before Vercel's 60s cut-off (vercel.json maxDuration)
+    const deadline = Date.now() + 40000;
     const raw = req.body || {};
     const payload = metaPayload(raw);
     const { phoneNumberId, displayPhone } = payloadNumber(payload);
@@ -3707,7 +3741,7 @@ export async function createApp() {
       for (const m of toAnswer) {
         if (!m.text) continue;
         try {
-          await answerOnWhatsApp(agent, m, token, copied, transcribeMs.get(m.id));
+          await answerOnWhatsApp(agent, m, token, copied, transcribeMs.get(m.id), deadline);
         } catch (e: any) {
           console.error("[WA] answering failed:", e?.message || e);
         } finally {
