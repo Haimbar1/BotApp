@@ -15,7 +15,7 @@ interface Brain {
   nativeWeb: boolean;
   nativeWhatsapp?: boolean;
   lastWaMessageAt?: string;
-  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number };
+  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number; error?: string; nothingSent?: boolean };
   nativeFacebook?: boolean;
   lastFbMessageAt?: string;
   lastFbError?: { at: string; what: string; message: string };
@@ -812,6 +812,7 @@ function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
   return (
     <div className="text-[10.5px] text-slate-400 border-t border-slate-800 pt-2">
       ⏱️ התשובה האחרונה ({showDate(t.at)}) לקחה <b className={t.total > 15000 ? "text-amber-300" : "text-emerald-300"}>{sec(t.total)}</b>: {parts.join(" · ")}
+      {t.error && <div className="text-red-300 mt-1">⚠️ {t.nothingSent ? "לא נשלחה ללקוח תשובה" : "נשלחה תשובה חלופית"} — {t.error}</div>}
     </div>
   );
 }
