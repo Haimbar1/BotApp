@@ -15,7 +15,7 @@ interface Brain {
   nativeWeb: boolean;
   nativeWhatsapp?: boolean;
   lastWaMessageAt?: string;
-  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number; error?: string; nothingSent?: boolean };
+  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number; error?: string; nothingSent?: boolean; model?: string };
   nativeFacebook?: boolean;
   lastFbMessageAt?: string;
   lastFbError?: { at: string; what: string; message: string };
@@ -809,6 +809,7 @@ function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
     t.ai.length ? `בינה מלאכותית ${t.ai.map(sec).join(" + ")}` : "",
     ...t.tools.map((x) => `${TOOL_NAMES[x.name] || x.name} ${sec(x.ms)}`),
     `שליחה ${sec(t.send)}`,
+    t.model ? `מודל ${t.model}${t.model !== "gemini-3.5-flash" ? " (גיבוי)" : ""}` : "",
   ].filter(Boolean);
   return (
     <div className="text-[10.5px] text-slate-400 border-t border-slate-800 pt-2">
