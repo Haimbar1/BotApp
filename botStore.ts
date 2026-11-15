@@ -46,7 +46,7 @@ export interface BotBrain {
   // when a customer's WhatsApp message last reached /api/webhooks/whatsapp (proof the number is routed here)
   lastWaMessageAt?: string;
   // how long the last WhatsApp answer took, and where the time went (ms; shown in the WhatsApp card)
-  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number; error?: string; nothingSent?: boolean };
+  lastWaTiming?: { at: string; total: number; transcribe?: number; customer: number; ai: number[]; tools: { name: string; ms: number }[]; send: number; error?: string; nothingSent?: boolean; model?: string };
   // the business's Facebook Page (comments + Messenger) is answered here instead of n8n (/api/webhooks/facebook)
   nativeFacebook?: boolean;
   // when a comment / Messenger message of the business's Page last reached /api/webhooks/facebook

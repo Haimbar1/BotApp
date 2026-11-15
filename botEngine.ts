@@ -71,7 +71,7 @@ export interface TurnResult {
   notes: BotNote[];
   // where the time went, in ms (shown in the bot's screen): customer = the CRM read, ai = each model
   // call, tools = each tool, total
-  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number; error?: string };
+  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number; error?: string; model?: string };
 }
 
 const TZ = "Asia/Jerusalem";
@@ -521,7 +521,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       : "",
     eventsSection(input.brain, now.date),
     input.late
-      ? `\n# תשובה באיחור\nהלקוח כתב ב-${showSlot(`${israelDateOf(input.late.since)}T${new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(input.late.since))}`)} ולא קיבל תשובה בגלל תקלה טכנית אצלנו. הודעת הלקוח למטה היא כל מה שכתב מאז. פתח בהתנצלות קצרה וחמה על העיכוב (משפט אחד, בלי לפרט את התקלה), ואז ענה עניינית על מה שכתב. אם ביקש משהו שתלוי בזמן (למשל תור להיום) — בדוק מחדש מה עוד אפשרי עכשיו.`
+      ? `\n# תשובה באיחור\nהלקוח כתב ב-${showSlot(`${israelDateOf(input.late.since)}T${new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(input.late.since))}`)} ולא קיבל תשובה בגלל תקלה טכנית אצלנו. הודעת הלקוח למטה היא כל מה שכתב מאז. שורת התנצלות על העיכוב כבר נוספת מעל התשובה שלך — אל תתנצל שוב ואל תפתח בברכה ארוכה; ענה ישר עניינית על מה שכתב. אם ביקש משהו שתלוי בזמן (למשל תור להיום) — בדוק מחדש מה עוד אפשרי עכשיו.`
       : "",
     "\n# פתיחה ושם",
     !isPlaceholderName(ctx.profileName) ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
@@ -1002,6 +1002,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
 // A model that hangs is given up on after MODEL_TIMEOUT_MS and the next one is asked — on WhatsApp
 // a hung call meant "typing…" and then nothing at all (Haim, 2026-11-15).
 const MODEL_TIMEOUT_MS = 20000;
+export const LATE_APOLOGY = "🙏 סליחה על העיכוב בתשובה — הייתה לנו תקלה טכנית.";
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: any;
   return Promise.race([
@@ -1018,12 +1019,16 @@ async function generate(ai: GoogleGenAI, params: any, deadline?: number): Promis
   };
   for (const model of MODELS) {
     try {
-      return await withTimeout(ai.models.generateContent({ ...params, model, config: { ...params.config, thinkingConfig: { thinkingBudget: 0 } } }), budget(), model);
+      const res: any = await withTimeout(ai.models.generateContent({ ...params, model, config: { ...params.config, thinkingConfig: { thinkingBudget: 0 } } }), budget(), model);
+      res.__model = model; // which one answered (a fallback shows on the bot's screen)
+      return res;
     } catch (e: any) {
       if (/no time left/.test(String(e?.message || ""))) throw e;
       if (/thinking/i.test(String(e?.message || ""))) {
         try {
-          return await withTimeout(ai.models.generateContent({ ...params, model }), budget(), model);
+          const res: any = await withTimeout(ai.models.generateContent({ ...params, model }), budget(), model);
+          res.__model = model;
+          return res;
         } catch (e2: any) {
           e = e2;
         }
@@ -1120,6 +1125,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
         },
       }, deps.deadline);
       timing.ai.push(Date.now() - ta);
+      timing.model = res.__model || timing.model;
       const calls = res.functionCalls || [];
       if (!calls.length) {
         finalText = res.text || "";
@@ -1152,6 +1158,8 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     answer = parseBotAnswer(finalText);
     if (!answer.reply && !comment) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
   }
+  // a late answer opens with a fixed apology line, set here and not by the model (Haim, 2026-11-15)
+  if (input.late && answer.reply && !timing.error) answer.reply = `${LATE_APOLOGY}\n\n${answer.reply}`;
   if (st.pending) answer.options = CONFIRM_OPTIONS[st.pending.split("|")[0]] || answer.options;
   answer.reply = tidyText(answer.reply);
   // Facebook shows *stars* as they are; a comment has no buttons and no pictures (Haim, 2026-11-02)

@@ -3622,7 +3622,7 @@ export async function createApp() {
         }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message))
       ),
       noteBrainFields(String(agent.id), {
-        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(failure ? { error: failure.slice(0, 300) } : {}), ...(delivered ? {} : { nothingSent: true }) },
+        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(out.timing.model ? { model: out.timing.model } : {}), ...(failure ? { error: failure.slice(0, 300) } : {}), ...(delivered ? {} : { nothingSent: true }) },
       }).catch(() => {}),
     ]);
     return { sent: delivered, failure };
