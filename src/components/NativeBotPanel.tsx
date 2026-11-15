@@ -708,6 +708,7 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
         </button>
       </div>
       {brain.lastWaTiming && <WaTiming t={brain.lastWaTiming} />}
+      {connected && <AnswerMissed agentId={brain.agentId} request={request} />}
       {!connected && webhook !== null && <div className="text-[10.5px] text-amber-300">לבוט הזה לא נראה חיבור וואטסאפ (לשונית "וואטסאפ הגדרות").</div>}
       {note && <div className="text-[11px] text-sky-200">{note}</div>}
     </div>
@@ -813,6 +814,79 @@ function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
     <div className="text-[10.5px] text-slate-400 border-t border-slate-800 pt-2">
       ⏱️ התשובה האחרונה ({showDate(t.at)}) לקחה <b className={t.total > 15000 ? "text-amber-300" : "text-emerald-300"}>{sec(t.total)}</b>: {parts.join(" · ")}
       {t.error && <div className="text-red-300 mt-1">⚠️ {t.nothingSent ? "לא נשלחה ללקוח תשובה" : "נשלחה תשובה חלופית"} — {t.error}</div>}
+    </div>
+  );
+}
+
+// "📨 לענות למי שלא קיבל תשובה" (Haim, 2026-11-15): the customers who wrote since midnight and got
+// nothing (or only the bot's failure apology) — first the list, then the bot answers them with an
+// apology for the delay, a batch at a time (server: /api/bot-brain/answer-missed)
+function AnswerMissed({ agentId, request }: { agentId: string; request: Request }) {
+  const [list, setList] = useState<{ phone: string; name: string; since: string; count: number; last: string }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const call = async (send: boolean) => {
+    const r = await request("/api/bot-brain/answer-missed", { method: "POST", body: JSON.stringify({ agentId, send }) });
+    return r.json().catch(() => ({ success: false, message: "הבקשה נכשלה" }));
+  };
+  const check = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const d: any = await call(false);
+      if (!d.success) throw new Error(d.message || "הבדיקה נכשלה");
+      setList(d.customers || []);
+      if (!d.customers?.length) setNote("✓ אין היום לקוחות שנשארו בלי תשובה");
+    } catch (e: any) {
+      setNote(e?.message || "הבדיקה נכשלה");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const answerAll = async () => {
+    if (!list?.length || !confirm(`הבוט יענה עכשיו ל-${list.length} לקוחות, עם התנצלות על העיכוב. להמשיך?`)) return;
+    setBusy(true);
+    let answered = 0;
+    const failed: string[] = [];
+    try {
+      for (let round = 0; round < 20; round++) {
+        setNote(`עונה… (${answered} נענו עד עכשיו)`);
+        const d: any = await call(true);
+        answered += d.answered?.length || 0;
+        failed.push(...(d.failed || []).map((f: any) => `${f.phone}: ${f.reason}`));
+        if (!d.success) throw new Error(d.message || "נכשל");
+        if (!d.remaining) break;
+      }
+      setNote(`✓ הבוט ענה ל-${answered} לקוחות${failed.length ? ` · לא הצליח: ${failed.join(" · ")}` : ""}`);
+      setList(null);
+    } catch (e: any) {
+      setNote(`${answered ? `הבוט ענה ל-${answered} לקוחות. ` : ""}${e?.message || "נכשל"}${failed.length ? ` · ${failed.join(" · ")}` : ""}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="text-[11px] border-t border-slate-800 pt-2 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={check} className={`${btn} px-3 py-1.5 border-slate-600 text-slate-200`}>
+          📨 מי לא קיבל היום תשובה?
+        </button>
+        {!!list?.length && (
+          <button type="button" disabled={busy} onClick={answerAll} className={`${btn} px-3 py-1.5 border-emerald-500 text-white bg-emerald-600`}>
+            לענות עכשיו ל-{list.length} לקוחות
+          </button>
+        )}
+      </div>
+      {!!list?.length && (
+        <div className="max-h-48 overflow-y-auto flex flex-col gap-1">
+          {list.map((c) => (
+            <div key={c.phone} className="text-slate-300">
+              <b>{c.name || c.phone}</b> <span className="text-slate-500">{c.phone} · {showDate(c.since)} · {c.count} הודעות</span> — {c.last}
+            </div>
+          ))}
+        </div>
+      )}
+      {note && <div className="text-sky-200">{note}</div>}
     </div>
   );
 }

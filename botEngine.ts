@@ -48,6 +48,8 @@ export interface TurnInput {
   waContext?: { replyTo?: string; templateButton?: boolean; ad?: { headline?: string; body?: string; sourceUrl?: string; sourceType?: string } };
   // Facebook comment: the post / ad the comment is on (its text), so "כמה זה עולה?" is answered about it
   fbContext?: { postText?: string };
+  // a late answer to messages that got none (a fault — Haim, 2026-11-15): when the customer wrote (ISO)
+  late?: { since: string };
 }
 
 export interface TurnDeps {
@@ -518,6 +520,9 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? `\n# הפוסט / המודעה שעליהם הלקוח הגיב\n«${input.fbContext.postText.slice(0, 1500)}»\nהתגובה שלו היא על זה (למשל "כמה זה עולה?", "פרטים", "עד מתי?") — ענה בהקשר הזה בלי לשאול על מה הוא מדבר.`
       : "",
     eventsSection(input.brain, now.date),
+    input.late
+      ? `\n# תשובה באיחור\nהלקוח כתב ב-${showSlot(`${israelDateOf(input.late.since)}T${new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(input.late.since))}`)} ולא קיבל תשובה בגלל תקלה טכנית אצלנו. הודעת הלקוח למטה היא כל מה שכתב מאז. פתח בהתנצלות קצרה וחמה על העיכוב (משפט אחד, בלי לפרט את התקלה), ואז ענה עניינית על מה שכתב. אם ביקש משהו שתלוי בזמן (למשל תור להיום) — בדוק מחדש מה עוד אפשרי עכשיו.`
+      : "",
     "\n# פתיחה ושם",
     !isPlaceholderName(ctx.profileName) ? `שם הלקוח בפרופיל ${comment || messenger ? "הפייסבוק" : web ? "שמסר" : "הוואטסאפ"}: ${ctx.profileName}` : "",
     !isPlaceholderName(customer?.name) ? `שם הלקוח ב-CRM: ${customer.name}` : "",
