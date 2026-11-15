@@ -3535,8 +3535,25 @@ export async function createApp() {
   // The customer always gets something (Haim, 2026-11-15: "typing…" and then nothing): a turn that
   // fails or runs past `deadline` (Vercel cuts the function at 60s) answers with an apology, and a
   // list Meta refuses goes again as plain text with the options as "•" lines.
-  const WA_SORRY = "סליחה, נתקלתי בתקלה זמנית 🙏 אפשר לכתוב לי שוב בעוד רגע, או להשאיר הודעה ונחזור אליך.";
-  async function answerOnWhatsApp(agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number, deadline?: number) {
+  // A failure is also a staff alert on WhatsApp (Haim, 2026-11-15): reported to WhastAppSystem as a
+  // handoff, with the reason in the note, so someone gets back to the customer.
+  const WA_SORRY = "סליחה, נתקלתי בתקלה זמנית 🙏 העברתי את ההודעה שלך לצוות, ונחזור אליך בהקדם.";
+  const WA_NOT_SENT = "⚠️ [הבוט לא הצליח לשלוח תשובה ללקוח]";
+  // the bot's failure replies — "📨 לענות למי שלא קיבל תשובה" treats a customer who got only these as unanswered
+  const WA_FAILURE_TEXTS = ["סליחה, נתקלתי בתקלה", "סליחה, לא הצלחתי לענות", "מצטערים, הבוט לא זמין", "⚠️ [הבוט"];
+  const failureReason = (f: string) =>
+    /quota|RESOURCE_EXHAUSTED|\b429\b|billing|credit|prepay/i.test(f)
+      ? "נגמרו הקרדיטים / המכסה של Gemini (הבינה המלאכותית)"
+      : /API key|PERMISSION_DENIED|\b40[13]\b/i.test(f)
+        ? "בעיה במפתח של Gemini (הבינה המלאכותית)"
+        : /timed out|no time left|too long/i.test(f)
+          ? "הבינה המלאכותית לא ענתה בזמן"
+          : /^Meta/.test(f)
+            ? `וואטסאפ (Meta) סירב לשלוח: ${f.replace(/^Meta \([^)]*\):\s*/, "").slice(0, 120)}`
+            : f.slice(0, 160);
+  async function answerOnWhatsApp(
+    agent: any, msg: IncomingWa, token: string, copied: Promise<unknown>, transcribeMs?: number, deadline?: number, late?: { since: string }
+  ): Promise<{ sent: number; failure: string }> {
     const phone = normalizeIsraeliPhone(msg.from) || msg.from;
     const turnStarted = Date.now();
     let out: Awaited<ReturnType<typeof turnFor>>;
@@ -3549,6 +3566,7 @@ export async function createApp() {
         userPhone: phone,
         userName: msg.name,
         waContext: { replyTo: msg.replyTo, templateButton: msg.templateButton, ad: msg.ad },
+        late,
       }, deadline);
       // the AI stops at the deadline by itself; this catches the rest (CRM, database) hanging
       const hardStop = deadline ? deadline + 5000 - Date.now() : 0;
@@ -3556,13 +3574,16 @@ export async function createApp() {
       out = hardStop > 0
         ? await Promise.race([turn, new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("the turn took too long")), hardStop)))]).finally(() => clearTimeout(timer))
         : await turn;
-      if (out.timing.error) failure = `AI: ${out.timing.error}`;
+      if (out.timing.error) {
+        failure = `AI: ${out.timing.error}`;
+        out = { ...out, reply: WA_SORRY, options: [], images: [] };
+      }
     } catch (e: any) {
       failure = e?.message || String(e);
       console.error("[WA] the bot's turn failed — sending an apology:", failure);
       out = { reply: WA_SORRY, options: [], images: [], notes: [], timing: { customer: 0, ai: [], tools: [], total: Date.now() - turnStarted } } as any;
     }
-    const handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
+    let handoffNote = out.notes.filter((n) => n.kind === "handoff").map((n) => n.text).join(" · ") || undefined;
     const ts = Date.now();
     const sent: { text: string; messageId?: string }[] = [];
     for (const { payload, text } of answerToWhatsApp(msg.from, out)) {
@@ -3586,6 +3607,12 @@ export async function createApp() {
     }
     const sendMs = Date.now() - ts;
     await copied;
+    const delivered = sent.length;
+    if (failure) {
+      handoffNote = `⚠️ הבוט לא הצליח לענות ללקוח — ${failureReason(failure)}. צריך לחזור אליו${delivered ? " (קיבל הודעת התנצלות)" : ""}.${handoffNote ? ` · ${handoffNote}` : ""}`;
+      // nothing reached the customer: a line in the inbox anyway, so the staff alert goes out
+      if (!delivered) sent.push({ text: WA_NOT_SENT });
+    }
     // in WhastAppSystem's inbox, like n8n's bot_reply (the handoff alert only when the bot handed over)
     await Promise.all([
       ...sent.map(({ text, messageId }) =>
@@ -3595,9 +3622,10 @@ export async function createApp() {
         }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message))
       ),
       noteBrainFields(String(agent.id), {
-        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(failure ? { error: failure.slice(0, 300) } : {}), ...(sent.length ? {} : { nothingSent: true }) },
+        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(failure ? { error: failure.slice(0, 300) } : {}), ...(delivered ? {} : { nothingSent: true }) },
       }).catch(() => {}),
     ]);
+    return { sent: delivered, failure };
   }
 
   app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
@@ -4089,6 +4117,67 @@ export async function createApp() {
     } catch (e: any) {
       console.error("[BOT] test turn failed:", e);
       res.status(500).json({ success: false, message: e?.message || "הבדיקה נכשלה" });
+    }
+  });
+
+  // POST /api/bot-brain/answer-missed { agentId, send? } — "📨 לענות למי שלא קיבל תשובה" (Haim, 2026-11-15:
+  // the AI's credits ran out and customers got no answer). WhastAppSystem's inbox says who wrote to the
+  // bot's number since midnight (at most 23h back — Meta lets the business answer only within 24h) and
+  // got nothing but the bot's failure replies (accounts-export `wa-unanswered`). Without `send`: the
+  // list. With it: the bot answers them — everything they wrote, with an apology for the delay — as
+  // many as fit in ~40s (the screen asks again for the rest); each customer's last message is answered
+  // once even if the button is pressed twice (claimWaMessage `late_<id>`).
+  app.post("/api/bot-brain/answer-missed", requireAuth, async (req: any, res: any) => {
+    const agent = ownAgentOr403(req, res, req.body?.agentId);
+    if (!agent) return;
+    const started = Date.now();
+    try {
+      const secret = process.env.SSO_SHARED_SECRET;
+      if (!secret) return res.status(500).json({ success: false, message: "SSO_SHARED_SECRET לא מוגדר" });
+      const config = await effectiveWhatsappConfig(agent);
+      const phoneNumberId = String(config?.phoneNumberId || "").trim();
+      const token = String(config?.systemUserAccessToken || "").trim();
+      if (!phoneNumberId || !token) return res.status(400).json({ success: false, message: "לבוט הזה אין חיבור וואטסאפ" });
+      // midnight in Israel, but never more than 23h back
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(new Date());
+      const offset = (new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", timeZoneName: "longOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || "GMT+02:00").replace("GMT", "") || "+02:00";
+      const since = new Date(Math.max(Date.parse(`${today}T00:00:00${offset}`), Date.now() - 23 * 3600_000)).toISOString();
+      const r = await postJson(`${WA_SYSTEM_URL}/api/accounts-export`, {
+        token: jwt.sign({ typ: "wa-unanswered", phoneNumberId, displayPhone: toIntlDigits(config?.phoneNumber || ""), since, ignoreTexts: WA_FAILURE_TEXTS }, secret, { expiresIn: "2m" }),
+      }, {}, 20000);
+      if (!r.ok) return res.status(502).json({ success: false, message: `מערכת הוואטסאפ ענתה ${r.status}${r.status === 400 ? " (צריך לעדכן אותה)" : ""}` });
+      const all: { phone: string; name: string; messages: { id: string; text: string; type: string; at: string }[] }[] = (await r.json())?.customers || [];
+      const within = all.filter((c) => c.messages.length && Date.now() - Date.parse(c.messages[c.messages.length - 1].at) < 24 * 3600_000);
+      const list = within.map((c) => ({ phone: c.phone, name: c.name, since: c.messages[0].at, count: c.messages.length, last: c.messages[c.messages.length - 1].text.slice(0, 120) }));
+      if (!req.body?.send) return res.json({ success: true, since, customers: list });
+
+      const answered: string[] = [];
+      const failed: { phone: string; reason: string }[] = [];
+      let i = 0;
+      for (; i < within.length && Date.now() - started < 35000; i++) {
+        const c = within[i];
+        const last = c.messages[c.messages.length - 1];
+        if (!(await claimWaMessage(`late_${last.id}`))) continue; // answered already (a second press)
+        const msg = {
+          id: last.id, from: c.phone, name: c.name, phoneNumberId, type: "text",
+          text: c.messages.map((m) => m.text).filter(Boolean).join("\n").slice(0, 2000), raw: {},
+        } as unknown as IncomingWa;
+        const done = await answerOnWhatsApp(agent, msg, token, Promise.resolve(), undefined, Math.min(started + 45000, Date.now() + 25000), { since: c.messages[0].at })
+          .catch((e: any) => ({ sent: 0, failure: e?.message || String(e) }));
+        if (done.sent && !done.failure) answered.push(c.phone);
+        else {
+          failed.push({ phone: c.phone, reason: failureReason(done.failure || "nothing sent") });
+          // the AI is still down: stop, rather than send everyone another apology
+          if (/^AI:|timed out|no time left/.test(done.failure)) {
+            i++;
+            return res.json({ success: false, answered, failed, remaining: within.length - i, message: `הבוט עדיין לא מצליח לענות — ${failureReason(done.failure)}. עצרתי.` });
+          }
+        }
+      }
+      res.json({ success: true, answered, failed, remaining: within.length - i });
+    } catch (e: any) {
+      console.error("[WA] answer-missed failed:", e?.message || e);
+      res.status(500).json({ success: false, message: e?.message || "נכשל" });
     }
   });
 
