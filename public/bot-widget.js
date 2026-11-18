@@ -2607,7 +2607,15 @@
     try { origin = new URL(currentScript.src).origin; } catch (e) { return; }
     fetch(origin + '/api/public/bot-engine?bot_id=' + encodeURIComponent(botId))
       .then(function(res) { return res.ok ? res.json() : null; })
-      .then(function(data) { if (data && data.native) nativeChatUrl = origin + '/api/public/chat'; })
+      .then(function(data) {
+        // "לא פעיל" in the bots list: the bot is stopped, so the widget isn't shown at all
+        if (data && data.stopped) {
+          var el = document.getElementById('obw-widget-container');
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+          return;
+        }
+        if (data && data.native) nativeChatUrl = origin + '/api/public/chat';
+      })
       .catch(function() {});
   })();
 
