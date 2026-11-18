@@ -3372,12 +3372,22 @@ export async function createApp() {
     );
   }
 
+  // "לא פעיל" in the bots list stops the bot (2026-11-18): nobody answers, neither this bot nor
+  // n8n, on the website, WhatsApp or Facebook. Only an explicit "Not Active" counts (an old agent
+  // with no status keeps answering), and an active copy of the agent still answers.
+  const isStopped = (a: any) => String(a?.status || "").trim() === "Not Active";
+  // every agent carrying this bot id is "Not Active" (an unknown bot id isn't stopped)
+  const botStopped = (botId: string) => {
+    const all = botId ? readAgents().filter((x: any) => x.botId === botId || x.id === botId) : [];
+    return all.length > 0 && all.every(isStopped);
+  };
+
   // The agent the website widget's bot id belongs to, when it's set to answer here. Several agents
   // can carry the same bot id (copies of an agent), so the one that was turned on wins — not
   // simply the first in the list, which may be another copy with the switch off.
   async function nativeAgentFor(botId: string): Promise<any | null> {
     if (!botId) return null;
-    for (const a of readAgents().filter((x: any) => x.botId === botId || x.id === botId)) {
+    for (const a of readAgents().filter((x: any) => (x.botId === botId || x.id === botId) && !isStopped(x))) {
       const brain = await getBrain(String(a.id)).catch(() => null);
       if (brain?.nativeWeb) return a;
     }
@@ -3416,12 +3426,14 @@ export async function createApp() {
             }
             const b = await getBrain(String(a.id)).catch(() => null);
             const booking = b ? { enabled: b.booking.enabled, days: Object.entries(b.booking.hours).filter(([, h]) => String(h).trim()).map(([d, h]) => `${d}:${h}`) } : null;
-            return { agentId: a.id, name: a.businessName || a.name || "", nativeWeb, booking };
+            return { agentId: a.id, name: a.businessName || a.name || "", status: a.status || "", nativeWeb, booking };
           })
       );
       const switchedOn = await listSwitchedOnAgents().catch((e: any) => [`error: ${e?.message || e}`]);
-      return res.json({ native: !!agent, botId, storage: storageMode(), matches, switchedOn });
+      return res.json({ native: !!agent, stopped: botStopped(botId), botId, storage: storageMode(), matches, switchedOn });
     }
+    // stopped: the widget hides itself (n8n mustn't answer either)
+    if (botStopped(botId)) return res.json({ native: false, stopped: true });
     res.json({ native: !!agent, ...(agent ? { agentId: agent.id } : {}) });
   });
 
@@ -3433,7 +3445,9 @@ export async function createApp() {
     if (!String(body.sessionId || "").trim() || !String(body.message || body.buttonId || "").trim()) {
       return res.status(400).json({ error: "sessionId and message are required" });
     }
-    const agent = await nativeAgentFor(String(body.botId || body.bot_id || "").trim());
+    const chatBotId = String(body.botId || body.bot_id || "").trim();
+    if (botStopped(chatBotId)) return res.status(409).json({ error: "this bot is not active", stopped: true });
+    const agent = await nativeAgentFor(chatBotId);
     if (!agent) return res.status(409).json({ error: "this bot is answered by n8n" });
     const receivedAt = new Date().toISOString();
     try {
@@ -3661,7 +3675,7 @@ export async function createApp() {
       }
     };
     if (agent) brain = await brainOf(agent);
-    if (phoneNumberId && !brain?.nativeWhatsapp) {
+    if (phoneNumberId && (!brain?.nativeWhatsapp || isStopped(agent))) {
       const on = new Set(await whatsappAgentIds().catch(() => [] as string[]));
       // the number as the agent's settings or its business's portal vault ("מזהים וחיבורים") have it;
       // another business's agent only when the lookup found none (a lent number stays the borrower's)
@@ -3671,7 +3685,7 @@ export async function createApp() {
         const cfg = await effectiveWhatsappConfig(a).catch(() => null);
         return String(cfg?.phoneNumberId || "").trim() === phoneNumberId;
       };
-      for (const a of readAgents().filter((x: any) => on.has(String(x.id)) && x.id !== agent?.id)) {
+      for (const a of readAgents().filter((x: any) => on.has(String(x.id)) && x.id !== agent?.id && !isStopped(x))) {
         if (!((found?.botId && a.botId === found.botId) || (await onNumber(a)))) continue;
         const altBrain = await brainOf(a);
         if (altBrain?.nativeWhatsapp) {
@@ -3687,14 +3701,35 @@ export async function createApp() {
     const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
     const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
 
+    // "לא פעיל": nobody answers, neither this bot nor n8n, unless an active copy of the agent (same
+    // bot id) or another active agent on this number is there for n8n. WhastAppSystem still gets
+    // the copy, so the staff see the message in the inbox.
+    const stopped =
+      !!agent &&
+      isStopped(agent) &&
+      !readAgents().some(
+        (a: any) =>
+          !isStopped(a) &&
+          agentTenant(a) === agentTenant(agent) &&
+          ((agent.botId && a.botId === agent.botId) || String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId)
+      );
+    if (stopped) {
+      if (messages.length) console.log(`[WA] ${messages.length} message(s) to ${phoneNumberId} not answered — bot ${agent.id} is "Not Active"`);
+      await Promise.all([
+        arrival,
+        postJson(`${WA_SYSTEM_URL}/api/webhook`, payload, {}, 8000).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message)),
+      ]);
+      return res.status(200).send("ok");
+    }
+
     // Not switched (or not ours): on to n8n, untouched — and a copy of every event, from every number
     // (delivery reports included), to WhastAppSystem, which routes it by the number and passes the
     // reports on to the task system; the CRM reads them there (Haim, 2026-10-27: one connection for
     // all the systems). n8n may send it the same payload too — WhastAppSystem skips repeats.
-    if (!agent || !brain?.nativeWhatsapp) {
+    if (!agent || !brain?.nativeWhatsapp || isStopped(agent)) {
       // why it isn't the new bot's — in the log, so a message that went to n8n can be traced
       if (messages.length) {
-        const why = !phoneNumberId ? "no number in the payload" : lookupError ? `lookup failed: ${lookupError}` : !agent ? "no agent for this number" : "WhatsApp switch off";
+        const why = !phoneNumberId ? "no number in the payload" : lookupError ? `lookup failed: ${lookupError}` : !agent ? "no agent for this number" : isStopped(agent) ? "this agent is Not Active (an active copy is n8n's)" : "WhatsApp switch off";
         console.log(`[WA] ${messages.length} message(s) to ${phoneNumberId || "?"} (${displayPhone || "?"}) not answered here — ${why}${agent ? ` (agent ${agent.id})` : ""}`);
       }
       const copied = postJson(`${WA_SYSTEM_URL}/api/webhook`, payload, {}, 8000).catch((e) => console.warn("[WA] copy to WhastAppSystem failed:", e?.message));
@@ -3809,7 +3844,7 @@ export async function createApp() {
   async function facebookAgentFor(tenant: string | null): Promise<{ agent: any; token: string; messengerToken: string } | null> {
     if (!tenant) return null;
     const on = new Set(await facebookAgentIds());
-    const agent = readAgents().find((a: any) => on.has(String(a.id)) && agentTenant(a) === tenant);
+    const agent = readAgents().find((a: any) => on.has(String(a.id)) && agentTenant(a) === tenant && !isStopped(a));
     if (!agent) return null;
     const token = (await tenantSecret("FB_PAGE_ACCESS_TOKEN", tenant)).trim();
     if (!token) {
@@ -3913,6 +3948,12 @@ export async function createApp() {
       if (tenant && incomingFacebook({ object: "page", entry: [entry] }).length) {
         arrivals.push(...readAgents().filter((a: any) => agentTenant(a) === tenant).map((a: any) => noteFbArrival(String(a.id)).catch(() => {})));
       }
+      // every bot of the Page's business is "לא פעיל": nobody answers, n8n neither
+      const tenantAgents = tenant ? readAgents().filter((a: any) => agentTenant(a) === tenant) : [];
+      if (!found && tenantAgents.length && tenantAgents.every(isStopped)) {
+        console.log(`[FB] Page ${entry?.id} not answered — every bot of business ${tenant} is "Not Active"`);
+        continue;
+      }
       if (!found) theirs.push(entry);
       else if (!found.messengerToken && entry?.messaging?.length) {
         // no Messenger token yet: the comments here, the Messenger messages to n8n
@@ -3968,7 +4009,7 @@ export async function createApp() {
     const [brain, lessons, notes] = await Promise.all([getBrain(agent.id), listLessons(agent.id), listNotes(String(agent.botId || ""), 200)]);
     // the same bot id on other agents (copies) — the website goes by the bot id
     const sameBotId = readAgents().filter((a: any) => a.id !== agent.id && agent.botId && a.botId === agent.botId).map((a: any) => a.businessName || a.name || a.id);
-    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent), botId: agent.botId || "", sameBotId });
+    res.json({ success: true, brain, lessons, notes, crmLinked: !!crmFor(agent), botId: agent.botId || "", sameBotId, stopped: isStopped(agent) });
   });
 
   // PUT /api/bot-brain { agentId, brain } — engine on/off, Q&A, booking hours, voice notes
@@ -4130,6 +4171,7 @@ export async function createApp() {
   app.post("/api/bot-brain/answer-missed", requireAuth, async (req: any, res: any) => {
     const agent = ownAgentOr403(req, res, req.body?.agentId);
     if (!agent) return;
+    if (isStopped(agent)) return res.status(400).json({ success: false, message: "הבוט מסומן \"לא פעיל\" — צריך להפעיל אותו ברשימת הבוטים" });
     const started = Date.now();
     try {
       const secret = process.env.SSO_SHARED_SECRET;

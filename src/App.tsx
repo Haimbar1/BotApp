@@ -6994,6 +6994,7 @@ ${videos || "(לא הוגדר)"}
             {agentPanelTab === "smartbot" && activeId && (
               <NativeBotPanel
                 agentId={activeId}
+                stopped={agents.find(a => a.id === activeId)?.status === "Not Active"}
                 request={(url, init) =>
                   apiFetch(url, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}`, ...(init?.headers || {}) } })
                 }

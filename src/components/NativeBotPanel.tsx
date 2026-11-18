@@ -52,7 +52,7 @@ const newQaId = () => `qa_${Math.random().toString(36).slice(2, 10)}`;
 let unsavedNow = false;
 export const smartBotHasUnsaved = () => unsavedNow;
 
-export default function NativeBotPanel({ agentId, request }: { agentId: string; request: Request }) {
+export default function NativeBotPanel({ agentId, request, stopped = false }: { agentId: string; request: Request; stopped?: boolean }) {
   const [brain, setBrain] = useState<Brain | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [crmLinked, setCrmLinked] = useState(true);
@@ -208,6 +208,11 @@ export default function NativeBotPanel({ agentId, request }: { agentId: string; 
 
   return (
     <div className="flex flex-col gap-4 pt-4" dir="rtl">
+      {stopped && (
+        <div className="rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-right text-xs font-bold text-red-200 leading-relaxed">
+          ⛔ הבוט מסומן "לא פעיל" ברשימת הבוטים, ולכן הוא לא עונה לאף אחד: לא באתר, לא בוואטסאפ ולא בפייסבוק (וגם n8n לא עונה). ההודעות בוואטסאפ עדיין מגיעות לתיבת ההודעות. כדי שיענה צריך להחזיר אותו ל"פעיל". צ'אט הבדיקה כאן ממשיך לעבוד.
+        </div>
+      )}
       {/* Engine on/off */}
       <div className={`${card} sm:flex-row sm:items-center sm:justify-between`}>
         <div className="text-right">
