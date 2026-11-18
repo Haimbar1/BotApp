@@ -3642,13 +3642,10 @@ export async function createApp() {
     return { sent: delivered, failure };
   }
 
-  app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
-    // the answer must be out well before Vercel's 60s cut-off (vercel.json maxDuration)
-    const deadline = Date.now() + 40000;
-    const raw = req.body || {};
-    const payload = metaPayload(raw);
-    const { phoneNumberId, displayPhone } = payloadNumber(payload);
-    const messages = incomingMessages(payload);
+  // Which bot a message to this WhatsApp number goes to — the one decision both the webhook and the
+  // "💬 וואטסאפ" card's "who answers this number now" line use (2026-11-18: a bot marked "לא פעיל"
+  // still answered and nothing showed why).
+  async function whatsappRoute(phoneNumberId: string, displayPhone: string) {
     let found: any = null;
     let lookupError = "";
     if (phoneNumberId) {
@@ -3694,16 +3691,8 @@ export async function createApp() {
         }
       }
     }
-
-    // proof for the bot's screen that this number's messages arrive here (not waited for)
-    const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
-    // first: what an app took isn't answered by the bot (quick for a number no app has)
-    const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
-    const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
-
     // "לא פעיל": nobody answers, neither this bot nor n8n, unless an active copy of the agent (same
-    // bot id) or another active agent on this number is there for n8n. WhastAppSystem still gets
-    // the copy, so the staff see the message in the inbox.
+    // bot id) or another active agent on this number is there for n8n.
     const stopped =
       !!agent &&
       isStopped(agent) &&
@@ -3713,6 +3702,39 @@ export async function createApp() {
           agentTenant(a) === agentTenant(agent) &&
           ((agent.botId && a.botId === agent.botId) || String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId)
       );
+    const mode: "stopped" | "native" | "n8n" = stopped ? "stopped" : agent && brain?.nativeWhatsapp && !isStopped(agent) ? "native" : "n8n";
+    return { found, agent, brain, lookupError, stopped, mode };
+  }
+
+  // GET /api/whatsapp/route?agentId=… — who answers this bot's WhatsApp number right now, and why
+  app.get("/api/whatsapp/route", requireAuth, async (req: any, res: any) => {
+    const own = ownAgentOr403(req, res, req.query.agentId);
+    if (!own) return;
+    const cfg = await effectiveWhatsappConfig(own).catch(() => null);
+    const phoneNumberId = String(cfg?.phoneNumberId || "").trim();
+    if (!phoneNumberId) return res.json({ success: true, phoneNumberId: "", mode: "none" });
+    const r = await whatsappRoute(phoneNumberId, toIntlDigits(cfg?.phoneNumber || ""));
+    const who = (a: any) => (a ? { id: a.id, name: a.businessName || a.name || a.id, status: a.status || "", self: a.id === own.id } : null);
+    res.json({ success: true, phoneNumberId, mode: r.mode, answeredBy: r.mode === "native" ? who(r.agent) : null, numberBot: who(r.found), lookupError: r.lookupError || undefined });
+  });
+
+  app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
+    // the answer must be out well before Vercel's 60s cut-off (vercel.json maxDuration)
+    const deadline = Date.now() + 40000;
+    const raw = req.body || {};
+    const payload = metaPayload(raw);
+    const { phoneNumberId, displayPhone } = payloadNumber(payload);
+    const messages = incomingMessages(payload);
+    const { agent, brain, lookupError, stopped } = await whatsappRoute(phoneNumberId, toIntlDigits(displayPhone));
+    if (messages.length && agent) console.log(`[WA] message(s) to ${phoneNumberId}: bot ${agent.id} (${agent.status || "no status"})${stopped ? " — stopped" : ""}`);
+
+    // proof for the bot's screen that this number's messages arrive here (not waited for)
+    const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
+    // first: what an app took isn't answered by the bot (quick for a number no app has)
+    const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
+    const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
+
+    // WhastAppSystem still gets the copy of a stopped bot's messages, so the staff see them in the inbox
     if (stopped) {
       if (messages.length) console.log(`[WA] ${messages.length} message(s) to ${phoneNumberId} not answered — bot ${agent.id} is "Not Active"`);
       await Promise.all([

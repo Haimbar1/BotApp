@@ -712,6 +712,7 @@ function WhatsAppCard({ botId, brain, saving, request, onSwitch }: { botId: stri
           {brain.nativeWhatsapp ? "↩ החזר את הוואטסאפ ל-n8n" : "🚀 העבר את הוואטסאפ לבוט החדש"}
         </button>
       </div>
+      {connected && <WaRoute agentId={brain.agentId} request={request} refresh={`${brain.nativeWhatsapp}`} />}
       {brain.lastWaTiming && <WaTiming t={brain.lastWaTiming} />}
       {connected && <AnswerMissed agentId={brain.agentId} request={request} />}
       {!connected && webhook !== null && <div className="text-[10.5px] text-amber-300">לבוט הזה לא נראה חיבור וואטסאפ (לשונית "וואטסאפ הגדרות").</div>}
@@ -807,6 +808,43 @@ const TOOL_NAMES: Record<string, string> = {
 const sec = (ms: number) => `${(ms / 1000).toFixed(1)} שנ׳`;
 
 // How long the last WhatsApp answer took, and where the time went
+// Who answers this bot's WhatsApp number right now — the same decision the webhook makes
+// (server: /api/whatsapp/route). A bot marked "לא פעיל" that still got answers showed nothing.
+function WaRoute({ agentId, request, refresh }: { agentId: string; request: Request; refresh: string }) {
+  const [r, setR] = useState<any>(null);
+  const load = () =>
+    request(`/api/whatsapp/route?agentId=${encodeURIComponent(agentId)}`)
+      .then((x) => x.json())
+      .then(setR)
+      .catch(() => setR({ error: true }));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, refresh]);
+  if (!r) return <div className="text-[10.5px] text-slate-500">בודק מי עונה על המספר…</div>;
+  if (r.error || !r.success || r.mode === "none") return null;
+  const name = (a: any) => `"${a.name}"${a.self ? " (הבוט הזה)" : ""}${a.status === "Not Active" ? " — לא פעיל" : ""}`;
+  return (
+    <div className="text-[11px] border-t border-slate-800 pt-2 text-slate-300 flex items-center justify-between gap-2">
+      <div>
+        <b>מי עונה עכשיו על המספר:</b>{" "}
+        {r.mode === "native" && r.answeredBy ? (
+          <span className={r.answeredBy.self ? "text-emerald-300 font-bold" : "text-amber-300 font-bold"}>🤖 נועם, בשם הבוט {name(r.answeredBy)}</span>
+        ) : r.mode === "stopped" ? (
+          <span className="text-red-300 font-bold">⛔ אף אחד, הבוט מסומן "לא פעיל"</span>
+        ) : (
+          <span className="font-bold">⚪ n8n (הבוט הישן)</span>
+        )}
+        {r.numberBot && !(r.answeredBy && r.answeredBy.id === r.numberBot.id) && (
+          <div className="text-[10.5px] text-slate-500">המספר רשום אצל הבוט {name(r.numberBot)}</div>
+        )}
+        {r.lookupError && <div className="text-[10.5px] text-red-300">שגיאה בחיפוש: {r.lookupError}</div>}
+      </div>
+      <button type="button" className={`${btn} shrink-0`} onClick={load}>רענן</button>
+    </div>
+  );
+}
+
 function WaTiming({ t }: { t: NonNullable<Brain["lastWaTiming"]> }) {
   const parts = [
     t.transcribe ? `תמלול ${sec(t.transcribe)}` : "",
