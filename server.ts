@@ -3691,17 +3691,38 @@ export async function createApp() {
         }
       }
     }
-    // "לא פעיל": nobody answers, neither this bot nor n8n, unless an active copy of the agent (same
-    // bot id) or another active agent on this number is there for n8n.
-    const stopped =
-      !!agent &&
-      isStopped(agent) &&
-      !readAgents().some(
-        (a: any) =>
-          !isStopped(a) &&
-          agentTenant(a) === agentTenant(agent) &&
-          ((agent.botId && a.botId === agent.botId) || String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId)
-      );
+    // The bot the number landed on is "לא פעיל": an active bot this number really belongs to answers
+    // instead — its settings or its business's portal vault have the number, or it's a copy (same bot
+    // id); its own business first, then any. Only when there is none, nobody answers (neither this
+    // bot nor n8n). (2026-11-18: the lookup landed on a stopped bot and an active one, whose number
+    // comes from its business's vault, went silent.)
+    let stopped = false;
+    if (agent && isStopped(agent) && phoneNumberId) {
+      const stoppedOne = agent;
+      const owns = async (a: any) => {
+        if (stoppedOne.botId && a.botId === stoppedOne.botId) return true;
+        if (String(a.whatsappConfig?.phoneNumberId || "").trim() === phoneNumberId) return true;
+        const cfg = await effectiveWhatsappConfig(a).catch(() => null);
+        return String(cfg?.phoneNumberId || "").trim() === phoneNumberId;
+      };
+      const active = readAgents().filter((a: any) => !isStopped(a) && a.id !== stoppedOne.id);
+      const ordered = [...active.filter((a: any) => agentTenant(a) === agentTenant(stoppedOne)), ...active.filter((a: any) => agentTenant(a) !== agentTenant(stoppedOne))];
+      let owner: any = null;
+      let ownerBrain: any = null;
+      for (const a of ordered) {
+        if (!(await owns(a))) continue;
+        const b = await brainOf(a);
+        if (b?.nativeWhatsapp) {
+          [owner, ownerBrain] = [a, b];
+          break;
+        }
+        if (!owner) [owner, ownerBrain] = [a, b]; // active but its switch is off → n8n, unless a later one has it on
+      }
+      if (owner) [agent, brain] = [owner, ownerBrain];
+      else stopped = true;
+    } else if (agent && isStopped(agent)) {
+      stopped = true;
+    }
     const mode: "stopped" | "native" | "n8n" = stopped ? "stopped" : agent && brain?.nativeWhatsapp && !isStopped(agent) ? "native" : "n8n";
     return { found, agent, brain, lookupError, stopped, mode };
   }
