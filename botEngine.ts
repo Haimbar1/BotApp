@@ -12,6 +12,7 @@ import {
   type BotNote,
   type BotNoteKind,
   type ConvMessage,
+  DEFAULT_SLOT_MINUTES,
 } from "./botStore.js";
 
 // The bot itself, answering here instead of in n8n (Haim, 2026-10-23: "I want direct communication
@@ -71,7 +72,7 @@ export interface TurnResult {
   notes: BotNote[];
   // where the time went, in ms (shown in the bot's screen): customer = the CRM read, ai = each model
   // call, tools = each tool, total
-  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number; error?: string; model?: string };
+  timing: { customer: number; ai: number[]; tools: { name: string; ms: number }[]; total: number; error?: string; recovered?: boolean; model?: string };
 }
 
 const TZ = "Asia/Jerusalem";
@@ -249,7 +250,7 @@ export function freeSlots(
 ): string[] {
   const now = israelNow();
   const earliest = `${now.date}T${fromMinutes(Math.min(toMinutes(now.time) + 60, 24 * 60 - 1))}`; // not within the next hour
-  const step = Math.max(10, Number(booking.slotMinutes) || 30);
+  const step = Math.max(10, Number(booking.slotMinutes) || DEFAULT_SLOT_MINUTES);
   const out: string[] = [];
   for (let i = 0; i < days; i++) {
     const date = addDays(fromDate, i);
@@ -616,7 +617,7 @@ const TOOLS = [
     description: "קובע תור ביומן הסניף. רק אחרי שהלקוח בחר מועד מתוך get_available_slots ואישר.",
     parametersJsonSchema: {
       type: "object",
-      properties: { start: { type: "string", description: "YYYY-MM-DDTHH:mm" }, customer_name: { type: "string" } },
+      properties: { start: { type: "string", description: "YYYY-MM-DDTHH:mm" }, customer_name: { type: "string", description: "שם מי שנבדק. תור לאדם נוסף (בן / בת זוג, ילד) — קריאה נפרדת עם השם שלו, באותו טלפון" } },
       required: ["start", "customer_name"],
     },
   },
@@ -700,6 +701,7 @@ interface TurnState {
   confirmed: string; // what the bot asked to confirm in its last message (the customer answers now)
   pending: string; // what this answer asks the customer to confirm
   booked: string[]; // exams booked in this turn
+  done: string[]; // what this turn did on the calendar, in words — said to the customer if the AI then fails
   bookedEarlier: Set<string>; // exams this conversation booked before
   voice: boolean; // this message is a transcribed voice note
   userText: string; // what the customer wrote this turn
@@ -721,10 +723,31 @@ function saidAbout(city: string, st: TurnState): string {
   return (found || "").slice(0, 200);
 }
 
+// Several actions can wait for one "yes" (2026-11-18 — a customer asked for 15:00 for himself and the next
+// slot for his wife in one go; only one was remembered, so after his "yes" the second couldn't be booked).
+const PENDING_SEP = "\n";
+const isConfirmed = (st: TurnState, key: string) => !!st.confirmed && st.confirmed.split(PENDING_SEP).includes(key);
+const pendingKeys = (st: TurnState) => (st.pending ? st.pending.split(PENDING_SEP) : []);
+const slotLength = (booking: { slotMinutes?: number }) => Math.max(10, Number(booking.slotMinutes) || DEFAULT_SLOT_MINUTES);
 function needsConfirmation(st: TurnState, key: string, ask: string): any | null {
-  if (st.confirmed === key) return null;
-  st.pending = key;
-  return { ok: false, needs_confirmation: true, instruction: ask };
+  if (isConfirmed(st, key)) return null;
+  const keys = pendingKeys(st);
+  if (!keys.includes(key)) keys.push(key);
+  st.pending = keys.join(PENDING_SEP);
+  return {
+    ok: false,
+    needs_confirmation: true,
+    instruction: keys.length > 1
+      ? `${ask} יש כמה פעולות שמחכות לאישור הלקוח — שאל על כולן יחד בהודעה אחת (למשל \"לקבוע את שני התורים: *15:00* לדני ו-*15:20* לרותי?\"). אישור אחד מאשר את כולן, ואז קרא לכל אחת שוב בדיוק כמו עכשיו.`
+      : ask,
+  };
+}
+
+// The buttons under the confirmation question: several bookings at once say so
+function confirmOptions(st: TurnState): string[] | undefined {
+  const keys = pendingKeys(st);
+  if (keys.length > 1 && keys.every((k) => k.startsWith("book|"))) return ["✅ כן, לקבוע את התורים", "🔄 לבחור מועד אחר"];
+  return CONFIRM_OPTIONS[(keys[0] || "").split("|")[0]];
 }
 
 // The buttons under a confirmation question, set here and not by the model (Haim, 2026-10-23: it
@@ -895,14 +918,18 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
-        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: bookingName(args?.customer_name, st), start, minutes: input.brain.booking.slotMinutes });
-        if (!isPlaceholderName(args?.customer_name)) st.name = String(args.customer_name).trim();
+        const who = bookingName(args?.customer_name, st);
+        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: who, start, minutes: slotLength(input.brain.booking) });
+        // a second exam on the same phone may be for someone else (the wife) — the chat stays the customer's
+        if (!isPlaceholderName(args?.customer_name) && isPlaceholderName(st.name)) st.name = String(args.customer_name).trim();
+        st.done.push(`✅ קבעתי תור ל*${showSlot(res.start || start)}* על שם ${who}.`);
         // a second call in the same turn must see it as booked (above)
         if (st.customer) st.customer.upcomingExams = [...(st.customer.upcomingExams || []), { id: String(res.id || ""), start }];
         st.booked.push(start);
         return { ok: true, start, show: showSlot(res.start || start) };
       }
       const res = await deps.crm({ action: "move", via: input.channel, phone: st.phone, examId: String(args?.exam_id || ""), start });
+      st.done.push(`✅ העברתי את התור ל*${showSlot(start)}*.`);
       return { ok: true, from: res.previousStart ? showSlot(res.previousStart) : undefined, to: showSlot(start) };
     }
     case "cancel_appointment": {
@@ -912,6 +939,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (ask) return ask;
       if (test) return { ok: true, test: true, note: "שיחת בדיקה — התור לא בוטל באמת" };
       const res = await deps.crm({ action: "cancel", via: input.channel, phone: st.phone, examId: String(args?.exam_id || "") });
+      st.done.push(`🗑️ ביטלתי את התור${res.start ? ` ל*${showSlot(res.start)}*` : ""}.`);
       return { ok: true, cancelled: res.start ? showSlot(res.start) : undefined };
     }
     case "note_for_staff": {
@@ -931,7 +959,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
         return { ok: false, error: "עוד לא הועבר לצוות — אין לנו איך לחזור ללקוח. בקש בהודעה אחת, בנימוס, את מספר הנייד שלו (ואת שמו, רק אם אין לך שם), כדי שנציג יחזור אליו, ואל תבטיח עדיין שמישהו יחזור. כשייתן מספר — link_customer_phone ואז שוב note_for_staff, ורק אז אמור שנציג יחזור אליו בהקדם. options []." };
       }
       // a "yes" to the bot's question about a voice note lets it through — anything else doesn't
-      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(said)) {
+      if (isConfirmed(st, "voice") && st.userText && !SAID_YES.test(said)) {
         return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תעביר לצוות. ענה למה שכתב עכשיו." };
       }
       const text = String(args?.text || "").trim().slice(0, 1000);
@@ -945,7 +973,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       // Haim, 2026-11-08: a customer told the bot it's too far for her and won't come — he moved her
       // to "לא רלוונטי" by hand. The CRM moves the lead with "סיבה: …" (refused while an exam is booked)
       if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
-      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(st.userText.replace(/^🎤\s*/, "").trim())) {
+      if (isConfirmed(st, "voice") && st.userText && !SAID_YES.test(st.userText.replace(/^🎤\s*/, "").trim())) {
         return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תסמן. ענה למה שכתב עכשיו." };
       }
       const reason = String(args?.reason || "").trim().slice(0, 300);
@@ -1079,6 +1107,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     confirmed: "",
     pending: "",
     booked: [],
+    done: [],
     bookedEarlier: new Set((conv?.messages || []).flatMap((m: any) => (Array.isArray(m.booked) ? m.booked : []))),
     voice: false,
     userText: "",
@@ -1102,7 +1131,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   st.confirmed = lastBot?.pending || "";
   st.userText = userText;
   // a voice note the customer already confirmed we understood (or a "yes" to it) is acted on
-  st.voice = userText.startsWith("🎤") && st.confirmed !== "voice";
+  st.voice = userText.startsWith("🎤") && !isConfirmed(st, "voice");
   const today = israelNow().date;
   const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
@@ -1164,11 +1193,19 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
       finalText = "";
     }
     answer = parseBotAnswer(finalText);
+    // 2026-11-18: the booking went through but the AI then ran out of time, and the customer got "a
+    // temporary problem, passed to the staff" instead of hearing the exam is booked. What was done is
+    // said in fixed words, and a booking still waiting for the customer's "yes" is asked about.
+    if (timing.error && st.done.length && !comment) {
+      const asks = pendingKeys(st).filter((k) => k.startsWith("book|")).map((k) => `לקבוע גם תור ל*${showSlot(k.slice(5))}*?`);
+      answer = { reply: [...st.done, ...asks].join("\n"), options: [], images: [] };
+      timing.recovered = true;
+    }
     if (!answer.reply && !comment) answer.reply = "סליחה, לא הצלחתי לענות כרגע. אפשר לנסות שוב, או להשאיר מספר ונחזור אליך.";
   }
   // a late answer opens with a fixed apology line, set here and not by the model (Haim, 2026-11-15)
   if (input.late && answer.reply && !timing.error) answer.reply = `${LATE_APOLOGY}\n\n${answer.reply}`;
-  if (st.pending) answer.options = CONFIRM_OPTIONS[st.pending.split("|")[0]] || answer.options;
+  if (st.pending) answer.options = confirmOptions(st) || answer.options;
   answer.reply = tidyText(answer.reply);
   // Facebook shows *stars* as they are; a comment has no buttons and no pictures (Haim, 2026-11-02)
   if (input.channel === "fb_comment" || input.channel === "messenger") answer.reply = answer.reply.replace(/\*([^*\n]+)\*/g, "$1").replace(/\*/g, "");
@@ -1384,7 +1421,7 @@ export function voicePromptTemplate(agent: any, brain: BotBrain, lessons: BotLes
 // appointment = closing minus one appointment's length, and the next 14 days that differ (events,
 // holidays). Added at the end of the agent's own prompt for new-lead calls, and in voicePrompt.
 export function voiceHoursSection(brain: Pick<BotBrain, "booking" | "events" | "closedOnHolidays">): string {
-  const step = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+  const step = Math.max(10, Number(brain.booking.slotMinutes) || DEFAULT_SLOT_MINUTES);
   const describe = (spec: string) => {
     const rs = ranges(spec).filter(([a, b]) => a + step <= b);
     if (!rs.length) return "";
@@ -1467,7 +1504,7 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
       else if (tod === "afternoon") slots = slots.filter((s) => hour(s) >= 12);
       // Free time as ranges per day, not single times (Haim, 2026-10-26: "say it's free between 12 and
       // 4, I say 2, and it takes the nearest slot and asks to confirm") — consecutive slots merged
-      const len = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+      const len = Math.max(10, Number(brain.booking.slotMinutes) || DEFAULT_SLOT_MINUTES);
       const freeByDay = new Map<string, [number, number][]>();
       for (const s of slots) {
         const day = s.slice(0, 10);
@@ -1515,7 +1552,7 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
       // Any free time inside the day's reception hours (Haim, 2026-10-26: the customer asked for 14:30,
       // and only the 20-minute grid's 14:20 / 14:40 were accepted) — not in the next hour, and not
       // overlapping anything on the calendar but the exam being moved itself
-      const len = Math.max(10, Number(brain.booking.slotMinutes) || 30);
+      const len = Math.max(10, Number(brain.booking.slotMinutes) || DEFAULT_SLOT_MINUTES);
       const [a, b] = [toMinutes(start.slice(11, 16)), toMinutes(start.slice(11, 16)) + len];
       const inHours = ranges(hoursFor(start.slice(0, 10))).some(([o, c]) => a >= o && b <= c);
       const now = israelNow();

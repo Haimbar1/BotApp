@@ -122,7 +122,9 @@ export interface BotConversation {
   updatedAt: string;
 }
 
-export const DEFAULT_BOOKING: BookingHours = { enabled: false, hours: {}, slotMinutes: 30, daysAhead: 14 };
+// an eye exam takes 20 minutes (2026-11-18 — the same as a booking made in the CRM)
+export const DEFAULT_SLOT_MINUTES = 20;
+export const DEFAULT_BOOKING: BookingHours = { enabled: false, hours: {}, slotMinutes: DEFAULT_SLOT_MINUTES, daysAhead: 14 };
 
 export const emptyBrain = (agentId: string): BotBrain => ({ agentId, nativeWeb: false, qa: [], booking: { ...DEFAULT_BOOKING } });
 

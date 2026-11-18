@@ -30,7 +30,7 @@ import { withSiteFrames, forgetSiteFrames, siteFramesCount, siteFramesTopic, age
 import { runBotTurn, voicePrompt, voicePromptTemplate, voiceFirstMessage, voiceHoursSection, voiceTool, VOICE_SPEECH_SECTION, VOICE_PURPOSES, normalizeIsraeliPhone, type Channel, type CrmCaller, type VoicePurpose } from "./botEngine.js";
 import { metaPayload, payloadNumber, incomingMessages, needsNoAnswer, transcribeVoice, answerToWhatsApp, sendWhatsApp, keepTyping, type IncomingWa } from "./whatsapp.js";
 import { pagePayload, incomingFacebook, postInfo, messengerName, pageName, pageAccessToken, replyToComment, messengerTyping, answerToMessenger, sendMessenger, type IncomingFb } from "./facebook.js";
-import { switchedOnAgentIds, facebookAgentIds, whatsappAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, type BotNote } from "./botStore.js";
+import { switchedOnAgentIds, facebookAgentIds, whatsappAgentIds, noteFbArrival, claimWaMessage, noteWaArrival, noteBrainFields, getBrain, saveBrain, listLessons, addLesson, updateLesson, listNotes, markNoteDone, listConversations, DEFAULT_SLOT_MINUTES, type BotNote } from "./botStore.js";
 import { extractImageCandidates, extractImagesFromScripts, mergeSiteImages, describeSiteImages, websiteImagesTopic, withWebsiteImagesTopic, type SiteImage } from "./siteImages.js";
 
 // Builds the Express app (all /api routes). Used two ways: locally / on a normal server it is
@@ -3588,7 +3588,9 @@ export async function createApp() {
       out = hardStop > 0
         ? await Promise.race([turn, new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("the turn took too long")), hardStop)))]).finally(() => clearTimeout(timer))
         : await turn;
-      if (out.timing.error) {
+      // what was done on the calendar is told in fixed words (botEngine) — the staff alert stays
+      // (no staff alert — only the card shows it)
+      if (out.timing.error && !out.timing.recovered) {
         failure = `AI: ${out.timing.error}`;
         out = { ...out, reply: WA_SORRY, options: [], images: [] };
       }
@@ -3636,7 +3638,7 @@ export async function createApp() {
         }).catch((e) => console.warn("[WA] reporting the reply to WhastAppSystem failed:", e?.message))
       ),
       noteBrainFields(String(agent.id), {
-        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(out.timing.model ? { model: out.timing.model } : {}), ...(failure ? { error: failure.slice(0, 300) } : {}), ...(delivered ? {} : { nothingSent: true }) },
+        lastWaTiming: { at: new Date().toISOString(), total: out.timing.total + sendMs + (transcribeMs || 0), transcribe: transcribeMs, customer: out.timing.customer, ai: out.timing.ai, tools: out.timing.tools, send: sendMs, ...(out.timing.model ? { model: out.timing.model } : {}), ...(failure ? { error: failure.slice(0, 300) } : out.timing.recovered ? { error: `AI: ${out.timing.error} — הפעולה ביומן בוצעה, הלקוח קיבל אישור קבוע`.slice(0, 300) } : {}), ...(delivered ? {} : { nothingSent: true }) },
       }).catch(() => {}),
     ]);
     return { sent: delivered, failure };
@@ -4037,7 +4039,7 @@ export async function createApp() {
       booking: {
         enabled: !!b.booking?.enabled,
         hours,
-        slotMinutes: Math.min(Math.max(Number(b.booking?.slotMinutes) || 30, 10), 240),
+        slotMinutes: Math.min(Math.max(Number(b.booking?.slotMinutes) || DEFAULT_SLOT_MINUTES, 10), 240),
         daysAhead: Math.min(Math.max(Number(b.booking?.daysAhead) || 14, 1), 60),
       },
       voiceNotes: String(b.voiceNotes || "").slice(0, 5000),
