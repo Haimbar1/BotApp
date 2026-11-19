@@ -9,7 +9,14 @@ interface SwitcherModule {
   base_url: string;
 }
 
-const ICONS: Record<string, string> = { CRM: "📇", WHATSAPP: "💬", TASKS: "✅", BOTAPP: "🤖" };
+const ICONS: Record<string, string> = { CRM: "📇", WHATSAPP: "💬", TASKS: "✅", BOTAPP: "🤖", SITE: "🌐", PRICING: "🧮", PURCHASING: "🛒", ONBOARDING: "🚀", TASKSYSTEM: "✅" };
+
+// The marketing module (organic + paid posts) - by its key, or its name if the key was typed differently.
+const isMarketingModule = (m: { key: string; name?: string | null }) =>
+  m.key.toLowerCase() === "marketing" || /פרסום|פירסום|שיווק/.test(m.name || "");
+
+// The label without the word "מערכת" (Haim, 2026-11-19); the full name stays as the tooltip.
+const shortName = (name: string) => name.replace(/מערכת\s*/g, "").trim() || name;
 
 export const AppSwitcher: React.FC<{ token: string | null }> = ({ token }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -103,8 +110,14 @@ export const AppSwitcher: React.FC<{ token: string | null }> = ({ token }) => {
                   title={m.name}
                   className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
                 >
-                  <span className="text-2xl">{ICONS[m.key.toUpperCase()] || m.icon || "🔗"}</span>
-                  <span className="text-[10px] text-slate-300 truncate w-full text-center">{m.name}</span>
+                  {isMarketingModule(m) ? (
+                    <span className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg>
+                    </span>
+                  ) : (
+                    <span className="text-2xl">{ICONS[m.key.toUpperCase()] || m.icon || "🔗"}</span>
+                  )}
+                  <span className="text-[10px] text-slate-300 truncate w-full text-center">{shortName(m.name)}</span>
                 </button>
               ))}
             </div>
