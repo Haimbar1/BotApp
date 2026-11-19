@@ -546,7 +546,9 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
         (web
           ? "שם — אם ידוע לך שם (מהפרופיל שמסר / מה-CRM / ממה שכתב בשיחה) אל תבקש אותו שוב; שם פרטי מספיק לקביעה. רק אם אין לך שום שם — בקש אותו. טלפון — באתר צריך את מספר הנייד לפני הקביעה: בקש רק את מה שחסר, בהודעה אחת, ואל תשאל \"לקבוע?\" באותה הודעה. כשהלקוח כותב מספר — link_customer_phone מיד, ורק אחר כך שאל \"לקבוע?\" על המועד שבחר (קריאה ל-book_appointment). אם הלקוח לחץ על \"לקבוע\" לפני שנתן מספר — בקש שוב רק את המספר, בקצרה, בלי לחזור על כל הפרטים."
           : "השם והטלפון כבר ידועים מהוואטסאפ — אל תבקש אותם (אלא אם אין שום שם אמיתי — אז רק שם).") +
-        " ב-customer_name — השם המלא הכי טוב שידוע לך."
+        " ב-customer_name — השם המלא הכי טוב שידוע לך." +
+        // Haim, 2026-11-19 — ניצה asked for a turn for יצחק next to hers
+        " תור לאדם נוסף (בן / בת זוג, ילד, חבר): לפני הקביעה בקש בהודעה אחת את השם המלא שלו ואת מספר הנייד שלו — \"כדי שנשלח לו אישור ותזכורת לפני הבדיקה\" (אם הלקוח כתב שכבר שלח את המספר למישהו בצוות — בקש אותו שוב כאן, בנימוס). ואז book_appointment עם for_other_person=true, customer_name = השם המלא שלו, person_phone = המספר. אם אין לו נייד משלו / הלקוח מבקש על המספר שלו — no_own_phone=true. כמה תורים (למשל ללקוח ולבן הזוג, זה אחרי זה) — שאלת אישור אחת על כולם (\"לקבוע לניצה ב-15:00 וליצחק ב-15:30?\") ואחרי האישור book_appointment לכל אחד. לעולם אל תכתוב \"לקבוע?\" בעצמך בלי לקרוא קודם ל-book_appointment — הקריאה היא ששואלת את שאלת האישור."
       : "",
     web && !phone && !comment
       ? '- באתר אתה לא יודע מי הלקוח. כשזה עוזר לו (קביעת / שינוי תור, בדיקת הזמנה, שאלה על הודעה שקיבל, או אחרי שעזרת בשאלה הראשונה) בקש בנימוס את מספר הנייד, למשל: "כדי שאוכל לבדוק את זה בשבילך, אפשר את מספר הנייד שלך? 🙂". כשהוא נותן מספר — קרא ל-link_customer_phone.'
@@ -613,10 +615,16 @@ const TOOLS = [
   },
   {
     name: "book_appointment",
-    description: "קובע תור ביומן הסניף. רק אחרי שהלקוח בחר מועד מתוך get_available_slots ואישר.",
+    description: "קובע תור ביומן הסניף. רק אחרי שהלקוח בחר מועד מתוך get_available_slots ואישר. תור לאדם אחר (בן משפחה / חבר) — for_other_person=true, customer_name = השם המלא שלו, person_phone = הנייד שלו (לאישור ולתזכורות), או no_own_phone=true אם אין לו נייד משלו. כמה תורים — קריאה לכל אחד.",
     parametersJsonSchema: {
       type: "object",
-      properties: { start: { type: "string", description: "YYYY-MM-DDTHH:mm" }, customer_name: { type: "string" } },
+      properties: {
+        start: { type: "string", description: "YYYY-MM-DDTHH:mm" },
+        customer_name: { type: "string", description: "השם המלא של מי שהתור בשבילו" },
+        for_other_person: { type: "boolean", description: "התור לאדם אחר ולא ללקוח שכותב" },
+        person_phone: { type: "string", description: "הנייד של האדם האחר" },
+        no_own_phone: { type: "boolean", description: "לאדם האחר אין נייד משלו — נרשם על המספר של הלקוח" },
+      },
       required: ["start", "customer_name"],
     },
   },
@@ -697,8 +705,12 @@ interface TurnState {
   customer: any;
   notes: BotNote[];
   slotsOffered: Set<string>;
-  confirmed: string; // what the bot asked to confirm in its last message (the customer answers now)
-  pending: string; // what this answer asks the customer to confirm
+  confirmed: string; // what the bot asked to confirm in its last message (the customer answers now); several = "a;b"
+  pending: string; // what this answer asks the customer to confirm; several = "a;b" (two exams in one question)
+  lastBotText: string; // the bot's previous message as the customer saw it
+  saidYes: boolean; // this message is a "yes"
+  bookTrouble: string; // why a booking the customer said yes to didn't happen (calendar error / confirmation loop)
+  bookAsked: boolean; // a booking tool asked for missing details / offered other times — the chat goes on
   booked: string[]; // exams booked in this turn
   bookedEarlier: Set<string>; // exams this conversation booked before
   voice: boolean; // this message is a transcribed voice note
@@ -721,10 +733,30 @@ function saidAbout(city: string, st: TurnState): string {
   return (found || "").slice(0, 200);
 }
 
+const keysOf = (s: string) => (s ? s.split(";").filter(Boolean) : []);
+const isConfirmed = (st: TurnState, key: string) => keysOf(st.confirmed).includes(key);
 function needsConfirmation(st: TurnState, key: string, ask: string): any | null {
-  if (st.confirmed === key) return null;
-  st.pending = key;
+  if (isConfirmed(st, key)) return null;
+  // two exams asked in one question ("לקבוע לניצה ב-15:00 וליצחק ב-15:30?") — both wait for the one "yes"
+  if (!keysOf(st.pending).includes(key)) st.pending = [...keysOf(st.pending), key].join(";");
+  // the customer said yes to a booking and the tool still asks — the bot is going round in circles
+  if (st.saidYes && key.startsWith("book|") && keysOf(st.confirmed).some((k) => k.startsWith("book|"))) {
+    st.bookTrouble ||= "הלקוח אישר, אבל המועד שאושר לא תאם את המועד שהבוט ניסה לקבוע";
+  }
   return { ok: false, needs_confirmation: true, instruction: ask };
+}
+
+// Haim, 2026-11-19 — ניצה: the bot wrote its own "לשריין ליצחק … 26/11 בשעה 15:30? לקבוע?" without
+// calling book_appointment, she said "כן בבקשה", and the tool asked the same question again (only a
+// question the tool set counted) — she left and nothing was booked. A "yes" right after a bot message
+// that asked to book exactly this day and hour counts as the confirmation.
+function askedToBookInText(text: string, start: string): boolean {
+  if (!text || !/לקבוע|לשריין|לרשום|לתאם/.test(text)) return false;
+  const time = start.slice(11, 16);
+  const d = Number(start.slice(8, 10)), m = Number(start.slice(5, 7));
+  const hasTime = text.includes(time) || (time.startsWith("0") && text.includes(time.slice(1)));
+  const hasDate = new RegExp(`(?:^|\\D)0?${d}[./]0?${m}(?:\\D|$)`).test(text);
+  return hasTime && hasDate;
 }
 
 // The buttons under a confirmation question, set here and not by the model (Haim, 2026-10-23: it
@@ -858,13 +890,38 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
     case "reschedule_appointment": {
       const start = String(args?.start || args?.new_start || "");
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) return { ok: false, error: "מועד לא תקין" };
-      if (!st.phone) return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח (link_customer_phone)" };
-      if (!deps.crm || !input.brain.booking.enabled) return { ok: false, error: "אין גישה ליומן" };
+      // Haim, 2026-11-19: an exam for someone else (ניצה asked for יצחק) goes on that person's own mobile,
+      // so the confirmation and the reminders reach them — asked for before booking; without a mobile of
+      // their own, on the customer's number (a family on one phone)
+      const other = name === "book_appointment" && !!args?.for_other_person;
+      let bookPhone = st.phone;
+      if (other) {
+        const personName = String(args?.customer_name || "").trim();
+        const personPhone = normalizeIsraeliPhone(String(args?.person_phone || ""));
+        if (isPlaceholderName(personName) || (personName.split(/\s+/).length < 2 && !args?.no_own_phone && !personPhone)) {
+          st.bookAsked = true;
+          return { ok: false, error: `עוד לא נקבע. בקש בהודעה אחת את השם המלא של ${personName || "האדם"} ואת מספר הנייד שלו — "כדי שנשלח לו אישור ותזכורת לפני הבדיקה". אם אין לו נייד משלו — אפשר לרשום על המספר של הלקוח (no_own_phone=true).` };
+        }
+        if (!personPhone && !args?.no_own_phone) {
+          st.bookAsked = true;
+          return { ok: false, error: `עוד לא נקבע. בקש את מספר הנייד של ${personName} — "כדי שנשלח לו אישור ותזכורת לפני הבדיקה". אם אין לו נייד משלו / הלקוח מבקש לרשום על המספר שלו — קרא שוב עם no_own_phone=true.` };
+        }
+        if (personPhone) bookPhone = personPhone;
+      }
+      if (!bookPhone) {
+        st.bookAsked = true;
+        return { ok: false, error: "צריך קודם את מספר הנייד של הלקוח (link_customer_phone)" };
+      }
+      if (!deps.crm || !input.brain.booking.enabled) {
+        if (st.saidYes) st.bookTrouble ||= "אין לבוט גישה ליומן";
+        return { ok: false, error: "אין גישה ליומן" };
+      }
       // Haim, 2026-11-13: right after booking 14:30 the model called book again on the customer's next
       // click ("סוגי מסגרות"), the calendar had her own exam there, and the bot told her "14:30 is taken"
       // and offered times again. A time that is already this customer's exam is never "taken".
-      const own = ((st.customer?.upcomingExams || []) as { id: string; start: string }[]).find((x) => String(x.start || "").slice(0, 16) === start);
+      const own = other ? undefined : ((st.customer?.upcomingExams || []) as { id: string; start: string }[]).find((x) => String(x.start || "").slice(0, 16) === start);
       if (own) {
+        st.bookAsked = true;
         return {
           ok: true,
           already_booked: true,
@@ -878,31 +935,51 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       if (!freeSlots(input.brain.booking, r?.busy || [], start.slice(0, 10), 1, (d) => dayHours(input.brain, d).hours).includes(start)) {
         // busy because this conversation booked it (the CRM's exam list may lag a minute behind)
         if (st.bookedEarlier.has(start) || st.booked.includes(start)) {
+          st.bookAsked = true;
           return { ok: true, already_booked: true, show: showSlot(start), note: "התור הזה כבר נקבע ללקוח קודם בשיחה. לא נקבע שוב. אל תגיד שהמועד תפוס ואל תציע מועדים — ענה על מה שהלקוח שאל עכשיו." };
         }
+        st.bookAsked = true;
         return { ok: false, error: "המועד הזה כבר לא פנוי — הצע מועדים אחרים" };
       }
       const examId = String(args?.exam_id || "");
       const key = name === "book_appointment" ? `book|${start}` : `move|${examId}|${start}`;
       const was = st.customer?.upcomingExams?.find((x: any) => String(x.id) === examId)?.start;
+      // the bot's own words asked for exactly this, and the customer said yes
+      if (name === "book_appointment" && st.saidYes && askedToBookInText(st.lastBotText, start) && !isConfirmed(st, key)) {
+        st.confirmed = [...keysOf(st.confirmed), key].join(";");
+      }
+      const forWhom = other ? `ל${String(args?.customer_name).trim()} ` : "לך ";
       const ask = needsConfirmation(
         st,
         key,
         name === "book_appointment"
-          ? `עוד לא נקבע כלום. שאל את הלקוח: \"לקבוע לך תור ל*${showSlot(start)}*?\". הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.book.join(" / ")}). אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
+          ? `עוד לא נקבע כלום. שאל את הלקוח: \"לקבוע ${forWhom}תור ל*${showSlot(start)}*?\" (כמה תורים — הכל בשאלה אחת). הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.book.join(" / ")}). אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
           : `עוד לא הוזז כלום. שאל את הלקוח: \"להעביר את התור שלך${was ? ` מ*${showSlot(was)}*` : ""} ל*${showSlot(start)}*?\". הכפתורים נקבעים אוטומטית (${CONFIRM_OPTIONS.move.join(" / ")}). אחרי שיאשר — קרא שוב עם אותו מועד בדיוק.`
       );
       if (ask) return ask;
       if (test) return { ok: true, test: true, start, show: showSlot(start), note: "שיחת בדיקה — התור לא נרשם ביומן באמת" };
       if (name === "book_appointment") {
-        const res = await deps.crm({ action: "book", via: input.channel, phone: st.phone, name: bookingName(args?.customer_name, st), start, minutes: input.brain.booking.slotMinutes });
-        if (!isPlaceholderName(args?.customer_name)) st.name = String(args.customer_name).trim();
-        // a second call in the same turn must see it as booked (above)
-        if (st.customer) st.customer.upcomingExams = [...(st.customer.upcomingExams || []), { id: String(res.id || ""), start }];
+        const bookName = other ? String(args.customer_name).trim() : bookingName(args?.customer_name, st);
+        let res: any;
+        try {
+          res = await deps.crm({ action: "book", via: input.channel, phone: bookPhone, name: bookName, start, minutes: input.brain.booking.slotMinutes });
+        } catch (e: any) {
+          st.bookTrouble ||= `היומן לא קיבל את התור (${String(e?.message || e).slice(0, 120)})`;
+          throw e;
+        }
+        if (!other) {
+          if (!isPlaceholderName(args?.customer_name)) st.name = String(args.customer_name).trim();
+          // a second call in the same turn must see it as booked (above)
+          if (st.customer) st.customer.upcomingExams = [...(st.customer.upcomingExams || []), { id: String(res.id || ""), start }];
+        } else if (st.phone && st.phone !== bookPhone) {
+          // the one who asked sees it on their own card too
+          await deps.crm({ action: "note", via: input.channel, phone: st.phone, title: "תור לאדם נוסף", text: `לבקשת ${st.name || "הלקוח"} נקבע תור ל${bookName} (${bookPhone.replace(/^972/, "0")}) ל-${showSlot(start)}. האישור והתזכורת נשלחים לנייד שלו.` }).catch(() => {});
+        }
         st.booked.push(start);
-        return { ok: true, start, show: showSlot(res.start || start) };
+        return { ok: true, start, show: showSlot(res.start || start), ...(other ? { for: bookName, confirmation_to: args?.person_phone ? "הנייד שלו" : "הנייד של הלקוח" } : {}) };
       }
       const res = await deps.crm({ action: "move", via: input.channel, phone: st.phone, examId: String(args?.exam_id || ""), start });
+      st.booked.push(start);
       return { ok: true, from: res.previousStart ? showSlot(res.previousStart) : undefined, to: showSlot(start) };
     }
     case "cancel_appointment": {
@@ -931,7 +1008,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
         return { ok: false, error: "עוד לא הועבר לצוות — אין לנו איך לחזור ללקוח. בקש בהודעה אחת, בנימוס, את מספר הנייד שלו (ואת שמו, רק אם אין לך שם), כדי שנציג יחזור אליו, ואל תבטיח עדיין שמישהו יחזור. כשייתן מספר — link_customer_phone ואז שוב note_for_staff, ורק אז אמור שנציג יחזור אליו בהקדם. options []." };
       }
       // a "yes" to the bot's question about a voice note lets it through — anything else doesn't
-      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(said)) {
+      if (isConfirmed(st, "voice") && st.userText && !SAID_YES.test(said)) {
         return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תעביר לצוות. ענה למה שכתב עכשיו." };
       }
       const text = String(args?.text || "").trim().slice(0, 1000);
@@ -945,7 +1022,7 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       // Haim, 2026-11-08: a customer told the bot it's too far for her and won't come — he moved her
       // to "לא רלוונטי" by hand. The CRM moves the lead with "סיבה: …" (refused while an exam is booked)
       if (st.voice) return needsConfirmation(st, "voice", VOICE_ASK);
-      if (st.confirmed === "voice" && st.userText && !SAID_YES.test(st.userText.replace(/^🎤\s*/, "").trim())) {
+      if (isConfirmed(st, "voice") && st.userText && !SAID_YES.test(st.userText.replace(/^🎤\s*/, "").trim())) {
         return { ok: false, error: "הלקוח לא אישר שהבנת נכון את ההודעה הקולית — אל תסמן. ענה למה שכתב עכשיו." };
       }
       const reason = String(args?.reason || "").trim().slice(0, 300);
@@ -1000,6 +1077,42 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
     }
   }
   return { ok: false, error: "unknown tool" };
+}
+
+const BOOK_WORDS = /לקבוע|לשריין|לרשום|לתאם|להעביר את התור/;
+const STUCK_AGAIN_MS = 6 * 60 * 60 * 1000;
+
+// The customer said yes to booking / moving an exam and it didn't happen this turn (the calendar refused,
+// the tool kept asking, or the model never called it), not because a detail was missing or the time
+// was taken (then the chat goes on). → a handoff note + a CRM task for today with the story. true = done.
+async function bookingStuck(input: TurnInput, deps: TurnDeps, st: TurnState, conv: any): Promise<boolean> {
+  if (input.channel === "test" || input.channel === "fb_comment") return false;
+  const yesToBooking =
+    st.saidYes &&
+    (keysOf(st.confirmed).some((k) => /^(?:book|move)\|/.test(k)) || (BOOK_WORDS.test(st.lastBotText) && /\d{1,2}:\d{2}/.test(st.lastBotText)));
+  const reason = st.bookTrouble || (yesToBooking && !st.booked.length && !st.bookAsked ? "הלקוח אישר, אבל התור לא נקבע ביומן" : "");
+  if (!reason) return false;
+  const recently = (conv?.messages || []).some((m: any) => m.role === "bot" && m.stuck && Date.now() - Date.parse(m.at) < STUCK_AGAIN_MS);
+  if (recently) return false;
+  const quote = (t: string, n: number) => t.replace(/\s+/g, " ").trim().slice(0, n);
+  const story =
+    `⚠️ נועם לא הצליח לקבוע תור — ${reason}. ` +
+    `הלקוח כתב: "${quote(recentUserText(st), 300)}". ` +
+    (st.lastBotText ? `הבוט שאל לפני כן: "${quote(st.lastBotText, 250)}". ` : "") +
+    "צריך לחזור ללקוח ולסגור את התור ביומן.";
+  try {
+    const note = await addNote({ agentId: String(input.agent.id), botId: String(input.agent.botId || ""), sessionId: input.sessionId, channel: input.channel, phone: st.phone, name: st.name, kind: "handoff", text: story });
+    st.notes.push(note);
+    if (deps.onNote) await deps.onNote(note).catch((e) => console.warn("[BOT] onNote failed:", e?.message));
+  } catch (e: any) {
+    console.warn("[BOT] stuck note failed:", e?.message);
+  }
+  if (st.phone && deps.crm) {
+    let date = israelNow().date;
+    if (weekdayOf(date) === 6) date = addDays(date, 1);
+    await deps.crm({ action: "follow_up", via: input.channel, phone: st.phone, date, what: "לקבוע תור — הבוט לא הצליח", why: story }).catch((e: any) => console.warn("[BOT] stuck task failed:", e?.message));
+  }
+  return true;
 }
 
 // ---------- one turn ----------
@@ -1078,6 +1191,10 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
     slotsOffered: new Set(),
     confirmed: "",
     pending: "",
+    lastBotText: "",
+    saidYes: false,
+    bookTrouble: "",
+    bookAsked: false,
     booked: [],
     bookedEarlier: new Set((conv?.messages || []).flatMap((m: any) => (Array.isArray(m.booked) ? m.booked : []))),
     voice: false,
@@ -1102,7 +1219,9 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   st.confirmed = lastBot?.pending || "";
   st.userText = userText;
   // a voice note the customer already confirmed we understood (or a "yes" to it) is acted on
-  st.voice = userText.startsWith("🎤") && st.confirmed !== "voice";
+  st.voice = userText.startsWith("🎤") && !isConfirmed(st, "voice");
+  st.lastBotText = String(lastBot?.text || "");
+  st.saidYes = SAID_YES.test(userText.replace(/^🎤\s*/, "").trim());
   const today = israelNow().date;
   const firstToday = !(conv?.messages || []).some((m) => m.role === "bot" && israelDateOf(m.at) === today);
   const userMsg = msg("user", userText, input.buttonId ? { buttonId: input.buttonId } : {});
@@ -1148,6 +1267,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
           out = await runTool(String(call.name), call.args || {}, input, deps, st);
         } catch (e: any) {
           out = { ok: false, error: e?.message || "failed" };
+          if (st.saidYes && /^(?:book|reschedule)_appointment$/.test(String(call.name))) st.bookTrouble ||= `היומן לא קיבל את הפעולה (${String(e?.message || e).slice(0, 120)})`;
         }
         timing.tools.push({ name: String(call.name), ms: Date.now() - tt });
         return { functionResponse: { name: call.name, response: out, ...(call.id ? { id: call.id } : {}) } };
@@ -1168,7 +1288,17 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
   }
   // a late answer opens with a fixed apology line, set here and not by the model (Haim, 2026-11-15)
   if (input.late && answer.reply && !timing.error) answer.reply = `${LATE_APOLOGY}\n\n${answer.reply}`;
-  if (st.pending) answer.options = CONFIRM_OPTIONS[st.pending.split("|")[0]] || answer.options;
+  if (st.pending) {
+    const kinds = keysOf(st.pending).map((k) => k.split("|")[0]);
+    const n = kinds.filter((k) => k === "book").length;
+    answer.options = n > 1 ? [`✅ כן, לקבוע את ${n} התורים`, "🔄 לבחור מועדים אחרים"] : CONFIRM_OPTIONS[kinds[0]] || answer.options;
+  }
+  // Haim, 2026-11-19: a booking that got stuck goes to a person, with the whole story — the staff alert /
+  // "צריכים עזרה" (a handoff note) and a task on the lead for today. Once per conversation in 6 hours.
+  const stuck = await bookingStuck(input, deps, st, conv);
+  if (stuck && !st.pending && !/נציג|הצוות|נחזור אליך/.test(answer.reply)) {
+    answer.reply = `${answer.reply}\n\n📌 העברתי את הבקשה לצוות שלנו, ונחזור אליך בהקדם כדי לסגור את התור 🙏`;
+  }
   answer.reply = tidyText(answer.reply);
   // Facebook shows *stars* as they are; a comment has no buttons and no pictures (Haim, 2026-11-02)
   if (input.channel === "fb_comment" || input.channel === "messenger") answer.reply = answer.reply.replace(/\*([^*\n]+)\*/g, "$1").replace(/\*/g, "");
@@ -1183,6 +1313,7 @@ export async function runBotTurn(input: TurnInput, deps: TurnDeps): Promise<Turn
         ...(answer.images.length ? { images: answer.images } : {}),
         ...(st.pending ? { pending: st.pending } : {}),
         ...(st.booked.length ? { booked: st.booked } : {}),
+        ...(stuck ? { stuck: true } : {}),
       }),
     ]
   );
