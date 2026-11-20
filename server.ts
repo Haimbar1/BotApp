@@ -3718,6 +3718,113 @@ export async function createApp() {
     res.json({ success: true, phoneNumberId, mode: r.mode, answeredBy: r.mode === "native" ? who(r.agent) : null, numberBot: who(r.found), lookupError: r.lookupError || undefined });
   });
 
+  // ---- The business's approvers talking to נועם about a paid campaign (Haim, 2026-11-20) ----
+  // The marketing system (marketing.smartesek.com, server/campaignChat.ts there) holds per business a
+  // list of approvers (name + phone). Their messages to the business's WhatsApp number go there first:
+  // it says whether the message was about a campaign (`handled` - a conversation before building, a
+  // draft's "✅ מאשר להעלות", "▶️ להפעיל"...) and sends its answers itself through /api/marketing/notify
+  // below. Anything else they write is answered by the bot / n8n as usual. Voice notes aren't passed.
+  const MARKETING_URL = (process.env.MARKETING_URL || "https://marketing.smartesek.com").replace(/\/$/, "");
+  const approverCache = new Map<string, { at: number; phones: Set<string> }>();
+  const marketingToken = (tenant: string) => jwt.sign({ typ: "marketing-bot", portalTenantId: tenant }, String(process.env.SSO_SHARED_SECRET), { expiresIn: "2m" });
+  async function marketingApprovers(tenant: string): Promise<Set<string>> {
+    const cached = approverCache.get(tenant);
+    if (cached && Date.now() - cached.at < 120000) return cached.phones;
+    let phones = new Set<string>();
+    if (process.env.SSO_SHARED_SECRET) {
+      try {
+        const r = await fetch(`${MARKETING_URL}/api/bot/approvers`, { headers: { "x-bot-token": marketingToken(tenant) }, signal: AbortSignal.timeout(3000) });
+        const d: any = await r.json().catch(() => ({}));
+        phones = new Set((Array.isArray(d?.phones) ? d.phones : []).map((p: any) => String(p)));
+      } catch (e: any) {
+        console.warn("[WA] reading the marketing approvers failed:", e?.message);
+      }
+    }
+    approverCache.set(tenant, { at: Date.now(), phones });
+    return phones;
+  }
+  // the ids of the messages the marketing system took (not answered by the bot / n8n)
+  async function handleOwnerMessages(agent: any, messages: IncomingWa[], claimed: Set<string>, deadline: number): Promise<string[]> {
+    const tenant = agentTenant(agent);
+    if (!tenant) return [];
+    const candidates = messages.filter((m) => m.text && !needsNoAnswer(m) && !claimed.has(m.id));
+    if (!candidates.length) return [];
+    const approvers = await marketingApprovers(tenant);
+    const taken: string[] = [];
+    for (const m of candidates) {
+      if (!approvers.has(String(m.from).replace(/\D/g, "").slice(-9))) continue;
+      if (!(await claimWaMessage(`mk_${m.id}`))) { taken.push(m.id); continue; } // Meta re-delivered it
+      try {
+        const r = await fetch(`${MARKETING_URL}/api/bot/owner-message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-bot-token": marketingToken(tenant) },
+          body: JSON.stringify({ phone: m.from, name: m.name, text: m.text, buttonId: m.buttonId }),
+          signal: AbortSignal.timeout(Math.max(3000, deadline - Date.now() - 3000)),
+        });
+        const d: any = await r.json().catch(() => ({}));
+        if (d?.handled) taken.push(m.id);
+      } catch (e: any) {
+        // still working (building a draft / uploading): it sends its answer itself when done
+        if (e?.name === "TimeoutError") taken.push(m.id);
+        else console.warn("[WA] the marketing system didn't answer:", e?.message);
+      }
+    }
+    return taken;
+  }
+
+  // POST /api/marketing/notify { phone, messages: [{ text, buttons?: [{ id, title }] }] } — the marketing
+  // system's messages to an approver, from the business's WhatsApp number (x-marketing-token: JWT with
+  // SSO_SHARED_SECRET, typ 'marketing-notify', portalTenantId). Free messages only: Meta delivers them
+  // inside 24h of the approver's last message (the marketing system sends its template otherwise).
+  app.post("/api/marketing/notify", async (req: any, res: any) => {
+    let tenant = "";
+    try {
+      const c: any = jwt.verify(String(req.headers["x-marketing-token"] || ""), String(process.env.SSO_SHARED_SECRET || ""));
+      if (c?.typ === "marketing-notify" && c.portalTenantId) tenant = String(c.portalTenantId);
+    } catch {
+      /* refused below */
+    }
+    if (!tenant || !process.env.SSO_SHARED_SECRET) return res.status(401).json({ success: false, error: "invalid-token" });
+    const to = String(req.body?.phone || "").replace(/\D/g, "");
+    const messages: { text: string; buttons?: { id: string; title: string }[] }[] = Array.isArray(req.body?.messages) ? req.body.messages.slice(0, 5) : [];
+    if (to.length < 11 || !messages.length) return res.json({ success: false, error: "missing phone / messages" });
+    // the business's bot with a WhatsApp connection (an active one first)
+    let sender: { agent: any; token: string; phoneNumberId: string } | null = null;
+    for (const a of readAgents().filter((x: any) => agentTenant(x) === tenant).sort((x: any, y: any) => Number(isStopped(x)) - Number(isStopped(y)))) {
+      const cfg = await effectiveWhatsappConfig(a).catch(() => null);
+      const token = String(cfg?.systemUserAccessToken || "").trim();
+      const phoneNumberId = String(cfg?.phoneNumberId || "").trim();
+      if (token && phoneNumberId) { sender = { agent: a, token, phoneNumberId }; break; }
+    }
+    if (!sender) return res.json({ success: false, error: "לעסק אין חיבור וואטסאפ בבוט" });
+    const base = { messaging_product: "whatsapp", recipient_type: "individual", to };
+    const sent: { text: string; messageId?: string }[] = [];
+    try {
+      for (const m of messages) {
+        const text = String(m.text || "").trim();
+        const buttons = (Array.isArray(m.buttons) ? m.buttons : []).slice(0, 3).map((b) => ({ type: "reply", reply: { id: String(b.id).slice(0, 200), title: String(b.title).slice(0, 20) } }));
+        if (!buttons.length || text.length > 1024) {
+          if (text) sent.push({ text, messageId: await sendWhatsApp(sender.phoneNumberId, sender.token, { ...base, type: "text", text: { body: text.slice(0, 4096) } }) });
+        }
+        if (buttons.length) {
+          const body = text.length > 1024 || !text ? "מה עושים?" : text;
+          sent.push({
+            text: `${text.length > 1024 ? "מה עושים?" : text}\n${buttons.map((b) => `• ${b.reply.title}`).join("\n")}`,
+            messageId: await sendWhatsApp(sender.phoneNumberId, sender.token, { ...base, type: "interactive", interactive: { type: "button", body: { text: body }, action: { buttons } } }),
+          });
+        }
+      }
+    } catch (e: any) {
+      console.error("[marketing notify] sending failed:", e?.message);
+      return res.json({ success: false, error: `Meta: ${e?.message || e}`, sent: sent.length });
+    }
+    // in WhastAppSystem's inbox like the bot's own answers
+    await Promise.all(sent.map(({ text, messageId }) =>
+      postJson(`${WA_SYSTEM_URL}/api/webhook`, { type: "bot_reply", phone: to, text, phoneNumberId: sender!.phoneNumberId, ...(messageId ? { messageId } : {}), decided: true })
+        .catch((e) => console.warn("[marketing notify] reporting to WhastAppSystem failed:", e?.message))));
+    res.json({ success: true, sent: sent.length });
+  });
+
   app.post("/api/webhooks/whatsapp", async (req: any, res: any) => {
     // the answer must be out well before Vercel's 60s cut-off (vercel.json maxDuration)
     const deadline = Date.now() + 40000;
@@ -3732,6 +3839,10 @@ export async function createApp() {
     const arrival = agent && messages.length ? noteWaArrival(String(agent.id)).catch(() => {}) : Promise.resolve();
     // first: what an app took isn't answered by the bot (quick for a number no app has)
     const claimed = await forwardToApps(payload, phoneNumberId).catch(() => new Set<string>());
+    // an approver writing about a paid campaign: the marketing system's, not the bot's (even a stopped bot's number)
+    if (agent && messages.length) {
+      for (const id of await handleOwnerMessages(agent, messages, claimed, deadline).catch(() => [] as string[])) claimed.add(id);
+    }
     const allClaimed = messages.length > 0 && messages.every((m) => claimed.has(m.id));
 
     // WhastAppSystem still gets the copy of a stopped bot's messages, so the staff see them in the inbox
