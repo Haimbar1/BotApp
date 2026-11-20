@@ -254,6 +254,14 @@ function SiteFramesLine({ status }: { status?: AgentConfig["framesStatus"] }) {
   );
 }
 
+// The real WhatsApp number a bot answers on (Meta's phoneNumberId). "whatsappInstance" is only a
+// label ("Generic Bot" on almost every bot), so it must not decide which bots clash.
+const whatsappNumberOf = (a?: AgentConfig) => String(a?.whatsappConfig?.phoneNumberId || "").trim();
+const sameWhatsappNumber = (a: AgentConfig, b: AgentConfig) => {
+  const n = whatsappNumberOf(a);
+  return !!n && n === whatsappNumberOf(b);
+};
+
 export default function App() {
   // Language & Translation states
   const [language, setLanguage] = useState<Language>(() => {
@@ -3745,13 +3753,14 @@ ${videos || "(לא הוגדר)"}
 
     const { updatedList } = (() => {
       const targetAgent = updated.find(a => a.id === activeId);
-      if (!targetAgent || targetAgent.status !== "Active" || !targetAgent.whatsappInstance) {
+      // Only turning a bot on can turn another one off, and only one that answers on the same
+      // WhatsApp number (any other field change leaves the other bots alone)
+      if (field !== "status" || value !== "Active" || !targetAgent || targetAgent.status !== "Active" || !whatsappNumberOf(targetAgent)) {
         return { updatedList: updated };
       }
-      const currentInstance = targetAgent.whatsappInstance;
       const otherDeact: AgentConfig[] = [];
       const resList = updated.map(agent => {
-        if (agent.id !== activeId && agent.whatsappInstance === currentInstance && agent.status === "Active") {
+        if (agent.id !== activeId && sameWhatsappNumber(agent, targetAgent) && agent.status === "Active") {
           const deact = { ...agent, status: "Not Active" };
           otherDeact.push(deact);
           return deact;
@@ -4168,7 +4177,7 @@ ${videos || "(לא הוגדר)"}
     }
   };
 
-  // Toggle active / not active status for an agent with WhatsApp Instance mutual exclusivity rule
+  // Toggle active / not active status for an agent (one active bot per WhatsApp number)
   const toggleAgentStatus = (targetId: string) => {
     let updatedAgentToSync: AgentConfig | undefined;
     let otherDeactivatedAgents: AgentConfig[] = [];
@@ -4178,7 +4187,6 @@ ${videos || "(לא הוגדר)"}
 
     const oldStatus = currentAgent.status || "Not Active";
     const newStatus = oldStatus === "Active" ? "Not Active" : "Active";
-    const currentInstance = currentAgent.whatsappInstance;
 
     const updated = agents.map(agent => {
       if (agent.id === targetId) {
@@ -4186,8 +4194,8 @@ ${videos || "(לא הוגדר)"}
         updatedAgentToSync = u;
         return u;
       } else {
-        // Enforce same WhatsApp Instance unique Active limit
-        if (newStatus === "Active" && currentInstance && agent.whatsappInstance === currentInstance && agent.status === "Active") {
+        // Only one active bot per real WhatsApp number (phoneNumberId)
+        if (newStatus === "Active" && sameWhatsappNumber(agent, currentAgent) && agent.status === "Active") {
           const deact = { ...agent, status: "Not Active" };
           otherDeactivatedAgents.push(deact);
           return deact;
@@ -6946,7 +6954,7 @@ ${videos || "(לא הוגדר)"}
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-500 leading-normal">
-                  בוט במצב <strong>פעיל</strong> יגיב ללקוחות. שים לב שלא ניתן להפעיל שני בוטים על אותו WhatsApp Instance בו זמנית.
+                  בוט במצב <strong>פעיל</strong> יגיב ללקוחות. שים לב שלא ניתן להפעיל שני בוטים על אותו מספר WhatsApp בו זמנית — הפעלת בוט תכבה בוט אחר שמחובר לאותו מספר.
                 </p>
               </div>
 
