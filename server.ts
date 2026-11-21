@@ -3786,7 +3786,7 @@ export async function createApp() {
     }
     if (!tenant || !process.env.SSO_SHARED_SECRET) return res.status(401).json({ success: false, error: "invalid-token" });
     const to = String(req.body?.phone || "").replace(/\D/g, "");
-    const messages: { text: string; buttons?: { id: string; title: string }[] }[] = Array.isArray(req.body?.messages) ? req.body.messages.slice(0, 5) : [];
+    const messages: { text: string; buttons?: { id: string; title: string }[]; list?: { button: string; rows: { id: string; title: string; description?: string }[] } }[] = Array.isArray(req.body?.messages) ? req.body.messages.slice(0, 5) : [];
     if (to.length < 11 || !messages.length) return res.json({ success: false, error: "missing phone / messages" });
     // the business's bot with a WhatsApp connection (an active one first)
     let sender: { agent: any; token: string; phoneNumberId: string } | null = null;
@@ -3802,6 +3802,24 @@ export async function createApp() {
     try {
       for (const m of messages) {
         const text = String(m.text || "").trim();
+        // a list (up to 10 options - the approvers' question menu, 2026-11-21)
+        const rows = (Array.isArray(m.list?.rows) ? m.list!.rows : []).slice(0, 10)
+          .map((r) => ({ id: String(r.id).slice(0, 200), title: String(r.title).slice(0, 24), ...(r.description ? { description: String(r.description).slice(0, 72) } : {}) }));
+        if (rows.length) {
+          let body = text;
+          if (text.length > 1024) {
+            sent.push({ text, messageId: await sendWhatsApp(sender.phoneNumberId, sender.token, { ...base, type: "text", text: { body: text.slice(0, 4096) } }) });
+            body = "מה עוד לבדוק?";
+          }
+          sent.push({
+            text: `${body}\n${rows.map((r) => `• ${r.title}`).join("\n")}`,
+            messageId: await sendWhatsApp(sender.phoneNumberId, sender.token, {
+              ...base, type: "interactive",
+              interactive: { type: "list", body: { text: body || "מה עוד לבדוק?" }, action: { button: String(m.list?.button || "אפשרויות").slice(0, 20), sections: [{ title: "אפשרויות", rows }] } },
+            }),
+          });
+          continue;
+        }
         const buttons = (Array.isArray(m.buttons) ? m.buttons : []).slice(0, 3).map((b) => ({ type: "reply", reply: { id: String(b.id).slice(0, 200), title: String(b.title).slice(0, 20) } }));
         if (!buttons.length || text.length > 1024) {
           if (text) sent.push({ text, messageId: await sendWhatsApp(sender.phoneNumberId, sender.token, { ...base, type: "text", text: { body: text.slice(0, 4096) } }) });
