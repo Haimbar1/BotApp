@@ -1372,7 +1372,9 @@ export async function createApp() {
         nativeWhatsapp: false,
         nativeFacebook: false,
         qa: (brain.qa || []).map((q) => ({ ...q })),
-        booking: { ...brain.booking, hours: { ...(brain.booking?.hours || {}) } },
+        // the calendar link is the branch's own (like the special days) — a copy would send the new
+        // branch's Facebook customers to the source's calendar
+        booking: { ...brain.booking, hours: { ...(brain.booking?.hours || {}) }, link: "" },
         events: [],
         ...(brain.closedOnHolidays !== undefined ? { closedOnHolidays: brain.closedOnHolidays } : {}),
         ...(brain.voiceNotes ? { voiceNotes: brain.voiceNotes } : {}),
@@ -4190,6 +4192,7 @@ export async function createApp() {
         hours,
         slotMinutes: Math.min(Math.max(Number(b.booking?.slotMinutes) || 30, 10), 240),
         daysAhead: Math.min(Math.max(Number(b.booking?.daysAhead) || 14, 1), 60),
+        link: /^https?:\/\/\S+$/i.test(String(b.booking?.link || "").trim()) ? String(b.booking.link).trim().slice(0, 500) : "",
       },
       voiceNotes: String(b.voiceNotes || "").slice(0, 5000),
       events: (Array.isArray(b.events) ? b.events : [])

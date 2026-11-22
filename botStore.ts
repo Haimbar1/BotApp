@@ -21,6 +21,9 @@ export interface BookingHours {
   hours: Record<string, string>;
   slotMinutes: number;
   daysAhead: number;
+  // the branch's own self-booking page (Cal.com / the site's calendar) — Facebook customers get it
+  // (Haim, 2026-11-22: Pardes Hanna's Facebook bot quoted old hours instead of sending the calendar)
+  link?: string;
 }
 
 // A day or days that aren't like the usual week (Haim, 2026-10-23): aid days out of the branch, a

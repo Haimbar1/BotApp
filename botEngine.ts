@@ -418,6 +418,44 @@ export const withoutEventDates = (text: string) =>
 // answer "are you open on…?" and mention what's relevant.
 const EVENTS_AHEAD = 120;
 const HOLIDAYS_AHEAD = 60;
+// Facebook (comments + Messenger) — Haim, 2026-11-22: Pardes Hanna's Facebook bot quoted hours from
+// the prompt (copied from another branch / out of date) and gave no way to book. The hours here are
+// the screen's booking hours (the same the calendar and the WhatsApp bot use), and anyone who wants
+// an appointment gets the branch's own calendar link (brain.booking.link).
+function facebookBookingSection(brain: BotBrain, today: string, comment: boolean, bookingOn: boolean): string {
+  const describe = (spec: string) =>
+    ranges(spec)
+      .map(([a, b]) => `${fromMinutes(a)}–${fromMinutes(b)}`)
+      .join(", ");
+  const hasHours = Object.values(brain.booking.hours || {}).some((h) => ranges(h).length);
+  const link = String(brain.booking.link || "").trim();
+  if (!hasHours && !link) return "";
+  const lines = ["\n# שעות קבלה לבדיקות וקישור ליומן (מהמערכת — גוברים על כל שעה או קישור לקביעת תור שכתובים בשכל)"];
+  if (hasHours) {
+    lines.push(...DAY_NAMES.map((name, i) => `- יום ${name}: ${describe(brain.booking.hours[String(i)] || "") || "אין קבלה"}`));
+    const special: string[] = [];
+    for (let i = 0; i < 14; i++) {
+      const date = addDays(today, i);
+      const d = dayHours(brain, date);
+      const usual = brain.booking.hours[String(weekdayOf(date))] || "";
+      if (d.hours === usual && !d.why) continue;
+      special.push(`- ${showDay(date)}${d.why ? ` (${d.why})` : ""}: ${describe(d.hours) || "סגור"}`);
+    }
+    if (special.length) lines.push("ימים בשבועיים הקרובים שבהם השעות שונות:", ...special);
+    lines.push("- כשהלקוח שואל על שעות / ימי קבלה — ענה רק לפי השעות האלה, לא לפי שעות אחרות שכתובות בשכל.");
+  }
+  if (link) {
+    lines.push(
+      comment
+        ? `- מי שרוצה לקבוע / לתאם תור, או שואל מתי אפשר להגיע — כתוב בתגובה את הקישור ליומן לקביעת תור: ${link} (אפשר להוסיף שאפשר גם לשלוח לנו הודעה פרטית במסנג'ר).`
+        : `- כשהלקוח רוצה לקבוע / לתאם תור — כתוב בתוך reply את הקישור ליומן לקביעת תור עצמית: ${link}` +
+            (bookingOn ? " — ובנוסף הצע לתאם איתו כאן בצ'אט (ההוראה הזו גוברת על ההוראה לא להסתפק בקישור)." : ".")
+    );
+    lines.push("- השתמש רק בקישור הזה לקביעת תור — לא בקישור אחר לקביעת תור שכתוב בשכל.");
+  }
+  return lines.join("\n");
+}
+
 function eventsSection(brain: BotBrain, today: string): string {
   const until = addDays(today, EVENTS_AHEAD);
   const span = (e: BotEvent) => (e.to && e.to !== e.from ? `${showDay(e.from)} עד ${showDay(e.to)}` : showDay(e.from));
@@ -520,6 +558,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
       ? `\n# הפוסט / המודעה שעליהם הלקוח הגיב\n«${input.fbContext.postText.slice(0, 1500)}»\nהתגובה שלו היא על זה (למשל "כמה זה עולה?", "פרטים", "עד מתי?") — ענה בהקשר הזה בלי לשאול על מה הוא מדבר.`
       : "",
     eventsSection(input.brain, now.date),
+    comment || messenger ? facebookBookingSection(input.brain, now.date, comment, bookingOn) : "",
     input.late
       ? `\n# תשובה באיחור\nהלקוח כתב ב-${showSlot(`${israelDateOf(input.late.since)}T${new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(input.late.since))}`)} ולא קיבל תשובה בגלל תקלה טכנית אצלנו. הודעת הלקוח למטה היא כל מה שכתב מאז. שורת התנצלות על העיכוב כבר נוספת מעל התשובה שלך — אל תתנצל שוב ואל תפתח בברכה ארוכה; ענה ישר עניינית על מה שכתב. אם ביקש משהו שתלוי בזמן (למשל תור להיום) — בדוק מחדש מה עוד אפשרי עכשיו.`
       : "",
@@ -537,7 +576,9 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     "- ענה בעברית, קצר, חם ואנושי, בסגנון שבשכל. אל תמציא מידע שלא כתוב כאן; כשלא יודעים — אמור בכנות שאין לך את המידע כרגע. אל תכתוב בתשובה הצעה לפנות לנציג / שנציג יחזור אליו — רק הוסף ל-options את \"🙋 לדבר עם נציג\", והלקוח יבחר אם לבקש.",
     "- השתמש במה שאתה יודע על הלקוח: פנה בשמו, ואם יש לו הזמנה פתוחה / תור קרוב / קמפיין שקיבל — התייחס לזה כשזה רלוונטי, גם לפני שהוא שואל.",
     comment
-      ? "- תגובה פומבית בפייסבוק (Haim: עונים על כל תגובה, רק בתגובה עצמה): ענה קצר — עד 2–3 שורות — ולעניין, על מה שנשאל. אין כאן תפריט וכפתורים: אל תכתוב \"אפשר לבחור מהתפריט\" או משהו דומה, ו-options תמיד []. אל תבקש מספר טלפון או פרטים אישיים ואל תכתוב פרטים אישיים של הלקוח (תורים, רכישות) — כולם רואים. אי אפשר לקבוע / לשנות תור בתגובה: מי שרוצה לתאם, לקבל הצעה אישית או לדבר עם מישהו — הזמן אותו לשלוח לנו הודעה פרטית במסנג'ר (או בוואטסאפ, אם המספר כתוב בשכל). תגובה שהיא רק תיוג של חבר, אימוג'י, \"👍\" או מילה כמו \"מהמם\" — ענה בתודה קצרה וחמה (למשל \"תודה רבה! 🙏\"), בלי ברכת פתיחה ארוכה."
+      ? "- תגובה פומבית בפייסבוק (Haim: עונים על כל תגובה, רק בתגובה עצמה): ענה קצר — עד 2–3 שורות — ולעניין, על מה שנשאל. אין כאן תפריט וכפתורים: אל תכתוב \"אפשר לבחור מהתפריט\" או משהו דומה, ו-options תמיד []. אל תבקש מספר טלפון או פרטים אישיים ואל תכתוב פרטים אישיים של הלקוח (תורים, רכישות) — כולם רואים. אי אפשר לקבוע / לשנות תור בתגובה: מי שרוצה לתאם, לקבל הצעה אישית או לדבר עם מישהו — הזמן אותו לשלוח לנו הודעה פרטית במסנג'ר (או בוואטסאפ, אם המספר כתוב בשכל)" +
+        (String(input.brain.booking.link || "").trim() ? ", ולקביעת תור — כתוב גם את הקישור ליומן מ\"שעות קבלה לבדיקות וקישור ליומן\"" : "") +
+        ". תגובה שהיא רק תיוג של חבר, אימוג'י, \"👍\" או מילה כמו \"מהמם\" — ענה בתודה קצרה וחמה (למשל \"תודה רבה! 🙏\"), בלי ברכת פתיחה ארוכה."
       : "",
     // Haim, 2026-11-13: on the website it asked "your full name and phone" though it knew her name,
     // asked "לקבוע?" in the same message before it had the phone, and asked for the phone 3 times

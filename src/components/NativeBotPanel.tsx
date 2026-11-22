@@ -20,7 +20,7 @@ interface Brain {
   lastFbMessageAt?: string;
   lastFbError?: { at: string; what: string; message: string };
   qa: Qa[];
-  booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number };
+  booking: { enabled: boolean; hours: Record<string, string>; slotMinutes: number; daysAhead: number; link?: string };
   voiceNotes?: string;
   autofilledAt?: string;
   events?: BotEvent[];
@@ -353,6 +353,19 @@ export default function NativeBotPanel({ agentId, request, stopped = false }: { 
             <input type="number" className={`${input} w-20`} value={brain.booking.daysAhead} onChange={(e) => edit({ booking: { ...brain.booking, daysAhead: Number(e.target.value) } })} />
           </label>
         </div>
+        <label className="flex flex-col gap-1 text-[11px] text-slate-300">
+          🔗 קישור ליומן לקביעת תור עצמית (של הסניף הזה)
+          <input
+            className={input}
+            dir="ltr"
+            value={brain.booking.link || ""}
+            placeholder="https://cal.com/..."
+            onChange={(e) => edit({ booking: { ...brain.booking, link: e.target.value } })}
+          />
+        </label>
+        <p className="text-[10.5px] text-slate-500">
+          בפייסבוק (תגובות ומסנג'ר) הבוט עונה על שעות לפי השעות כאן (לא לפי מה שכתוב בשכל), ומי שרוצה לקבוע תור מקבל את הקישור הזה.
+        </p>
       </div>
 
       <CalendarSeen agentId={agentId} request={request} />
