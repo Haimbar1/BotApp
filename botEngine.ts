@@ -1614,6 +1614,33 @@ export function hebrewDate(date: string): string {
 // "ביום רביעי, עשרים ושמונה באוקטובר, בשתיים וחצי בצהריים"
 const spokenSlot = (s: string) => `ב${hebrewDate(s.slice(0, 10))}, ב${hebrewTime(s.slice(11, 16))}`;
 
+// Events on `day` that look like exams (timed, ≤ 90 minutes) and aren't inside the day's booking hours —
+// the calendar took bookings the bot's hours say can't be. "HH:MM–HH:MM" each.
+export function hoursMismatch(busy: { start: string; end: string }[], day: string, hours: string): string[] {
+  const rs = ranges(hours);
+  return busy
+    .filter((x) => x.start.startsWith(day) && x.start.length > 10 && x.end.length > 10)
+    .map((x) => ({ a: toMinutes(x.start.slice(11, 16)), b: x.end.startsWith(day) ? toMinutes(x.end.slice(11, 16)) : 24 * 60 }))
+    .filter(({ a, b }) => b > a && b - a <= 90 && !rs.some(([o, c]) => a >= o && b <= c))
+    .map(({ a, b }) => `${fromMinutes(a)}–${fromMinutes(b)}`);
+}
+
+// Once per business and day asked (per instance): a 🐞 note on the caller's lead — the CRM puts it in the
+// problem log and pushes it to the super-admins. Never waits / fails the call.
+const mismatchReported = new Map<string, number>();
+function reportHoursMismatch(crm: CrmCaller, phone: string, day: string, hours: string, found: string[]) {
+  const key = `${day}|${hours}|${found.join(",")}`; // the exams found tell two businesses apart
+  const now = Date.now();
+  for (const [k, at] of mismatchReported) if (now - at > 6 * 3600000) mismatchReported.delete(k);
+  if (!phone || mismatchReported.has(key)) return;
+  mismatchReported.set(key, now);
+  const text =
+    `🐞 שעות הקבלה של הבוט החכם לא תואמות את היומן: ב${showDay(day)} מוגדר בבוט "${hours.trim() || "אין קבלה"}", ` +
+    `אבל ביומן יש תורים ${found.slice(0, 6).join(", ")}. הלקוח ביקש את היום הזה, ונאמר לו שנציג יחזור לתאם. ` +
+    `לתקן ב-BotApp ← הבוט ← "שעות לקביעת תורים".`;
+  crm({ action: "note", via: "voice", phone, title: "🐞 תקלה בבוט — שעות קבלה לא תואמות ליומן", text, important: true }).catch(() => {});
+}
+
 export async function voiceTool(name: string, args: any, brain: BotBrain, crm: CrmCaller): Promise<any> {
   const phone = normalizeIsraeliPhone(args?.phone);
   const hoursFor = (d: string) => dayHours(brain, d).hours;
@@ -1667,6 +1694,22 @@ export async function voiceTool(name: string, args: any, brain: BotBrain, crm: C
         }
       }
       const closed = asked && !ranges(hoursFor(asked)).length ? dayHours(brain, asked).why || "אין קבלה ביום הזה" : "";
+      // The booking hours vs the calendar (Haim, 2026-11-23 — פרדס חנה's smart bot had no Thursday hours,
+      // and נועה told a customer Thursday was full while it was nearly empty; Cal.com had taken exams
+      // that day): exam-length events on the asked day outside the bot's hours = the hours are wrong,
+      // not the day full. Not for a day closed on purpose (a closure event / a holiday — `why`).
+      const mismatch = asked && !dayHours(brain, asked).why ? hoursMismatch(r.busy || [], asked, hoursFor(asked)) : [];
+      if (mismatch.length) {
+        reportHoursMismatch(crm, phone, asked, hoursFor(asked), mismatch);
+        if (!(freeByDay.get(asked) || []).length) {
+          return {
+            ok: false,
+            hours_mismatch: true,
+            say_instead: "רגע, את היום הזה צריך לבדוק מול הצוות — נציג יחזור בהקדם לתאם מועד ביום הזה. התור הקיים נשאר בינתיים.",
+            how_to_say: "לא להגיד שאין מקום ביום הזה. להגיד שנציג יחזור לתאם, ולהשאיר את התור הקיים.",
+          };
+        }
+      }
       // what to say is ready in Hebrew words; slot_code is only for move_appointment — never said
       return {
         ok: true,
