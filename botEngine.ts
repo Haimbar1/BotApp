@@ -149,8 +149,12 @@ function greetingContext(now: { date: string; time: string; weekday: number }): 
 
 // Markdown the model sometimes writes → WhatsApp style (also what the website widget shows):
 // "* item" / "- item" lines → "• item", **bold** → *bold*, "* bold *" → "*bold*"
+// Hour ranges "10:00 - 15:00" / "10:00–15:00" → "10:00-15:00": with spaces or a long dash a Hebrew
+// line shows them reversed ("15:00 - 10:00"); a plain hyphen with no spaces keeps them in order
+// (Haim, 2026-11-25).
 export function tidyText(text: string): string {
   return String(text || "")
+    .replace(/(\d{1,2}:\d{2})[ \t]*[-–—][ \t]*(?=\d{1,2}:\d{2})/g, "$1-")
     .replace(/\*\*(.+?)\*\*/g, "*$1*")
     .split("\n")
     .map((line) => line.replace(/^(\s*)[*\-]\s+(?=\S)/, "$1• "))
@@ -425,7 +429,7 @@ const HOLIDAYS_AHEAD = 60;
 function facebookBookingSection(brain: BotBrain, today: string, comment: boolean, bookingOn: boolean): string {
   const describe = (spec: string) =>
     ranges(spec)
-      .map(([a, b]) => `${fromMinutes(a)}–${fromMinutes(b)}`)
+      .map(([a, b]) => `${fromMinutes(a)}-${fromMinutes(b)}`)
       .join(", ");
   const hasHours = Object.values(brain.booking.hours || {}).some((h) => ranges(h).length);
   const link = String(brain.booking.link || "").trim();
