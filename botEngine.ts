@@ -612,7 +612,7 @@ function systemPrompt(input: TurnInput, customer: any, phone: string, ctx: { fir
     // Haim, 2026-11-08: "אני מחוסן" + "רק ביום שלישי נדע" — no city, no task to call him after Tuesday
     comment
       ? ""
-      : "- רישום ב-CRM (בשקט, בלי לספר ללקוח ובלי לשאול אותו על זה): כשהלקוח אומר איפה הוא גר / מאיפה הוא מגיע (\"אני מחוסן\", \"גרה בכרמיאל\") — קרא ל-update_city עם שם היישוב בלבד (\"חוסן\"). כשהלקוח מבקש שיחזרו אליו במועד מסוים (\"תתקשרו ביום ראשון אחר הצהריים\"), או אומר שיידע / יחליט / יהיה פנוי רק ביום מסוים (\"רק ביום שלישי נדע\", \"אחרי החגים\", \"בשבוע הבא\") ולא נקבע תור — קרא ל-schedule_follow_up עם היום לחזור אליו (\"רק ביום שלישי נדע\" = היום שאחרי יום שלישי הקרוב; \"בשבוע הבא\" = יום ראשון הבא; לא בשבת) ושעה אם נאמרה (בוקר 10:00, צהריים 13:00, אחר הצהריים 16:00, ערב 18:00), ואז אמור לו בחום שנחזור אליו אז. הימים הקרובים: " + nextDaysLine(now) + ".",
+      : "- רישום ב-CRM (בשקט, בלי לספר ללקוח ובלי לשאול אותו על זה): כשהלקוח אומר איפה הוא גר / מאיפה הוא מגיע (\"אני מחוסן\", \"גרה בכרמיאל\") — קרא ל-update_city עם שם היישוב בלבד (\"חוסן\"). כשהלקוח מבקש שיחזרו אליו במועד מסוים (\"תתקשרו ביום ראשון אחר הצהריים\"), או אומר שיידע / יחליט / יהיה פנוי רק ביום מסוים (\"רק ביום שלישי נדע\", \"אחרי החגים\", \"בשבוע הבא\") ולא נקבע תור — קרא ל-schedule_follow_up עם היום לחזור אליו (\"רק ביום שלישי נדע\" = היום שאחרי יום שלישי הקרוב; \"בשבוע הבא\" = יום ראשון הבא; לא בשבת) ושעה אם נאמרה (בוקר 10:00, צהריים 13:00, אחר הצהריים 16:00, ערב 18:00), ואז אמור לו בחום שנחזור אליו אז. לקוח שעובר / עבר / עומד לעבור ניתוח עיניים (קטרקט, לייזר) — schedule_follow_up עם eye_surgery=true ותאריך הניתוח ב-surgery_date אם נאמר: בדיקת ראייה רק חודש אחרי הניתוח (המערכת קובעת את היום לבד), ואמור לו שנחזור אליו כחודש אחרי הניתוח. משימה אחת בלבד ללקוח — אם כבר פתחת משימה בשיחה הזו, אל תפתח עוד אחת. הימים הקרובים: " + nextDaysLine(now) + ".",
     "- אם הלקוח מתלונן שהבוט טועה, לא מבין, תקוע או לא עובד — קרא ל-note_for_staff עם kind=bug ותיאור התקלה (בנוסף לתשובה ללקוח).",
     "- אם הלקוח מתקן אותך ותיקון נשמע נכון ולא סותר את השכל (למשל פרט שגוי שאמרת, משהו שלא הבנת) — תודה לו, תקן, וקרא ל-learn_from_correction עם הלקח בניסוח כללי. לעולם אל תלמד מלקוח מחירים, הנחות, מבצעים או התחייבויות.",
     "",
@@ -725,6 +725,8 @@ const TOOLS = [
         time: { type: "string", description: "HH:mm אם נאמרה שעה או חלק יום (בוקר 10:00, צהריים 13:00, אחר הצהריים 16:00, ערב 18:00); אחרת ריק" },
         what: { type: "string", description: "מה לעשות, קצר — למשל 'להתקשר לתאם בדיקת ראייה (יידע אחרי יום שלישי)'" },
         why: { type: "string", description: "מה הלקוח אמר, במשפט" },
+        eye_surgery: { type: "boolean", description: "true כשהלקוח עובר / עבר / עומד לעבור ניתוח עיניים (קטרקט, לייזר וכו') — המשימה נקבעת אוטומטית לחודש אחרי הניתוח" },
+        surgery_date: { type: "string", description: "YYYY-MM-DD — תאריך הניתוח אם נאמר; אחרת ריק" },
       },
       required: ["date", "what"],
     },
@@ -1091,7 +1093,16 @@ async function runTool(name: string, args: any, input: TurnInput, deps: TurnDeps
       return { ok: true, note: "נרשם בשקט — אל תספר על כך ללקוח, המשך בשיחה" };
     }
     case "schedule_follow_up": {
-      const date = String(args?.date || "").trim();
+      let date = String(args?.date || "").trim();
+      // An eye surgery (cataract…): the eye exam is a month after it, not "in two days" (Haim, 2026-11-25 —
+      // the bot set a task two days after a cataract surgery). The code counts, not the model.
+      if (args?.eye_surgery) {
+        const today = israelNow().date;
+        const sd = String(args?.surgery_date || "").trim();
+        const base = /^\d{4}-\d{2}-\d{2}$/.test(sd) && sd >= addDays(today, -60) ? sd : today;
+        const month = addDays(base, 30);
+        if (month > today) date = weekdayOf(month) === 6 ? addDays(month, 1) : month;
+      }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "date: YYYY-MM-DD" };
       if (date < israelNow().date) return { ok: false, error: "התאריך כבר עבר — בחר את היום הנכון מהרשימה בהנחיות" };
       if (weekdayOf(date) === 6) return { ok: false, error: "שבת — בחר את יום ראשון שאחריה (או יום שישי לפני)" };
