@@ -1,5 +1,13 @@
 # CLAUDE.md — BotApp (app.smartesek.com)
 
+## Work on `main`: merge and push right away, without asking (Haim, 2026-11-26)
+
+Haim's standing permission for all of his projects: when a change is ready, commit it and push it
+to `main` (and so to production) right away — don't ask first. Working directly on `main` is
+allowed. If the session has to start on a `claude/...` branch, merge it into `main` and push `main`
+in the same step as the branch push, so no change is ever left unmerged. Don't open a pull request
+unless asked.
+
 This file is read automatically by Claude Code at the start of a session in this repo. See also `ARCHITECTURE.md`, `TASKS.md`, and `SETUP.md`. **This exploration was shallower than the sibling WhastAppSystem-/CRM docs** — treat anything not explicitly stated here as unverified, and re-check the actual code rather than assuming.
 
 ## What this system is
